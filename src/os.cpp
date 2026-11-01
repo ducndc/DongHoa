@@ -34,16 +34,16 @@ namespace os {
 
 namespace {
 
-volatile sig_atomic_t g_stop = 0;
+volatile sig_atomic_t sStop = 0;
 
-extern "C" void on_stop_signal(int sig)
+extern "C" void onStopSignal(int sig)
 {
 	(void)sig;
-	g_stop = 1;
+	sStop = 1;
 }
 
 // Fills a sockaddr_un with path; false if it does not fit.
-bool make_unix_addr(const char *path, sockaddr_un &a) noexcept
+bool makeUnixAddr(const char *path, sockaddr_un &a) noexcept
 {
 	const std::size_t len = std::strlen(path);
 	bool ok = len < sizeof(a.sun_path);
@@ -56,33 +56,33 @@ bool make_unix_addr(const char *path, sockaddr_un &a) noexcept
 	return ok;
 }
 
-const sockaddr *as_sockaddr(const sockaddr_un &a) noexcept
+const sockaddr *asSockaddr(const sockaddr_un &a) noexcept
 {
 	return reinterpret_cast<const sockaddr *>(&a); // DEV-02
 }
 
-const sockaddr *as_sockaddr(const sockaddr_ll &a) noexcept
+const sockaddr *asSockaddr(const sockaddr_ll &a) noexcept
 {
 	return reinterpret_cast<const sockaddr *>(&a); // DEV-02
 }
 
-const sockaddr *as_sockaddr(const sockaddr_in &a) noexcept
+const sockaddr *asSockaddr(const sockaddr_in &a) noexcept
 {
 	return reinterpret_cast<const sockaddr *>(&a); // DEV-02
 }
 
-const sockaddr *as_sockaddr(const sockaddr_nl &a) noexcept
+const sockaddr *asSockaddr(const sockaddr_nl &a) noexcept
 {
 	return reinterpret_cast<const sockaddr *>(&a); // DEV-02
 }
 
 Rx classify(ssize_t r) noexcept
 {
-	Rx x = Rx::error;
+	Rx x = Rx::ERROR;
 	if (r >= 0) {
-		x = Rx::data;
+		x = Rx::DATA;
 	} else if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)) {
-		x = Rx::empty;
+		x = Rx::EMPTY;
 	} else {
 		// real error
 	}
@@ -92,7 +92,7 @@ Rx classify(ssize_t r) noexcept
 // Kernel filter for air monitors: pass probe requests and data frames with
 // ToDS and not FromDS (what a STA sends to its AP, incl. power-save nulls).
 // The 802.11 header follows the radiotap header, whose length is LE16 at 2.
-sock_filter g_monitor_bpf[] = {
+sock_filter sMonitorBpf[] = {
 	BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 3),           // 0: A = it_len high byte
 	BPF_STMT(BPF_ALU | BPF_LSH | BPF_K, 8),          // 1
 	BPF_STMT(BPF_MISC | BPF_TAX, 0),                 // 2: X = A
@@ -114,19 +114,19 @@ sock_filter g_monitor_bpf[] = {
 
 // ---- time, process, randomness ----
 
-Millis now_ms() noexcept
+Millis nowMs() noexcept
 {
 	timespec ts{};
 	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (static_cast<Millis>(ts.tv_sec) * 1000U) + (static_cast<Millis>(ts.tv_nsec) / 1000000U);
 }
 
-std::int32_t process_id() noexcept
+std::int32_t processId() noexcept
 {
 	return getpid(); // pid_t is int on Linux
 }
 
-std::optional<std::uint32_t> random_u32() noexcept
+std::optional<std::uint32_t> randomU32() noexcept
 {
 	std::uint32_t v = 0U;
 	std::optional<std::uint32_t> r;
@@ -138,42 +138,42 @@ std::optional<std::uint32_t> random_u32() noexcept
 
 // ---- logging sinks ----
 
-void write_stderr(std::string_view line) noexcept
+void writeStderr(std::string_view line) noexcept
 {
 	// Nothing useful can be done if stderr is gone.
 	const ssize_t w = ::write(STDERR_FILENO, line.data(), line.size());
 	(void)w;
 }
 
-void write_stdout(std::string_view text) noexcept
+void writeStdout(std::string_view text) noexcept
 {
 	const ssize_t w = ::write(STDOUT_FILENO, text.data(), text.size());
 	(void)w;
 }
 
-void syslog_open() noexcept
+void openSyslog() noexcept
 {
 	openlog("donghoa", LOG_PID, LOG_DAEMON);
 }
 
-void syslog_close() noexcept
+void closeSyslog() noexcept
 {
 	closelog();
 }
 
-void syslog_write(std::uint8_t prio, std::string_view line) noexcept
+void writeSyslog(std::uint8_t prio, std::string_view line) noexcept
 {
-	static constexpr int kPrio[4] = {LOG_ERR, LOG_WARNING, LOG_INFO, LOG_DEBUG};
-	const int p = (prio < 4U) ? kPrio[prio] : LOG_INFO;
+	static constexpr int PRIO[4] = {LOG_ERR, LOG_WARNING, LOG_INFO, LOG_DEBUG};
+	const int p = (prio < 4U) ? PRIO[prio] : LOG_INFO;
 	syslog(p, "%.*s", static_cast<int>(line.size()), line.data());
 }
 
 // ---- signals ----
 
-void install_signal_handlers() noexcept
+void installSignalHandlers() noexcept
 {
 	struct sigaction sa {};
-	sa.sa_handler = &on_stop_signal;
+	sa.sa_handler = &onStopSignal;
 	(void)sigemptyset(&sa.sa_mask);
 	(void)sigaction(SIGINT, &sa, nullptr);
 	(void)sigaction(SIGTERM, &sa, nullptr);
@@ -182,14 +182,14 @@ void install_signal_handlers() noexcept
 	(void)sigaction(SIGPIPE, &ign, nullptr);
 }
 
-bool stop_requested() noexcept
+bool stopRequested() noexcept
 {
-	return g_stop != 0;
+	return sStop != 0;
 }
 
 // ---- files ----
 
-bool read_text_file(const char *path, FixedString<16384U> &out) noexcept
+bool readTextFile(const char *path, FixedString<16384U> &out) noexcept
 {
 	Fd fd(::open(path, O_RDONLY | O_CLOEXEC));
 	bool ok = fd.valid();
@@ -209,7 +209,7 @@ bool read_text_file(const char *path, FixedString<16384U> &out) noexcept
 	return ok;
 }
 
-void remove_file(const char *path) noexcept
+void removeFile(const char *path) noexcept
 {
 	(void)::unlink(path);
 }
@@ -220,57 +220,57 @@ Fd &Fd::operator=(Fd &&o) noexcept
 {
 	if (this != &o) {
 		reset();
-		fd_ = o.fd_;
-		o.fd_ = -1;
+		mFd = o.mFd;
+		o.mFd = -1;
 	}
 	return *this;
 }
 
 void Fd::reset() noexcept
 {
-	if (fd_ >= 0) {
-		(void)::close(fd_);
-		fd_ = -1;
+	if (mFd >= 0) {
+		(void)::close(mFd);
+		mFd = -1;
 	}
 }
 
-bool poll_readable(const std::array<int, kMaxPoll> &fds, std::size_t n, int timeout_ms,
-		   std::array<bool, kMaxPoll> &ready) noexcept
+bool pollReadable(const std::array<int, MAX_POLL> &fds, std::size_t n, int timeoutMs,
+		   std::array<bool, MAX_POLL> &ready) noexcept
 {
-	std::array<pollfd, kMaxPoll> p{};
-	const std::size_t cnt = (n > kMaxPoll) ? kMaxPoll : n;
+	std::array<pollfd, MAX_POLL> p{};
+	const std::size_t cnt = (n > MAX_POLL) ? MAX_POLL : n;
 
 	for (std::size_t i = 0U; i < cnt; i++) {
 		p[i].fd = fds[i];
 		p[i].events = POLLIN;
 		ready[i] = false;
 	}
-	const int r = ::poll(p.data(), static_cast<nfds_t>(cnt), timeout_ms);
+	const int r = ::poll(p.data(), static_cast<nfds_t>(cnt), timeoutMs);
 	for (std::size_t i = 0U; (r > 0) && (i < cnt); i++) {
 		ready[i] = (p[i].revents & (POLLIN | POLLERR | POLLHUP)) != 0;
 	}
 	return (r >= 0) || (errno == EINTR);
 }
 
-bool wait_readable(int fd, int timeout_ms) noexcept
+bool waitReadable(int fd, int timeoutMs) noexcept
 {
 	pollfd p{};
 	p.fd = fd;
 	p.events = POLLIN;
-	return (timeout_ms > 0) && (::poll(&p, 1U, timeout_ms) > 0);
+	return (timeoutMs > 0) && (::poll(&p, 1U, timeoutMs) > 0);
 }
 
 // ---- UNIX datagram sockets ----
 
-Fd unix_bind(const char *path, bool nonblock) noexcept
+Fd bindUnix(const char *path, bool nonblock) noexcept
 {
 	const int flags = SOCK_DGRAM | SOCK_CLOEXEC | (nonblock ? SOCK_NONBLOCK : 0);
 	Fd fd(::socket(AF_UNIX, flags, 0));
 	sockaddr_un a{};
 
-	if (fd.valid() && make_unix_addr(path, a)) {
+	if (fd.valid() && makeUnixAddr(path, a)) {
 		(void)::unlink(path);
-		if (::bind(fd.get(), as_sockaddr(a), sizeof(a)) < 0) {
+		if (::bind(fd.get(), asSockaddr(a), sizeof(a)) < 0) {
 			fd.reset();
 		}
 	} else {
@@ -279,10 +279,10 @@ Fd unix_bind(const char *path, bool nonblock) noexcept
 	return fd;
 }
 
-void share_owner(const char *path, const char *other_path) noexcept
+void shareOwner(const char *path, const char *otherPath) noexcept
 {
 	struct stat st {};
-	if ((::stat(other_path, &st) == 0) && (st.st_uid != ::geteuid())) {
+	if ((::stat(otherPath, &st) == 0) && (st.st_uid != ::geteuid())) {
 		// Fails harmlessly when not root: hostapd then runs as us anyway.
 		const int r = ::chown(path, st.st_uid, st.st_gid);
 		(void)r;
@@ -290,18 +290,18 @@ void share_owner(const char *path, const char *other_path) noexcept
 	}
 }
 
-bool unix_connect(const Fd &fd, const char *path) noexcept
+bool connectUnix(const Fd &fd, const char *path) noexcept
 {
 	sockaddr_un a{};
-	return make_unix_addr(path, a) && (::connect(fd.get(), as_sockaddr(a), sizeof(a)) == 0);
+	return makeUnixAddr(path, a) && (::connect(fd.get(), asSockaddr(a), sizeof(a)) == 0);
 }
 
-bool send_text(const Fd &fd, std::string_view text, bool dontwait) noexcept
+bool sendText(const Fd &fd, std::string_view text, bool dontwait) noexcept
 {
 	return ::send(fd.get(), text.data(), text.size(), dontwait ? MSG_DONTWAIT : 0) >= 0;
 }
 
-std::optional<std::size_t> recv_bytes(const Fd &fd, const ByteSpan &buf) noexcept
+std::optional<std::size_t> recvBytes(const Fd &fd, const ByteSpan &buf) noexcept
 {
 	std::optional<std::size_t> r;
 	const ssize_t n = ::recv(fd.get(), buf.data(), buf.size(), 0);
@@ -311,14 +311,14 @@ std::optional<std::size_t> recv_bytes(const Fd &fd, const ByteSpan &buf) noexcep
 	return r;
 }
 
-Rx recv_nowait(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept
+Rx recvNowait(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept
 {
 	const ssize_t r = ::recv(fd.get(), buf.data(), buf.size(), MSG_DONTWAIT);
 	n = (r > 0) ? static_cast<std::size_t>(r) : 0U;
 	return classify(r);
 }
 
-Rx recv_from(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) noexcept
+Rx recvFrom(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) noexcept
 {
 	sockaddr_un a{};
 	socklen_t len = sizeof(a);
@@ -332,30 +332,30 @@ Rx recv_from(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) 
 	return classify(r);
 }
 
-void send_to(const Fd &fd, ByteView data, const UnixAddr &to) noexcept
+void sendTo(const Fd &fd, ByteView data, const UnixAddr &to) noexcept
 {
 	sockaddr_un a{};
 	if (to.len <= sizeof(a)) {
 		(void)std::memcpy(&a, to.raw.data(), to.len); // DEV-04
-		(void)::sendto(fd.get(), data.data(), data.size(), 0, as_sockaddr(a),
+		(void)::sendto(fd.get(), data.data(), data.size(), 0, asSockaddr(a),
 			       static_cast<socklen_t>(to.len));
 	}
 }
 
-bool unix_request(const char *server, const char *local, std::string_view request,
-		  const ByteSpan &reply, std::size_t &n, int timeout_ms) noexcept
+bool sendUnixRequest(const char *server, const char *local, std::string_view request,
+		  const ByteSpan &reply, std::size_t &n, int timeoutMs) noexcept
 {
-	Fd fd = unix_bind(local, false);
+	Fd fd = bindUnix(local, false);
 	sockaddr_un a{};
-	bool ok = fd.valid() && make_unix_addr(server, a) &&
-		  (::sendto(fd.get(), request.data(), request.size(), 0, as_sockaddr(a), sizeof(a)) >= 0);
+	bool ok = fd.valid() && makeUnixAddr(server, a) &&
+		  (::sendto(fd.get(), request.data(), request.size(), 0, asSockaddr(a), sizeof(a)) >= 0);
 
 	n = 0U;
 	if (ok) {
-		ok = wait_readable(fd.get(), timeout_ms);
+		ok = waitReadable(fd.get(), timeoutMs);
 	}
 	if (ok) {
-		const std::optional<std::size_t> r = recv_bytes(fd, reply);
+		const std::optional<std::size_t> r = recvBytes(fd, reply);
 		ok = r.has_value();
 		n = ok ? *r : 0U;
 	}
@@ -365,12 +365,12 @@ bool unix_request(const char *server, const char *local, std::string_view reques
 
 // ---- raw Ethernet ----
 
-int ifname_to_index(const char *ifname) noexcept
+int ifnameToIndex(const char *ifname) noexcept
 {
 	return static_cast<int>(if_nametoindex(ifname));
 }
 
-Fd packet_open(const char *ifname, std::uint16_t ethertype, const Mac &group, LinkInfo &info) noexcept
+Fd openPacket(const char *ifname, std::uint16_t ethertype, const Mac &group, LinkInfo &info) noexcept
 {
 	Fd fd(::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, static_cast<int>(htons(ethertype))));
 	ifreq ifr{};
@@ -386,7 +386,7 @@ Fd packet_open(const char *ifname, std::uint16_t ethertype, const Mac &group, Li
 		sll.sll_family = AF_PACKET;
 		sll.sll_protocol = htons(ethertype);
 		sll.sll_ifindex = info.ifindex;
-		ok = ::bind(fd.get(), as_sockaddr(sll), sizeof(sll)) >= 0;
+		ok = ::bind(fd.get(), asSockaddr(sll), sizeof(sll)) >= 0;
 	}
 	if (ok) {
 		packet_mreq mr{};
@@ -409,17 +409,17 @@ Fd packet_open(const char *ifname, std::uint16_t ethertype, const Mac &group, Li
 	return fd;
 }
 
-bool packet_send(const Fd &fd, int ifindex, const Mac &dst, ByteView frame) noexcept
+bool sendPacket(const Fd &fd, int ifindex, const Mac &dst, ByteView frame) noexcept
 {
 	sockaddr_ll sll{};
 	sll.sll_family = AF_PACKET;
 	sll.sll_ifindex = ifindex;
 	sll.sll_halen = 6U;
 	(void)std::memcpy(&sll.sll_addr[0], dst.b.data(), dst.b.size());
-	return ::sendto(fd.get(), frame.data(), frame.size(), 0, as_sockaddr(sll), sizeof(sll)) >= 0;
+	return ::sendto(fd.get(), frame.data(), frame.size(), 0, asSockaddr(sll), sizeof(sll)) >= 0;
 }
 
-Rx packet_recv(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept
+Rx recvPacket(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept
 {
 	sockaddr_ll sll{};
 	socklen_t sl = sizeof(sll);
@@ -428,27 +428,27 @@ Rx packet_recv(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept
 	Rx x = classify(r);
 
 	n = (r > 0) ? static_cast<std::size_t>(r) : 0U;
-	if ((x == Rx::data) && (sll.sll_pkttype == PACKET_OUTGOING)) {
-		x = Rx::empty;
+	if ((x == Rx::DATA) && (sll.sll_pkttype == PACKET_OUTGOING)) {
+		x = Rx::EMPTY;
 		n = 0U;
 	}
 	return x;
 }
 
-Fd monitor_open(const char *ifname) noexcept
+Fd openMonitor(const char *ifname) noexcept
 {
 	Fd fd(::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, static_cast<int>(htons(ETH_P_ALL))));
 	sock_fprog prog{};
 	sockaddr_ll sll{};
 
-	prog.len = static_cast<unsigned short>(sizeof(g_monitor_bpf) / sizeof(g_monitor_bpf[0]));
-	prog.filter = &g_monitor_bpf[0];
+	prog.len = static_cast<unsigned short>(sizeof(sMonitorBpf) / sizeof(sMonitorBpf[0]));
+	prog.filter = &sMonitorBpf[0];
 	sll.sll_family = AF_PACKET;
 	sll.sll_protocol = htons(ETH_P_ALL);
-	sll.sll_ifindex = ifname_to_index(ifname);
+	sll.sll_ifindex = ifnameToIndex(ifname);
 	if (!fd.valid() || (sll.sll_ifindex == 0) ||
 	    (::setsockopt(fd.get(), SOL_SOCKET, SO_ATTACH_FILTER, &prog, sizeof(prog)) < 0) ||
-	    (::bind(fd.get(), as_sockaddr(sll), sizeof(sll)) < 0)) {
+	    (::bind(fd.get(), asSockaddr(sll), sizeof(sll)) < 0)) {
 		fd.reset();
 	}
 	return fd;
@@ -456,7 +456,7 @@ Fd monitor_open(const char *ifname) noexcept
 
 // ---- UDP on loopback ----
 
-Fd udp_bind_loopback(std::uint16_t port) noexcept
+Fd bindUdpLoopback(std::uint16_t port) noexcept
 {
 	Fd fd(::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
 	sockaddr_in sin{};
@@ -464,51 +464,51 @@ Fd udp_bind_loopback(std::uint16_t port) noexcept
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(port);
 	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	if (fd.valid() && (::bind(fd.get(), as_sockaddr(sin), sizeof(sin)) < 0)) {
+	if (fd.valid() && (::bind(fd.get(), asSockaddr(sin), sizeof(sin)) < 0)) {
 		fd.reset();
 	}
 	return fd;
 }
 
-void udp_send_loopback(const Fd &fd, std::uint16_t port, ByteView data) noexcept
+void sendUdpLoopback(const Fd &fd, std::uint16_t port, ByteView data) noexcept
 {
 	sockaddr_in sin{};
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(port);
 	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	(void)::sendto(fd.get(), data.data(), data.size(), 0, as_sockaddr(sin), sizeof(sin));
+	(void)::sendto(fd.get(), data.data(), data.size(), 0, asSockaddr(sin), sizeof(sin));
 }
 
 // ---- generic netlink ----
 
-Fd netlink_open() noexcept
+Fd openNetlink() noexcept
 {
 	Fd fd(::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_GENERIC));
 	sockaddr_nl sa{};
 	sa.nl_family = AF_NETLINK;
-	if (fd.valid() && (::bind(fd.get(), as_sockaddr(sa), sizeof(sa)) < 0)) {
+	if (fd.valid() && (::bind(fd.get(), asSockaddr(sa), sizeof(sa)) < 0)) {
 		fd.reset();
 	}
 	return fd;
 }
 
-bool netlink_send(const Fd &fd, ByteView msg) noexcept
+bool sendNetlink(const Fd &fd, ByteView msg) noexcept
 {
 	sockaddr_nl sa{};
 	sa.nl_family = AF_NETLINK;
-	return ::sendto(fd.get(), msg.data(), msg.size(), 0, as_sockaddr(sa), sizeof(sa)) >= 0;
+	return ::sendto(fd.get(), msg.data(), msg.size(), 0, asSockaddr(sa), sizeof(sa)) >= 0;
 }
 
-std::optional<std::size_t> netlink_recv(const Fd &fd, const ByteSpan &buf, int timeout_ms) noexcept
+std::optional<std::size_t> recvNetlink(const Fd &fd, const ByteSpan &buf, int timeoutMs) noexcept
 {
 	std::optional<std::size_t> r;
-	if (wait_readable(fd.get(), timeout_ms)) {
-		r = recv_bytes(fd, buf);
+	if (waitReadable(fd.get(), timeoutMs)) {
+		r = recvBytes(fd, buf);
 	}
 	return r;
 }
 
-std::uint16_t load_ne16(ByteView v, std::size_t off) noexcept
+std::uint16_t loadNe16(ByteView v, std::size_t off) noexcept
 {
 	std::uint16_t x = 0U;
 	if ((off + sizeof(x)) <= v.size()) {
@@ -517,7 +517,7 @@ std::uint16_t load_ne16(ByteView v, std::size_t off) noexcept
 	return x;
 }
 
-std::uint32_t load_ne32(ByteView v, std::size_t off) noexcept
+std::uint32_t loadNe32(ByteView v, std::size_t off) noexcept
 {
 	std::uint32_t x = 0U;
 	if ((off + sizeof(x)) <= v.size()) {
@@ -526,7 +526,7 @@ std::uint32_t load_ne32(ByteView v, std::size_t off) noexcept
 	return x;
 }
 
-std::uint64_t load_ne64(ByteView v, std::size_t off) noexcept
+std::uint64_t loadNe64(ByteView v, std::size_t off) noexcept
 {
 	std::uint64_t x = 0U;
 	if ((off + sizeof(x)) <= v.size()) {
@@ -535,21 +535,21 @@ std::uint64_t load_ne64(ByteView v, std::size_t off) noexcept
 	return x;
 }
 
-void store_ne16(const ByteSpan &s, std::size_t off, std::uint16_t v) noexcept
+void storeNe16(const ByteSpan &s, std::size_t off, std::uint16_t v) noexcept
 {
 	if ((off + sizeof(v)) <= s.size()) {
 		(void)std::memcpy(&s.data()[off], &v, sizeof(v)); // DEV-04
 	}
 }
 
-void store_ne32(const ByteSpan &s, std::size_t off, std::uint32_t v) noexcept
+void storeNe32(const ByteSpan &s, std::size_t off, std::uint32_t v) noexcept
 {
 	if ((off + sizeof(v)) <= s.size()) {
 		(void)std::memcpy(&s.data()[off], &v, sizeof(v)); // DEV-04
 	}
 }
 
-std::string_view last_error() noexcept
+std::string_view lastError() noexcept
 {
 	return std::string_view(std::strerror(errno));
 }

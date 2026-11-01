@@ -54,14 +54,14 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 6`.
 - **Steering transaction:** `steer.cpp` runs MEASURE → NEGOTIATE → BTM → ROAM.
   NEGOTIATE (STEER_REQ/RESP with the target AP) is skipped for this AP's own
   sibling BSSes. Success means a `STA_EVENT` assoc arrives from the target. On
-  failure the STA gets an exponential backoff (`policy::backoff_ms`). The
-  target side holds reservations in `resv_`.
-- **Reliable unicast:** `Daemon::unicast` with `arcp::kFlagAckReq` queues the
-  finished frame in `pending_`. A retransmission reuses its `msg_id`. A
+  failure the STA gets an exponential backoff (`policy::backoffMs`). The
+  target side holds reservations in `mResv`.
+- **Reliable unicast:** `Daemon::unicast` with `arcp::FLAG_ACK_REQ` queues the
+  finished frame in `mPending`. A retransmission reuses its `msg_id`. A
   receiver drops duplicates with the per-peer 64-entry replay window
-  (`peer_accept_seq`) but ACKs them again.
+  (`acceptPeerSeq`) but ACKs them again.
 - **Path learning:** the port that delivers the first copy of each new
-  message becomes the unicast path to that peer (`msg_rx`). This is how
+  message becomes the unicast path to that peer (`receiveMsg`). This is how
   unicast fails over between wired and Wi-Fi backhaul.
 - **"Sim" transport:** `sim_port` / `sim_peer` in the config carry the same
   Ethernet frames over UDP on loopback. That lets the itest run without
@@ -71,21 +71,26 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 6`.
 ## Conventions and gotchas
 
 - Style: kernel-like layout (tabs, function brace on its own line), `//`
-  comments, `snake_case` functions and enumerators, `PascalCase` types,
-  `kConstants`, members end in `_`. The Makefile's strict flags
+  comments. Naming (table in `docs/CODING_CONVENTION.md` §4): `PascalCase`
+  types; `camelCase` functions starting with a verb (`startSteer`,
+  `findPeer`, handlers `onSteerReq`, predicates `isBssOverloaded`),
+  parameters, locals and public fields; private members `mName`; statics
+  `sName`; constants and enumerators `UPPER_CASE` (`MAX_STA`,
+  `MsgType::STA_EVENT`). Wire, config-key, log and command strings stay
+  `snake_case`/upper case as they are. The Makefile's strict flags
   (`-Wconversion -Wsign-conversion -Wold-style-cast -Wuseless-cast
   -Wpedantic` …) must stay warning-free.
 - **Never call a library function that can throw** (`std::string_view::substr`,
   `std::array::at`, anything allocating). It drags in `libstdc++.so`, which
-  `make check-deps` rejects. Use `sub_view()` from `text.hpp`.
-- Formatting is `format_to(out, "x={} y={}", a, b)` into a `FixedString<N>`
+  `make check-deps` rejects. Use `subView()` from `text.hpp`.
+- Formatting is `formatTo(out, "x={} y={}", a, b)` into a `FixedString<N>`
   (`text.hpp`); `hex(v, width)`, `SsidText`, `Mac` have formatters. Numbers
-  are parsed with `parse_long`/`parse_long_tok`/`parse_u64` (range-checked,
+  are parsed with `parseLong`/`parseLongTok`/`parseU64` (range-checked,
   `std::from_chars`).
 - Logging is per module: a `.cpp` file that logs defines
-  `constexpr LogModule kMod{LogModule::<name>};` in its unnamed namespace and
-  calls `logging::info(kMod, "...", args)` (add a new module to
-  `enum class LogModule` and `kModuleNames` in `log.cpp`). Do not repeat the
+  `constexpr LogModule LOG_MODULE{LogModule::<NAME>};` in its unnamed namespace and
+  calls `logging::info(LOG_MODULE, "...", args)` (add a new module to
+  `enum class LogModule` and `MODULE_NAMES` in `log.cpp`). Do not repeat the
   module name in messages; the tag adds it. `donghoa_cli <sock> LOG debug <module>`
   changes levels at run time.
 - New and changed code follows `docs/CODING_CONVENTION.md` (MISRA C++:2023
@@ -102,7 +107,7 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 6`.
   `rrm.cpp` (Neighbor Report BSSID Info, Beacon Request durations), which are
   little-endian as the 802.11 standard requires.
 - `bss_load.util` runs 0..254. **255 means unknown**, so
-  `policy::util_to_pct()` returns -1 for it, and survey values are clamped to 254.
+  `policy::utilToPct()` returns -1 for it, and survey values are clamped to 254.
 - The formats of hostapd ctrl output and events that the parsers rely on are
   listed under "Assumptions to verify" in `docs/ARCHITECTURE.md`. Don't treat
   them as verified against a specific hostapd release. If you touch

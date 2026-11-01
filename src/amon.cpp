@@ -15,49 +15,49 @@ namespace donghoa {
 
 namespace {
 
-constexpr LogModule kMod{LogModule::amon};
-constexpr int kMaxDurationMs = 5000;
+constexpr LogModule LOG_MODULE{LogModule::AMON};
+constexpr int MAX_DURATION_MS = 5000;
 
 } // namespace
 
-void Daemon::amon_init() noexcept
+void Daemon::initAmon() noexcept
 {
-	n_amon_ = 0U;
-	for (std::size_t i = 0U; i < cfg_.n_monitors; i++) {
-		AmonPort &p = amon_[n_amon_];
-		p.fd = os::monitor_open(cfg_.monitors[i].c_str());
+	mNAmon = 0U;
+	for (std::size_t i = 0U; i < mCfg.nMonitors; i++) {
+		AmonPort &p = mAmon[mNAmon];
+		p.fd = os::openMonitor(mCfg.monitors[i].cStr());
 		if (p.fd.valid()) {
 			p.sim = false;
-			p.name = cfg_.monitors[i];
-			logging::info(kMod, "listening on {}", p.name);
-			n_amon_++;
+			p.name = mCfg.monitors[i];
+			logging::info(LOG_MODULE, "listening on {}", p.name);
+			mNAmon++;
 		} else {
 			// A missing monitor is not fatal: this AP just cannot measure.
-			logging::err(kMod, "{}: {} (a monitor interface: iw phy <phy> interface add {} type monitor)",
-				     cfg_.monitors[i], os::last_error(), cfg_.monitors[i]);
+			logging::err(LOG_MODULE, "{}: {} (a monitor interface: iw phy <phy> interface add {} type monitor)",
+				     mCfg.monitors[i], os::lastError(), mCfg.monitors[i]);
 		}
 	}
-	if (cfg_.monitor_sim_port != 0U) {
+	if (mCfg.monitorSimPort != 0U) {
 		// Test input: radiotap frames in UDP datagrams on loopback.
-		AmonPort &p = amon_[n_amon_];
-		p.fd = os::udp_bind_loopback(cfg_.monitor_sim_port);
+		AmonPort &p = mAmon[mNAmon];
+		p.fd = os::bindUdpLoopback(mCfg.monitorSimPort);
 		if (p.fd.valid()) {
 			p.sim = true;
 			p.name.clear();
-			format_to(p.name, "amonsim{}", cfg_.monitor_sim_port);
-			logging::info(kMod, "sim input on udp {}", cfg_.monitor_sim_port);
-			n_amon_++;
+			formatTo(p.name, "amonsim{}", mCfg.monitorSimPort);
+			logging::info(LOG_MODULE, "sim input on udp {}", mCfg.monitorSimPort);
+			mNAmon++;
 		} else {
-			logging::err(kMod, "sim port {}: {}", cfg_.monitor_sim_port, os::last_error());
+			logging::err(LOG_MODULE, "sim port {}: {}", mCfg.monitorSimPort, os::lastError());
 		}
 	}
 }
 
-void Daemon::amon_sample(const rrm::AirFrame &f) noexcept
+void Daemon::addAmonSample(const rrm::AirFrame &f) noexcept
 {
-	const Millis now = os::now_ms();
+	const Millis now = os::nowMs();
 
-	for (AmonWatch &w : watch_) {
+	for (AmonWatch &w : mWatch) {
 		if (!w.used || (w.sta != f.ta) || (now >= w.until)) {
 			continue;
 		}
@@ -81,40 +81,40 @@ void Daemon::amon_sample(const rrm::AirFrame &f) noexcept
 	}
 }
 
-void Daemon::amon_rx(std::size_t port) noexcept
+void Daemon::receiveAmon(std::size_t port) noexcept
 {
 	std::array<std::uint8_t, 512U> buf{};
-	bool more = port < n_amon_;
+	bool more = port < mNAmon;
 
 	while (more) {
 		std::size_t n = 0U;
-		more = os::recv_nowait(amon_[port].fd, span_of(buf), n) == os::Rx::data;
+		more = os::recvNowait(mAmon[port].fd, spanOf(buf), n) == os::Rx::DATA;
 		if (more) {
-			const std::optional<rrm::AirFrame> f = rrm::radiotap_parse(view_of(buf).first(n));
+			const std::optional<rrm::AirFrame> f = rrm::parseRadiotap(viewOf(buf).first(n));
 			if (f.has_value()) {
-				amon_sample(*f);
+				addAmonSample(*f);
 			}
 		}
 	}
 }
 
-bool Daemon::amon_watch_start(const Mac &sta, const Mac &requester, std::uint32_t txn,
-			      int duration_ms) noexcept
+bool Daemon::startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn,
+			      int durationMs) noexcept
 {
 	AmonWatch *w = nullptr;
-	const int dur = ((duration_ms <= 0) || (duration_ms > kMaxDurationMs)) ? cfg_.pol.amon_duration_ms
-									       : duration_ms;
+	const int dur = ((durationMs <= 0) || (durationMs > MAX_DURATION_MS)) ? mCfg.pol.amonDurationMs
+									       : durationMs;
 
-	if (n_amon_ == 0U) {
+	if (mNAmon == 0U) {
 		return false;
 	}
-	for (AmonWatch &x : watch_) {
+	for (AmonWatch &x : mWatch) {
 		if ((w == nullptr) && !x.used) {
 			w = &x;
 		}
 	}
 	if (w == nullptr) {
-		logging::warn(kMod, "watch table full, {} not measured", sta);
+		logging::warn(LOG_MODULE, "watch table full, {} not measured", sta);
 		return false;
 	}
 	*w = AmonWatch{};
@@ -122,46 +122,46 @@ bool Daemon::amon_watch_start(const Mac &sta, const Mac &requester, std::uint32_
 	w->sta = sta;
 	w->requester = requester;
 	w->txn = txn;
-	w->until = os::now_ms() + static_cast<Millis>(dur);
-	logging::dbg(kMod, "watching {} for {} ms (txn {})", sta, dur, txn);
+	w->until = os::nowMs() + static_cast<Millis>(dur);
+	logging::dbg(LOG_MODULE, "watching {} for {} ms (txn {})", sta, dur, txn);
 	return true;
 }
 
-void Daemon::amon_on_req(const Peer &from, const arcp::StaMonitorReq &r) noexcept
+void Daemon::onAmonReq(const Peer &from, const arcp::StaMonitorReq &r) noexcept
 {
-	if (amon_watch_start(r.sta, from.id, r.txn, static_cast<int>(r.duration_ms))) {
-		logging::info(kMod, "{} asks to measure {} (ch {})", from.id, r.sta, r.channel);
+	if (startAmonWatch(r.sta, from.id, r.txn, static_cast<int>(r.durationMs))) {
+		logging::info(LOG_MODULE, "{} asks to measure {} (ch {})", from.id, r.sta, r.channel);
 	}
 }
 
 // Watch over: one result per local BSS on a frequency the STA was heard on.
-void Daemon::amon_finish(AmonWatch &w, Millis now) noexcept
+void Daemon::finishAmonWatch(AmonWatch &w, Millis now) noexcept
 {
-	const bool local = w.requester == ap_id_;
+	const bool local = w.requester == mApId;
 	arcp::Message m;
 	std::size_t n = 0U;
 
 	if (!local) {
-		msg_begin(m, arcp::MsgType::sta_monitor_report, arcp::kFlagAckReq);
+		beginMsg(m, arcp::MsgType::STA_MONITOR_REPORT, arcp::FLAG_ACK_REQ);
 	}
 	for (const AmonAcc &a : w.acc) {
 		if (a.n == 0) {
 			continue;
 		}
-		for (std::size_t b = 0U; b < n_bss_; b++) {
-			if (!bss_[b].up || (static_cast<int>(bss_[b].info.freq) != a.freq)) {
+		for (std::size_t b = 0U; b < mNBss; b++) {
+			if (!mBss[b].up || (static_cast<int>(mBss[b].info.freq) != a.freq)) {
 				continue;
 			}
 			const Millis age = now - a.last;
 			arcp::StaMonitorResult r;
 			r.txn = w.txn;
 			r.sta = w.sta;
-			r.bssid = bss_[b].info.bssid;
+			r.bssid = mBss[b].info.bssid;
 			r.rssi = static_cast<std::int8_t>(a.sum / a.n);
 			r.samples = static_cast<std::uint16_t>((a.n > 65535) ? 65535 : a.n);
-			r.age_ms = static_cast<std::uint16_t>((age > 65535U) ? 65535U : age);
+			r.ageMs = static_cast<std::uint16_t>((age > 65535U) ? 65535U : age);
 			if (local) {
-				amon_on_result(ap_id_, r);
+				onAmonResult(mApId, r);
 			} else {
 				(void)m.add(r);
 			}
@@ -169,7 +169,7 @@ void Daemon::amon_finish(AmonWatch &w, Millis now) noexcept
 		}
 	}
 	if (n == 0U) {
-		logging::dbg(kMod, "{} not heard", w.sta);
+		logging::dbg(LOG_MODULE, "{} not heard", w.sta);
 	} else if (!local) {
 		(void)unicast(w.requester, m);
 	} else {
@@ -178,28 +178,28 @@ void Daemon::amon_finish(AmonWatch &w, Millis now) noexcept
 	w.used = false;
 }
 
-void Daemon::amon_tick(Millis now) noexcept
+void Daemon::tickAmon(Millis now) noexcept
 {
-	for (AmonWatch &w : watch_) {
+	for (AmonWatch &w : mWatch) {
 		if (w.used && (now >= w.until)) {
-			amon_finish(w, now);
+			finishAmonWatch(w, now);
 		}
 	}
 }
 
-void Daemon::amon_on_result(const Mac &from, const arcp::StaMonitorResult &r) noexcept
+void Daemon::onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noexcept
 {
-	Sta *const s = sta_find(r.sta);
-	const RemoteBss *const rb = remote_bss_lookup(r.bssid, nullptr);
-	const std::optional<std::size_t> b = local_bss_by_bssid(r.bssid);
-	const arcp::BssInfo *const bi = (rb != nullptr) ? &rb->info : (b.has_value() ? &bss_[*b].info : nullptr);
+	Sta *const s = findSta(r.sta);
+	const RemoteBss *const rb = lookupRemoteBss(r.bssid, nullptr);
+	const std::optional<std::size_t> b = findLocalBss(r.bssid);
+	const arcp::BssInfo *const bi = (rb != nullptr) ? &rb->info : (b.has_value() ? &mBss[*b].info : nullptr);
 
-	logging::info(kMod, "{} heard by {} (AP {}): {} dBm, {} samples", r.sta, r.bssid, from, r.rssi, r.samples);
+	logging::info(LOG_MODULE, "{} heard by {} (AP {}): {} dBm, {} samples", r.sta, r.bssid, from, r.rssi, r.samples);
 	if ((s != nullptr) && (bi != nullptr)) {
-		meas_store(*s, r.bssid, MeasSrc::air_monitor,
-			   rrm::dbm_to_rcpi(static_cast<int>(r.rssi) + cfg_.pol.amon_rssi_offset), bi->op_class,
-			   bi->channel, os::now_ms() - r.age_ms);
-		steer_on_monitor_result(*s);
+		storeMeasurement(*s, r.bssid, MeasSrc::AIR_MONITOR,
+			   rrm::dbmToRcpi(static_cast<int>(r.rssi) + mCfg.pol.amonRssiOffset), bi->opClass,
+			   bi->channel, os::nowMs() - r.ageMs);
+		onMonitorResult(*s);
 	}
 }
 

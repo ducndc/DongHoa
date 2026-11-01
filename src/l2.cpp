@@ -8,9 +8,9 @@ namespace donghoa {
 
 namespace {
 
-constexpr LogModule kMod{LogModule::l2};
+constexpr LogModule LOG_MODULE{LogModule::L2};
 
-Mac mac_at(ByteView v, std::size_t off) noexcept
+Mac macAt(ByteView v, std::size_t off) noexcept
 {
 	Mac m;
 	for (std::size_t i = 0U; i < m.b.size(); i++) {
@@ -21,48 +21,48 @@ Mac mac_at(ByteView v, std::size_t off) noexcept
 
 } // namespace
 
-bool L2::add_iface(const IfName &ifname) noexcept
+bool L2::addIface(const IfName &ifname) noexcept
 {
-	bool ok = n_ < ports_.size();
+	bool ok = mN < mPorts.size();
 	if (ok) {
-		Port &p = ports_[n_];
+		Port &p = mPorts[mN];
 		os::LinkInfo info;
-		p.fd = os::packet_open(ifname.c_str(), arcp::kEthertype, arcp::kGroupAddr, info);
+		p.fd = os::openPacket(ifname.cStr(), arcp::ETHERTYPE, arcp::GROUP_ADDR, info);
 		ok = p.fd.valid();
 		if (ok) {
 			p.sim = false;
 			p.ifindex = info.ifindex;
 			p.mac = info.mac;
 			p.name = ifname;
-			logging::info(kMod, "port {} ifindex {} mac {}", ifname, p.ifindex, p.mac);
-			n_++;
+			logging::info(LOG_MODULE, "port {} ifindex {} mac {}", ifname, p.ifindex, p.mac);
+			mN++;
 		} else {
-			logging::err(kMod, "{}: cannot open raw socket: {} (needs CAP_NET_RAW)", ifname,
-				     os::last_error());
+			logging::err(LOG_MODULE, "{}: cannot open raw socket: {} (needs CAP_NET_RAW)", ifname,
+				     os::lastError());
 		}
 	}
 	return ok;
 }
 
-bool L2::add_sim(std::uint16_t port, const std::array<std::uint16_t, kMaxSimPeers> &peers,
+bool L2::addSim(std::uint16_t port, const std::array<std::uint16_t, MAX_SIM_PEERS> &peers,
 		 std::size_t n, const Mac &mac) noexcept
 {
-	bool ok = (n_ < ports_.size()) && (n <= kMaxSimPeers);
+	bool ok = (mN < mPorts.size()) && (n <= MAX_SIM_PEERS);
 	if (ok) {
-		Port &p = ports_[n_];
-		p.fd = os::udp_bind_loopback(port);
+		Port &p = mPorts[mN];
+		p.fd = os::bindUdpLoopback(port);
 		ok = p.fd.valid();
 		if (ok) {
 			p.sim = true;
-			p.sim_peers = peers;
-			p.n_sim_peers = n;
+			p.simPeers = peers;
+			p.nSimPeers = n;
 			p.mac = mac;
 			p.name.clear();
-			format_to(p.name, "sim{}", port);
-			logging::info(kMod, "sim port {} ({} peers) mac {}", port, n, mac);
-			n_++;
+			formatTo(p.name, "sim{}", port);
+			logging::info(LOG_MODULE, "sim port {} ({} peers) mac {}", port, n, mac);
+			mN++;
 		} else {
-			logging::err(kMod, "sim bind {}: {}", port, os::last_error());
+			logging::err(LOG_MODULE, "sim bind {}: {}", port, os::lastError());
 		}
 	}
 	return ok;
@@ -70,29 +70,29 @@ bool L2::add_sim(std::uint16_t port, const std::array<std::uint16_t, kMaxSimPeer
 
 bool L2::send(std::size_t port, const Mac &dst, ByteView payload) noexcept
 {
-	std::array<std::uint8_t, kEthHdrLen + arcp::kMaxPayload> frame{};
-	bool ok = (port < n_) && (payload.size() <= arcp::kMaxPayload);
+	std::array<std::uint8_t, ETH_HDR_LEN + arcp::MAX_PAYLOAD> frame{};
+	bool ok = (port < mN) && (payload.size() <= arcp::MAX_PAYLOAD);
 
 	if (ok) {
-		const Port &p = ports_[port];
-		const ByteSpan f = span_of(frame);
+		const Port &p = mPorts[port];
+		const ByteSpan f = spanOf(frame);
 		for (std::size_t i = 0U; i < 6U; i++) {
 			frame[i] = dst.b[i];
 			frame[6U + i] = p.mac.b[i];
 		}
-		put_be16(f, 12U, arcp::kEthertype);
+		putBe16(f, 12U, arcp::ETHERTYPE);
 		for (std::size_t i = 0U; i < payload.size(); i++) {
-			frame[kEthHdrLen + i] = payload[i];
+			frame[ETH_HDR_LEN + i] = payload[i];
 		}
-		const ByteView out = view_of(frame).first(kEthHdrLen + payload.size());
+		const ByteView out = viewOf(frame).first(ETH_HDR_LEN + payload.size());
 		if (p.sim) {
-			for (std::size_t i = 0U; i < p.n_sim_peers; i++) {
-				os::udp_send_loopback(p.fd, p.sim_peers[i], out);
+			for (std::size_t i = 0U; i < p.nSimPeers; i++) {
+				os::sendUdpLoopback(p.fd, p.simPeers[i], out);
 			}
 		} else {
-			ok = os::packet_send(p.fd, p.ifindex, dst, out);
+			ok = os::sendPacket(p.fd, p.ifindex, dst, out);
 			if (!ok) {
-				logging::warn(kMod, "{}: sendto: {}", p.name, os::last_error());
+				logging::warn(LOG_MODULE, "{}: sendto: {}", p.name, os::lastError());
 			}
 		}
 	}
@@ -103,24 +103,24 @@ os::Rx L2::recv(std::size_t port, Mac &src, const ByteSpan &payload, std::size_t
 {
 	std::array<std::uint8_t, 2048U> frame{};
 	std::size_t len = 0U;
-	os::Rx r = os::Rx::error;
+	os::Rx r = os::Rx::ERROR;
 
 	n = 0U;
-	if (port < n_) {
-		const Port &p = ports_[port];
-		r = p.sim ? os::recv_nowait(p.fd, span_of(frame), len)
-			  : os::packet_recv(p.fd, span_of(frame), len);
-		if (r == os::Rx::data) {
-			const ByteView f = view_of(frame).first(len);
+	if (port < mN) {
+		const Port &p = mPorts[port];
+		r = p.sim ? os::recvNowait(p.fd, spanOf(frame), len)
+			  : os::recvPacket(p.fd, spanOf(frame), len);
+		if (r == os::Rx::DATA) {
+			const ByteView f = viewOf(frame).first(len);
 			// Our EtherType, addressed to us or the group, not sent by us.
-			const bool mine = (len >= kEthHdrLen) && (get_be16(f, 12U) == arcp::kEthertype) &&
-					  ((mac_at(f, 0U) == p.mac) || (mac_at(f, 0U) == arcp::kGroupAddr)) &&
-					  (mac_at(f, 6U) != p.mac);
+			const bool mine = (len >= ETH_HDR_LEN) && (getBe16(f, 12U) == arcp::ETHERTYPE) &&
+					  ((macAt(f, 0U) == p.mac) || (macAt(f, 0U) == arcp::GROUP_ADDR)) &&
+					  (macAt(f, 6U) != p.mac);
 			if (mine) {
-				src = mac_at(f, 6U);
-				n = copy_bytes(payload, f.sub(kEthHdrLen, len - kEthHdrLen));
+				src = macAt(f, 6U);
+				n = copyBytes(payload, f.sub(ETH_HDR_LEN, len - ETH_HDR_LEN));
 			} else {
-				r = os::Rx::empty;
+				r = os::Rx::EMPTY;
 			}
 		}
 	}

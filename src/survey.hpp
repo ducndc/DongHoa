@@ -13,8 +13,8 @@ struct SurveySample {
 	bool valid{false};
 	int freq{0};
 	std::int8_t noise{0};
-	std::uint64_t active_ms{0U};
-	std::uint64_t busy_ms{0U};
+	std::uint64_t activeMs{0U};
+	std::uint64_t busyMs{0U};
 };
 
 class Survey {
@@ -26,9 +26,9 @@ public:
 	static int util(const SurveySample &prev, const SurveySample &cur) noexcept;
 
 private:
-	os::Fd fd_{};
-	std::uint16_t family_{0U};
-	std::uint32_t seq_{0U};
+	os::Fd mFd{};
+	std::uint16_t mFamily{0U};
+	std::uint32_t mSeq{0U};
 };
 
 } // namespace donghoa

@@ -5,7 +5,7 @@
 | Applies to | `src/`, `tools/` (production code). `tests/` follows §4 and §5.9 only, and may use macros (§6.1) |
 | Baseline standard | MISRA C++:2023 (guidelines for C++17) |
 | Language | ISO C++17, `-fno-exceptions -fno-rtti`, no dynamic memory |
-| Document version | 2.0, 2026-11-01 (1.x covered the C11 code base and MISRA C:2012) |
+| Document version | 2.1, 2026-11-01 (2.1: naming conventions in §4; 1.x covered the C11 code base and MISRA C:2012) |
 | Check | Compiler warnings (§7), `make check-deps`, `make cppcheck`, review checklist (§9) |
 
 ## 1. Purpose and status
@@ -72,9 +72,30 @@ C version:
   statement in braces (Rule 9.3.1).
 - `//` comments. No commented-out code (Rule 5.7.2). No `/*` inside a
   comment (Rule 5.7.1).
-- `snake_case` for functions, variables and enumerators; `PascalCase` for
-  types; `kPascalCase` for constants; member variables end in `_`
-  (`ap_id_`).
+- **Naming** (common C++ naming practice, adopted in version 2.1 of this
+  document; names are descriptive, never `x`/`var1`, except short loop
+  indexes such as `i`):
+
+  | What | Style | Examples |
+  |---|---|---|
+  | Classes, structs, enums, type aliases | `PascalCase` noun | `Daemon`, `SteerTxn`, `RemoteBss`, `Millis` |
+  | Functions and methods | `camelCase`, starting with a verb; event handlers start with `on`; predicates with `is`/`has` | `startSteer`, `findPeer`, `sendHello`, `onSteerReq`, `isBssOverloaded`, `hasBtmCapab` |
+  | Accessors and conversions | `camelCase` noun or `xToY` | `flags()`, `msgId()`, `cStr()`, `freqToChan`, `beaconModeName` |
+  | Parameters, local variables, public struct fields | `camelCase` | `durationMs`, `cfgPath`, `lowCount` |
+  | Private data members | `m` + `PascalCase` | `mApId`, `mBss`, `mPending` |
+  | Variables with static storage (namespace scope, DEV-05) | `s` + `PascalCase` | `sDaemon`, `sLevels`, `sStop` |
+  | Constants (`constexpr`/`const`, any scope) and enumerators | `UPPER_CASE` | `MAX_STA`, `CMD_TIMEOUT_MS`, `LogModule::STEER`, `MsgType::STA_EVENT` |
+  | Namespaces | lower case | `donghoa`, `os`, `arcp` |
+  | Files | `snake_case` with `.hpp`/`.cpp`, no name of a system header | `hapd_parse.cpp` |
+
+  No Hungarian `p`/`r` prefixes for pointers and references: the type says
+  it. `UPPER_CASE` is usually reserved for macros; here it is safe because
+  production code defines no macros besides include guards, and a constant
+  that collides with a system macro is a compile error. Names that come
+  from the C++ library or POSIX (`std::size_t`, `sockaddr_un::sun_path`)
+  keep their own spelling. Strings on the wire, in the configuration file,
+  in log messages and in control commands keep theirs too (`peer_timeout_ms`,
+  `STAS`), so renaming code never changes behaviour.
 - Namespaces: `donghoa` for everything, with nested `os`, `logging`,
   `policy`, `hapd`, `rrm`, `arcp` (wire format, `proto.hpp`).
 - One declarator per declaration.
@@ -117,7 +138,7 @@ C version:
 
 | Rule | Project practice |
 |---|---|
-| 8.0.1 | Parenthesize when mixing operators of different precedence: `(a & kMask) != 0U` |
+| 8.0.1 | Parenthesize when mixing operators of different precedence: `(a & MASK) != 0U` |
 | 7.0.1, 7.0.2 | No implicit conversion between `bool` and numbers. Conditions are written out: `if (p != nullptr)`, `if (n != 0U)`, `if (!opt.has_value())` |
 | 8.18.2, 8.19.1 | Assignments are not used as values; no comma operator |
 | 8.14.1 | The right operand of `&&` / `\|\|` has no side effects |
@@ -140,7 +161,7 @@ C version:
 | Rule | Project practice |
 |---|---|
 | 0.1.2 | A non-`void` return value is used, or explicitly discarded with `(void)` |
-| — (Dir 4.7 heritage) | Every error a function can report is tested: socket calls, hostapd commands, parsers, `config_line` |
+| — (Dir 4.7 heritage) | Every error a function can report is tested: socket calls, hostapd commands, parsers, `parseConfigLine` |
 | 13.3.x | Parameters are not modified. Large objects are passed by `const &` and output parameters by `&`, not by pointer, unless "absent" is meaningful (`const Mac *target` may be `nullptr`) |
 | 21.10.1 | No `<cstdarg>`. The `{}` formatter (`text.hpp`) takes a fixed array of typed `FmtArg`s built by a variadic template, so a mismatched argument is a compile error, not undefined behaviour |
 | — | Functions are `noexcept` |
@@ -151,7 +172,7 @@ C version:
 |---|---|
 | 8.7.1, 8.7.2 | Pointer arithmetic stays inside one array. Code works on `ByteView`/`ByteSpan` (pointer + size) and indexes them; `first(n)` and `sub(off, n)` check bounds |
 | 11.3.1 | No C-style arrays in new code: `std::array`. The kernel BPF program in `os.cpp` is the only C array (DEV-01) |
-| 21.2.2 | No `<cstring>` functions (`memcpy`, `strlen`, `memcmp`, …) outside `os.cpp` (DEV-04). Byte copies use `copy_bytes`, comparisons `equal()` or the type's `operator==` (`Mac`, `BssInfo`), never a byte compare over a struct with padding |
+| 21.2.2 | No `<cstring>` functions (`memcpy`, `strlen`, `memcmp`, …) outside `os.cpp` (DEV-04). Byte copies use `copyBytes`, comparisons `equal()` or the type's `operator==` (`Mac`, `BssInfo`), never a byte compare over a struct with padding |
 | 12.3.1 | No `union` |
 
 ### 5.8 Standard library
@@ -159,10 +180,10 @@ C version:
 | Rule | Project practice |
 |---|---|
 | 21.6.1, 21.6.2 | **No dynamic memory.** All state is fixed-size: `std::array`, `FixedString<N>` (bounded, truncating, always NUL-terminated) |
-| 21.2.1 | No `atoi`/`atol`/`atof`/`strtol`: numbers are parsed with `std::from_chars`, with range checks, through `parse_long`, `parse_long_tok` and `parse_u64` (`text.cpp`) |
-| 30.0.1 | No C stdio. Output goes through `os::write_stderr`, `os::write_stdout` and `os::syslog_write` |
+| 21.2.1 | No `atoi`/`atol`/`atof`/`strtol`: numbers are parsed with `std::from_chars`, with range checks, through `parseLong`, `parseLongTok` and `parseU64` (`text.cpp`) |
+| 30.0.1 | No C stdio. Output goes through `os::writeStderr`, `os::writeStdout` and `os::writeSyslog` |
 | 21.10.3 | No `<csignal>` outside `os.cpp` (DEV-03) |
-| 18.x | No exceptions: none thrown and none caught, and no library call that can throw. Use `sub_view()` instead of `std::string_view::substr`, `operator[]` after a bounds check instead of `at()`. `make check-deps` catches a slip, because the throw helper lives in `libstdc++.so` |
+| 18.x | No exceptions: none thrown and none caught, and no library call that can throw. Use `subView()` instead of `std::string_view::substr`, `operator[]` after a bounds check instead of `at()`. `make check-deps` catches a slip, because the throw helper lives in `libstdc++.so` |
 | 21.x (sorting) | The candidate list (≤ 16 entries) uses a stable insertion sort that moves an entry only past strictly lower scores, so equal scores keep their order |
 
 ### 5.9 External input and run-time safety
@@ -173,7 +194,7 @@ messages and radiotap frames.
 
 | Rule | Project practice |
 |---|---|
-| 4.1.3 (and Dir 4.14 heritage) | Every length and offset from outside is checked before use. Decoders (`arcp::decode`, `TlvReader`, `hapd::parse_*`, `rrm::bcn_rep_parse_hex`, `rrm::radiotap_parse`, the netlink attribute walk in `survey.cpp`) check sizes first and accept longer TLVs than they understand |
+| 4.1.3 (and Dir 4.14 heritage) | Every length and offset from outside is checked before use. Decoders (`arcp::decode`, `TlvReader`, `hapd::parse*`, `rrm::parseBcnRepHex`, `rrm::parseRadiotap`, the netlink attribute walk in `survey.cpp`) check sizes first and accept longer TLVs than they understand |
 | 4.1.3 | No undefined behaviour: indexes range-checked, arithmetic on external values cannot overflow (wider type, then clamp), division only by non-zero, enum values from the wire validated before `static_cast` |
 | 0.3.x | Floating point is used only in the throughput model's table set-up (`policy.cpp`), never on wire data |
 | — (project) | Blocking calls are bounded (hostapd 1 s, netlink 0.5 s); the event loop has one thread |
@@ -200,8 +221,8 @@ call, no `reinterpret_cast` and no `<cstring>` include. A new use goes into
 | ID | Rule | Scope | Justification | Compensating measures |
 |---|---|---|---|---|
 | DEV-01 | 30.0.1, 11.3.1, 21.2.2 (`strerror`) | `os.cpp`: POSIX and Linux system calls (`socket`, `bind`, `sendto`, `recv`, `poll`, `ioctl`, `open`, `read`, `write`, `unlink`, `chown`, `clock_gettime`, `getrandom`, `syslog`, `strerror`) and the C array that holds the kernel BPF program | A daemon on Linux has no other way to reach the network, hostapd, nl80211 or the clock | Each call's result is tested; descriptors are owned by `os::Fd` (closed on every path); buffer sizes come from `std::array::size()` / `ByteSpan::size()` |
-| DEV-02 | 8.2.5 | `os.cpp`: `reinterpret_cast` from `sockaddr_un`/`sockaddr_ll`/`sockaddr_in`/`sockaddr_nl` to `sockaddr *` | The POSIX socket interface takes `struct sockaddr *` | One helper (`as_sockaddr`) per direction; the address structs are value-initialized (`{}`) and filled field by field |
-| DEV-03 | 21.10.3 | `os.cpp`: `sigaction` for SIGINT/SIGTERM, SIGPIPE ignored | A service must stop cleanly (to send BYE) when procd stops it | The handler only writes a `volatile sig_atomic_t` flag, read through `os::stop_requested()` |
+| DEV-02 | 8.2.5 | `os.cpp`: `reinterpret_cast` from `sockaddr_un`/`sockaddr_ll`/`sockaddr_in`/`sockaddr_nl` to `sockaddr *` | The POSIX socket interface takes `struct sockaddr *` | One helper (`asSockaddr`) per direction; the address structs are value-initialized (`{}`) and filled field by field |
+| DEV-03 | 21.10.3 | `os.cpp`: `sigaction` for SIGINT/SIGTERM, SIGPIPE ignored | A service must stop cleanly (to send BYE) when procd stops it | The handler only writes a `volatile sig_atomic_t` flag, read through `os::stopRequested()` |
 | DEV-04 | 21.2.2 | `os.cpp`: `std::memcpy`/`std::strlen` for `ifreq`, socket paths and native-endian netlink fields (`load_ne*`/`store_ne*`) | Kernel structures and host-order netlink integers have no portable byte-wise alternative | Lengths checked against the destination's `sizeof` first; netlink offsets checked against the received length |
 | DEV-05 | 6.7.2 (and 6.7.1) | Namespace-scope state: the `Daemon` object (`main.cpp`), log levels (`log.cpp`), the hostapd reply-socket counter (`hapd.cpp`), the signal flag and the BPF program (`os.cpp`; `SO_ATTACH_FILTER` takes a non-`const` pointer) | Without a heap, the daemon's 240 KB of tables must have static storage: on the stack they would depend on the process stack limit. Putting them in `.bss` makes memory use known at link time (`size donghoa`) | Each object is in an unnamed namespace (internal linkage) and reached only through its module's functions; one thread, so no data races |
 

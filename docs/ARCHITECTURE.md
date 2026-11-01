@@ -62,7 +62,7 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
    '-- cooldown / exponential backoff per STA (steer_cooldown_ms .. steer_backoff_max_ms)
 ```
 
-Triggers, from `steer_on_sta_poll` and `steer_lb_round`:
+Triggers, from `onStaPoll` and `runLbRound`:
 - **RSSI:** the smoothed RSSI stays below `rssi_low` for `rssi_low_count`
   polls. A candidate must beat the current RSSI by `rssi_hysteresis` and reach
   at least `rssi_min_target`.

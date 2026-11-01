@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Logging with a level per module and type-safe "{}" formatting:
 //
-//   namespace { constexpr LogModule kMod{LogModule::steer}; }
-//   logging::info(kMod, "steer #{} start", id);
+//   namespace { constexpr LogModule LOG_MODULE{LogModule::STEER}; }
+//   logging::info(LOG_MODULE, "steer #{} start", id);
 #ifndef DONGHOA_LOG_HPP
 #define DONGHOA_LOG_HPP
 
@@ -15,40 +15,40 @@
 
 namespace donghoa {
 
-enum class LogLevel : std::uint8_t { err = 0U, warn = 1U, info = 2U, debug = 3U };
+enum class LogLevel : std::uint8_t { ERR = 0U, WARN = 1U, INFO = 2U, DEBUG = 3U };
 
 enum class LogModule : std::uint8_t {
-	main = 0U,
-	l2,
-	msg,
-	peer,
-	hapd,
-	local,
-	steer,
-	policy,
-	amon,
-	survey,
-	ctrl,
-	config,
-	count
+	MAIN = 0U,
+	L2,
+	MSG,
+	PEER,
+	HAPD,
+	LOCAL,
+	STEER,
+	POLICY,
+	AMON,
+	SURVEY,
+	CTRL,
+	CONFIG,
+	COUNT
 };
 
 namespace logging {
 
-constexpr std::size_t kModules = static_cast<std::size_t>(LogModule::count);
+constexpr std::size_t MODULES = static_cast<std::size_t>(LogModule::COUNT);
 
 bool enabled(LogModule m, LogLevel l) noexcept;
 LogLevel level(LogModule m) noexcept;
-void set_level(LogModule m, LogLevel l) noexcept;
-void set_all(LogLevel l) noexcept;
-std::optional<LogLevel> parse_level(std::string_view s) noexcept;
-std::optional<LogModule> parse_module(std::string_view s) noexcept;
-std::string_view level_name(LogLevel l) noexcept;
-std::string_view module_name(LogModule m) noexcept;
-// Module from its index 0..kModules-1.
-LogModule module_at(std::size_t i) noexcept;
+void setLevel(LogModule m, LogLevel l) noexcept;
+void setAll(LogLevel l) noexcept;
+std::optional<LogLevel> parseLevel(std::string_view s) noexcept;
+std::optional<LogModule> parseModule(std::string_view s) noexcept;
+std::string_view levelName(LogLevel l) noexcept;
+std::string_view moduleName(LogModule m) noexcept;
+// Module from its index 0..MODULES-1.
+LogModule moduleAt(std::size_t i) noexcept;
 // Log to syslog (daemon facility, ident "donghoa") instead of stderr.
-void use_syslog(bool on) noexcept;
+void useSyslog(bool on) noexcept;
 void emit(LogModule m, LogLevel l, std::string_view text) noexcept;
 
 template <typename... A>
@@ -56,7 +56,7 @@ void write(LogModule m, LogLevel l, std::string_view fmt, const A &...args) noex
 {
 	if (enabled(m, l)) {
 		Line line;
-		format_to(line, fmt, args...);
+		formatTo(line, fmt, args...);
 		emit(m, l, line.view());
 	}
 }
@@ -64,25 +64,25 @@ void write(LogModule m, LogLevel l, std::string_view fmt, const A &...args) noex
 template <typename... A>
 void err(LogModule m, std::string_view fmt, const A &...args) noexcept
 {
-	write(m, LogLevel::err, fmt, args...);
+	write(m, LogLevel::ERR, fmt, args...);
 }
 
 template <typename... A>
 void warn(LogModule m, std::string_view fmt, const A &...args) noexcept
 {
-	write(m, LogLevel::warn, fmt, args...);
+	write(m, LogLevel::WARN, fmt, args...);
 }
 
 template <typename... A>
 void info(LogModule m, std::string_view fmt, const A &...args) noexcept
 {
-	write(m, LogLevel::info, fmt, args...);
+	write(m, LogLevel::INFO, fmt, args...);
 }
 
 template <typename... A>
 void dbg(LogModule m, std::string_view fmt, const A &...args) noexcept
 {
-	write(m, LogLevel::debug, fmt, args...);
+	write(m, LogLevel::DEBUG, fmt, args...);
 }
 
 } // namespace logging

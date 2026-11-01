@@ -17,51 +17,51 @@ namespace donghoa {
 namespace arcp {
 
 // IEEE Std 802 "Local Experimental EtherType 1": replace for a product.
-constexpr std::uint16_t kEthertype = 0x88B5U;
+constexpr std::uint16_t ETHERTYPE = 0x88B5U;
 // Locally administered group address 03:41:52:43:50:00 ("ARCP").
-constexpr Mac kGroupAddr{{0x03U, 0x41U, 0x52U, 0x43U, 0x50U, 0x00U}};
-constexpr std::uint16_t kMagic = 0x4152U; // "AR"
-constexpr std::uint8_t kVersion = 1U;
-constexpr std::size_t kHdrLen = 24U;
+constexpr Mac GROUP_ADDR{{0x03U, 0x41U, 0x52U, 0x43U, 0x50U, 0x00U}};
+constexpr std::uint16_t MAGIC = 0x4152U; // "AR"
+constexpr std::uint8_t VERSION = 1U;
+constexpr std::size_t HDR_LEN = 24U;
 // Header + TLVs; leaves room for VLAN/backhaul encapsulation in 1500 bytes.
-constexpr std::size_t kMaxPayload = 1400U;
-constexpr std::size_t kAuthLen = 16U;
-constexpr std::size_t kTlvHdrLen = 3U;
-constexpr std::size_t kStaEntryLen = 30U;
+constexpr std::size_t MAX_PAYLOAD = 1400U;
+constexpr std::size_t AUTH_LEN = 16U;
+constexpr std::size_t TLV_HDR_LEN = 3U;
+constexpr std::size_t STA_ENTRY_LEN = 30U;
 
 // Header flags
-constexpr std::uint8_t kFlagAckReq = 0x01U;
-constexpr std::uint8_t kFlagAuth = 0x02U;
+constexpr std::uint8_t FLAG_ACK_REQ = 0x01U;
+constexpr std::uint8_t FLAG_AUTH = 0x02U;
 
 enum class MsgType : std::uint8_t {
-	hello = 0x01U,
-	bss_status = 0x02U,
-	sta_status = 0x03U,
-	rf_status = 0x04U,
-	sta_event = 0x05U,
-	steer_req = 0x10U,
-	steer_resp = 0x11U,
-	steer_result = 0x12U,
-	sta_monitor_req = 0x13U,
-	sta_monitor_report = 0x14U,
-	ack = 0x20U,
-	bye = 0x21U,
+	HELLO = 0x01U,
+	BSS_STATUS = 0x02U,
+	STA_STATUS = 0x03U,
+	RF_STATUS = 0x04U,
+	STA_EVENT = 0x05U,
+	STEER_REQ = 0x10U,
+	STEER_RESP = 0x11U,
+	STEER_RESULT = 0x12U,
+	STA_MONITOR_REQ = 0x13U,
+	STA_MONITOR_REPORT = 0x14U,
+	ACK = 0x20U,
+	BYE = 0x21U,
 };
 
 enum class Tlv : std::uint8_t {
-	ap_info = 0x01U,
-	bss_info = 0x02U,
-	bss_load = 0x03U,
-	sta_entry = 0x04U,
-	rf_info = 0x05U,
-	sta_event = 0x06U,
-	steer_req = 0x10U,
-	steer_resp = 0x11U,
-	steer_result = 0x12U,
-	ack = 0x13U,
-	sta_monitor_req = 0x14U,
-	sta_monitor_result = 0x15U,
-	auth = 0xFFU,
+	AP_INFO = 0x01U,
+	BSS_INFO = 0x02U,
+	BSS_LOAD = 0x03U,
+	STA_ENTRY = 0x04U,
+	RF_INFO = 0x05U,
+	STA_EVENT = 0x06U,
+	STEER_REQ = 0x10U,
+	STEER_RESP = 0x11U,
+	STEER_RESULT = 0x12U,
+	ACK = 0x13U,
+	STA_MONITOR_REQ = 0x14U,
+	STA_MONITOR_RESULT = 0x15U,
+	AUTH = 0xFFU,
 };
 
 constexpr std::uint8_t raw(MsgType t) noexcept
@@ -75,61 +75,61 @@ constexpr std::uint8_t raw(Tlv t) noexcept
 }
 
 // AP flags (ApInfo::flags)
-constexpr std::uint16_t kApFlagAirMonitor = 0x0001U;
+constexpr std::uint16_t AP_FLAG_AIR_MONITOR = 0x0001U;
 
 // Band (BssInfo::band)
-constexpr std::uint8_t kBand2g = 2U;
-constexpr std::uint8_t kBand5g = 5U;
-constexpr std::uint8_t kBand6g = 6U;
+constexpr std::uint8_t BAND_2G = 2U;
+constexpr std::uint8_t BAND_5G = 5U;
+constexpr std::uint8_t BAND_6G = 6U;
 
 // Channel width code (BssInfo::bw)
-constexpr std::uint8_t kBw20 = 0U;
-constexpr std::uint8_t kBw40 = 1U;
-constexpr std::uint8_t kBw80 = 2U;
-constexpr std::uint8_t kBw160 = 3U;
-constexpr std::uint8_t kBw320 = 4U;
+constexpr std::uint8_t BW20 = 0U;
+constexpr std::uint8_t BW40 = 1U;
+constexpr std::uint8_t BW80 = 2U;
+constexpr std::uint8_t BW160 = 3U;
+constexpr std::uint8_t BW320 = 4U;
 
 // BSS capability bits (BssInfo::caps)
-constexpr std::uint16_t kCapFt = 0x0001U;
-constexpr std::uint16_t kCapBtm = 0x0002U;
-constexpr std::uint16_t kCapRrmNr = 0x0004U;
-constexpr std::uint16_t kCapRrmBcn = 0x0008U;
-constexpr std::uint16_t kCapHt = 0x0010U;
-constexpr std::uint16_t kCapVht = 0x0020U;
-constexpr std::uint16_t kCapHe = 0x0040U;
-constexpr std::uint16_t kCapEht = 0x0080U;
-constexpr std::uint16_t kCapFtOverDs = 0x0100U;
+constexpr std::uint16_t CAP_FT = 0x0001U;
+constexpr std::uint16_t CAP_BTM = 0x0002U;
+constexpr std::uint16_t CAP_RRM_NR = 0x0004U;
+constexpr std::uint16_t CAP_RRM_BCN = 0x0008U;
+constexpr std::uint16_t CAP_HT = 0x0010U;
+constexpr std::uint16_t CAP_VHT = 0x0020U;
+constexpr std::uint16_t CAP_HE = 0x0040U;
+constexpr std::uint16_t CAP_EHT = 0x0080U;
+constexpr std::uint16_t CAP_FT_OVER_DS = 0x0100U;
 
-// STA flag bits (StaEntry::flags, SteerReq::sta_flags)
-constexpr std::uint8_t kStaF11k = 0x01U;
-constexpr std::uint8_t kStaF11v = 0x02U;
-constexpr std::uint8_t kStaF11r = 0x04U;
-constexpr std::uint8_t kStaFIdle = 0x08U;
-constexpr std::uint8_t kStaFSteering = 0x10U;
+// STA flag bits (StaEntry::flags, SteerReq::staFlags)
+constexpr std::uint8_t STA_F11K = 0x01U;
+constexpr std::uint8_t STA_F11V = 0x02U;
+constexpr std::uint8_t STA_F11R = 0x04U;
+constexpr std::uint8_t STA_F_IDLE = 0x08U;
+constexpr std::uint8_t STA_F_STEERING = 0x10U;
 
 // BssLoad::flags
-constexpr std::uint8_t kLoadAccepting = 0x01U;
+constexpr std::uint8_t LOAD_ACCEPTING = 0x01U;
 
-enum class StaEventType : std::uint8_t { assoc = 1U, disassoc = 2U };
+enum class StaEventType : std::uint8_t { ASSOC = 1U, DISASSOC = 2U };
 
-enum class SteerReason : std::uint8_t { rssi = 1U, load = 2U, band = 3U, manual = 4U };
+enum class SteerReason : std::uint8_t { RSSI = 1U, LOAD = 2U, BAND = 3U, MANUAL = 4U };
 
 enum class SteerStatus : std::uint8_t {
-	accept = 0U,
-	unknown_bss = 1U,
-	capacity = 2U,
-	load = 3U,
-	busy = 4U,
-	policy = 5U,
+	ACCEPT = 0U,
+	UNKNOWN_BSS = 1U,
+	CAPACITY = 2U,
+	LOAD = 3U,
+	BUSY = 4U,
+	POLICY = 5U,
 };
 
 enum class SteerOutcome : std::uint8_t {
-	success = 0U,
-	btm_reject = 1U,
-	btm_timeout = 2U,
-	roam_timeout = 3U,
-	wrong_target = 4U,
-	aborted = 5U,
+	SUCCESS = 0U,
+	BTM_REJECT = 1U,
+	BTM_TIMEOUT = 2U,
+	ROAM_TIMEOUT = 3U,
+	WRONG_TARGET = 4U,
+	ABORTED = 5U,
 };
 
 // ---- message contents (fields that are enums on the wire stay raw bytes,
@@ -137,44 +137,44 @@ enum class SteerOutcome : std::uint8_t {
 
 struct ApInfo {
 	std::uint16_t flags{0U};
-	std::uint16_t hello_ms{0U};
-	std::uint8_t num_bss{0U};
+	std::uint16_t helloMs{0U};
+	std::uint8_t numBss{0U};
 	FixedString<32U> name{};
 };
 
 struct BssInfo {
 	Mac bssid{};
 	std::uint16_t freq{0U};
-	std::uint8_t op_class{0U};
+	std::uint8_t opClass{0U};
 	std::uint8_t channel{0U};
 	std::uint8_t band{0U};
 	std::uint8_t bw{0U};
-	std::uint8_t phy_type{0U};
+	std::uint8_t phyType{0U};
 	std::uint16_t caps{0U};
 	std::uint16_t mdid{0U};
-	std::uint32_t bssid_info{0U}; // 802.11 Neighbor Report BSSID Information
-	std::uint8_t ssid_len{0U};
+	std::uint32_t bssidInfo{0U}; // 802.11 Neighbor Report BSSID Information
+	std::uint8_t ssidLen{0U};
 	std::array<std::uint8_t, 32U> ssid{};
 
-	ByteView ssid_view() const noexcept { return ByteView(ssid.data(), ssid_len); }
+	ByteView ssidView() const noexcept { return ByteView(ssid.data(), ssidLen); }
 };
 
-// Field-wise equality; SSIDs compare up to ssid_len.
+// Field-wise equality; SSIDs compare up to ssidLen.
 bool operator==(const BssInfo &a, const BssInfo &b) noexcept;
 inline bool operator!=(const BssInfo &a, const BssInfo &b) noexcept
 {
 	return !(a == b);
 }
 // Same ESS: same SSID.
-bool same_ess(const BssInfo &a, const BssInfo &b) noexcept;
+bool isSameEss(const BssInfo &a, const BssInfo &b) noexcept;
 
 struct BssLoad {
 	Mac bssid{};
-	std::uint16_t sta_count{0U};
-	std::uint16_t max_sta{0U};
+	std::uint16_t staCount{0U};
+	std::uint16_t maxSta{0U};
 	std::uint8_t util{255U}; // 0..254 like the BSS Load element; 255 = unknown
 	std::int8_t noise{0};
-	std::int8_t tx_power{0};
+	std::int8_t txPower{0};
 	std::uint8_t flags{0U};
 };
 
@@ -183,22 +183,22 @@ struct StaEntry {
 	Mac bssid{};
 	std::int8_t rssi{0};
 	std::uint8_t flags{0U};
-	std::uint32_t connected_s{0U};
-	std::uint32_t inactive_ms{0U};
-	std::uint16_t tx_rate_mbps{0U};
-	std::uint16_t rx_rate_mbps{0U};
-	std::uint32_t tput_kbps{0U};
+	std::uint32_t connectedS{0U};
+	std::uint32_t inactiveMs{0U};
+	std::uint16_t txRateMbps{0U};
+	std::uint16_t rxRateMbps{0U};
+	std::uint32_t tputKbps{0U};
 };
 
 struct RfInfo {
-	std::uint8_t radio_id{0U};
+	std::uint8_t radioId{0U};
 	std::uint16_t freq{0U};
-	std::uint8_t op_class{0U};
+	std::uint8_t opClass{0U};
 	std::uint8_t channel{0U};
 	std::uint8_t bw{0U};
 	std::uint8_t util{0U};
 	std::int8_t noise{0};
-	std::int8_t tx_power{0};
+	std::int8_t txPower{0};
 };
 
 struct StaEvent {
@@ -211,33 +211,33 @@ struct StaEvent {
 struct SteerReq {
 	std::uint32_t txn{0U};
 	Mac sta{};
-	Mac src_bssid{};
-	Mac tgt_bssid{};
+	Mac srcBssid{};
+	Mac tgtBssid{};
 	std::uint8_t reason{0U}; // SteerReason
 	std::uint8_t rcpi{255U}; // STA-measured RCPI of the target, 255 = n/a
-	std::uint8_t sta_flags{0U};
-	std::int8_t cur_rssi{0};
+	std::uint8_t staFlags{0U};
+	std::int8_t curRssi{0};
 };
 
 struct SteerResp {
 	std::uint32_t txn{0U};
 	std::uint8_t status{0U}; // SteerStatus
-	std::uint16_t hold_ms{0U};
+	std::uint16_t holdMs{0U};
 };
 
 struct SteerResult {
 	std::uint32_t txn{0U};
 	Mac sta{};
 	std::uint8_t outcome{0U}; // SteerOutcome
-	std::uint8_t btm_status{0U};
+	std::uint8_t btmStatus{0U};
 };
 
 // Ask a peer to measure a STA with its air monitors.
 struct StaMonitorReq {
 	std::uint32_t txn{0U};
 	Mac sta{};
-	std::uint16_t duration_ms{0U};
-	std::uint8_t op_class{0U}; // channel the STA is on now (hint)
+	std::uint16_t durationMs{0U};
+	std::uint8_t opClass{0U}; // channel the STA is on now (hint)
 	std::uint8_t channel{0U};
 };
 
@@ -248,15 +248,15 @@ struct StaMonitorResult {
 	Mac bssid{};
 	std::int8_t rssi{0};
 	std::uint16_t samples{0U};
-	std::uint16_t age_ms{0U}; // since the last sample
+	std::uint16_t ageMs{0U}; // since the last sample
 };
 
 // ---- encoding ----
 
 class Message {
 public:
-	void begin(MsgType type, std::uint8_t flags, const Mac &origin, std::uint32_t boot_id,
-		   std::uint32_t msg_id) noexcept;
+	void begin(MsgType type, std::uint8_t flags, const Mac &origin, std::uint32_t bootId,
+		   std::uint32_t msgId) noexcept;
 	// Bytes still available for TLVs, keeping room for the AUTH TLV.
 	std::size_t room() const noexcept;
 
@@ -273,23 +273,23 @@ public:
 	bool add(const SteerResult &v) noexcept;
 	bool add(const StaMonitorReq &v) noexcept;
 	bool add(const StaMonitorResult &v) noexcept;
-	bool add_ack(std::uint32_t msg_id) noexcept;
+	bool addAck(std::uint32_t msgId) noexcept;
 
 	// Sets the length and, with a non-empty key, appends the HMAC.
 	// False if any TLV did not fit.
 	bool finish(ByteView key) noexcept;
 
-	ByteView bytes() const noexcept { return ByteView(buf_.data(), len_); }
-	std::uint8_t type() const noexcept { return buf_[3U]; }
-	std::uint8_t flags() const noexcept { return buf_[4U]; }
-	std::uint32_t msg_id() const noexcept { return get_be32(view_of(buf_), 6U); }
+	ByteView bytes() const noexcept { return ByteView(mBuf.data(), mLen); }
+	std::uint8_t type() const noexcept { return mBuf[3U]; }
+	std::uint8_t flags() const noexcept { return mBuf[4U]; }
+	std::uint32_t msgId() const noexcept { return getBe32(viewOf(mBuf), 6U); }
 
 private:
-	bool put_tlv(Tlv t, ByteView value) noexcept;
+	bool putTlv(Tlv t, ByteView value) noexcept;
 
-	std::array<std::uint8_t, kMaxPayload> buf_{};
-	std::size_t len_{0U};
-	bool overflow_{false};
+	std::array<std::uint8_t, MAX_PAYLOAD> mBuf{};
+	std::size_t mLen{0U};
+	bool mOverflow{false};
 };
 
 // ---- decoding ----
@@ -298,13 +298,13 @@ struct Header {
 	std::uint8_t version{0U};
 	std::uint8_t type{0U};
 	std::uint8_t flags{0U};
-	std::uint32_t msg_id{0U};
-	std::uint32_t boot_id{0U};
+	std::uint32_t msgId{0U};
+	std::uint32_t bootId{0U};
 	Mac origin{}; // AP identifier, independent of the egress interface
-	std::uint16_t body_len{0U};
+	std::uint16_t bodyLen{0U};
 };
 
-std::optional<Header> parse_header(ByteView frame) noexcept;
+std::optional<Header> parseHeader(ByteView frame) noexcept;
 // True if authentication succeeds, or if no key is configured and the
 // message carries no AUTH.
 bool verify(ByteView frame, const Header &h, ByteView key) noexcept;
@@ -316,8 +316,8 @@ public:
 	bool next(std::uint8_t &type, ByteView &value) noexcept;
 
 private:
-	ByteView body_;
-	std::size_t pos_{0U};
+	ByteView mBody;
+	std::size_t mPos{0U};
 };
 
 // Decoders accept values longer than they understand (forward compatible).
@@ -332,10 +332,10 @@ bool decode(ByteView v, SteerResp &o) noexcept;
 bool decode(ByteView v, SteerResult &o) noexcept;
 bool decode(ByteView v, StaMonitorReq &o) noexcept;
 bool decode(ByteView v, StaMonitorResult &o) noexcept;
-bool decode_ack(ByteView v, std::uint32_t &msg_id) noexcept;
+bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept;
 
-std::string_view msg_name(std::uint8_t type) noexcept;
-std::string_view tlv_name(std::uint8_t type) noexcept;
+std::string_view msgName(std::uint8_t type) noexcept;
+std::string_view tlvName(std::uint8_t type) noexcept;
 
 } // namespace arcp
 } // namespace donghoa

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 1.4, 2026-11-01 (history in §13) |
+| Document version | 1.5, 2026-11-01 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -71,26 +71,26 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 
 | Module | Layer | Responsibility | Key entry points | SRS |
 |---|---|---|---|---|
-| `main.cpp` | coord. | Start-up, event loop, timer dispatch, shutdown | `main`, `Daemon::init`, `Daemon::run`, `run_timers`, `shutdown` | C-6, NFR-PRF-1, FR-DSC-5 |
-| `os.{hpp,cpp}` | system | Every POSIX/Linux call: clock, randomness, signals, files, UNIX/packet/UDP/netlink sockets, BPF, syslog; `Fd` RAII | `os::now_ms`, `os::Fd`, `os::poll_readable`, `os::packet_open`, `os::unix_request`, `os::netlink_recv`, `os::stop_requested` | C-4, C-6 |
-| `types.hpp` | pure | `Mac`, `ByteView`/`ByteSpan`, big/little-endian get/put, `FixedString<N>` | `get_be16`, `put_be32`, `copy_bytes`, `equal` | — |
-| `text.{hpp,cpp}` | pure | Type-safe `{}` formatting, hex, checked number parsing (`std::from_chars`), MAC and key=value parsing, tokenizer | `format_to`, `hex`, `parse_long`, `parse_u64`, `parse_mac`, `kv_get`, `sub_view`, `Tokens` | IR-1 |
-| `proto.{hpp,cpp}` | pure | ARCP header and TLV encode/decode, HMAC finish/verify, TLV iterator (namespace `arcp`) | `Message::begin/add/finish`, `parse_header`, `verify`, `TlvReader`, `decode` | IR-8..10, FR-SEC-1..2,4 |
-| `sha256.{hpp,cpp}` | pure | SHA-256 and HMAC-SHA256 | `Sha256`, `hmac_sha256` | FR-SEC-1,3 |
-| `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::nr_build_hex`, `bcn_req_build_hex`, `bcn_rep_parse_hex`, `radiotap_parse`, `akm_is_ft`, `ext_capab_has_btm` | IR-9, FR-NBR-2, FR-STR-3 |
-| `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff | `policy::score`, `link_quality`, `peak_mbps`, `expected_kbps`, `triggers`, `admit`, `backoff_ms` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9 |
-| `config.{hpp,cpp}` | pure | Defaults (default member initializers) and line parser with pointer-to-member key tables | `config_line`, `config_load` | IR-1, FR-SEC-3 |
-| `log.{hpp,cpp}` | pure | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `set_level`, `parse_level/module`, `use_syslog` | IR-5 |
-| `hapd_parse.{hpp,cpp}` | pure | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parse_status`, `parse_sta`, `parse_btm_resp` | IR-2 |
-| `l2.{hpp,cpp}` | I/O | `AF_PACKET` ports and UDP sim ports | `L2::add_iface`, `add_sim`, `send`, `recv` | IR-8, IR-11 |
-| `hapd.{hpp,cpp}` | I/O | hostapd command and event sockets | `hapd::Conn::open`, `cmd`, `recv_event` | IR-2 |
+| `main.cpp` | coord. | Start-up, event loop, timer dispatch, shutdown | `main`, `Daemon::init`, `Daemon::run`, `runTimers`, `shutdown` | C-6, NFR-PRF-1, FR-DSC-5 |
+| `os.{hpp,cpp}` | system | Every POSIX/Linux call: clock, randomness, signals, files, UNIX/packet/UDP/netlink sockets, BPF, syslog; `Fd` RAII | `os::nowMs`, `os::Fd`, `os::pollReadable`, `os::openPacket`, `os::sendUnixRequest`, `os::recvNetlink`, `os::stopRequested` | C-4, C-6 |
+| `types.hpp` | pure | `Mac`, `ByteView`/`ByteSpan`, big/little-endian get/put, `FixedString<N>` | `getBe16`, `putBe32`, `copyBytes`, `equal` | — |
+| `text.{hpp,cpp}` | pure | Type-safe `{}` formatting, hex, checked number parsing (`std::from_chars`), MAC and key=value parsing, tokenizer | `formatTo`, `hex`, `parseLong`, `parseU64`, `parseMac`, `getKv`, `subView`, `Tokens` | IR-1 |
+| `proto.{hpp,cpp}` | pure | ARCP header and TLV encode/decode, HMAC finish/verify, TLV iterator (namespace `arcp`) | `Message::begin/add/finish`, `parseHeader`, `verify`, `TlvReader`, `decode` | IR-8..10, FR-SEC-1..2,4 |
+| `sha256.{hpp,cpp}` | pure | SHA-256 and HMAC-SHA256 | `Sha256`, `computeHmacSha256` | FR-SEC-1,3 |
+| `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
+| `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9 |
+| `config.{hpp,cpp}` | pure | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
+| `log.{hpp,cpp}` | pure | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
+| `hapd_parse.{hpp,cpp}` | pure | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
+| `l2.{hpp,cpp}` | I/O | `AF_PACKET` ports and UDP sim ports | `L2::addIface`, `addSim`, `send`, `recv` | IR-8, IR-11 |
+| `hapd.{hpp,cpp}` | I/O | hostapd command and event sockets | `hapd::Conn::open`, `runCommand`, `recvEvent` | IR-2 |
 | `survey.{hpp,cpp}` | I/O | Minimal genetlink client for `NL80211_CMD_GET_SURVEY` | `Survey::open`, `get`, `util` | IR-6, FR-MON-4 |
-| `amon.cpp` | I/O + coord. | Air monitor: BPF-filtered radiotap sockets, STA watches on request, STA_MONITOR_REQ/REPORT, monitor results into the STA's measurements | `amon_init`, `amon_rx`, `amon_watch_start`, `amon_tick`, `amon_on_req`, `amon_on_result` | FR-AMN, IR-13 |
-| `ctrl.cpp` | I/O | Operator command socket | `ctrl_open`, `ctrl_handle`, `ctrl_command` | IR-3 |
-| `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send_*`, `unicast`, `retransmit`, `msg_rx` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
-| `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `peer_get`, `peer_accept_seq`, `peer_bss_update`, `peer_expire`, `peer_remove` | FR-DSC-4,6,7, FR-STE-5 |
-| `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `poll_bss`, `poll_stas`, `handle_event`, `nr_sync` | FR-MON, FR-NBR, FR-STE-4 |
-| `steer.cpp` | coord. | Source-side state machine, target-side admission and reservations | `steer_start`, `steer_tick`, `steer_on_*`, `steer_lb_round` | FR-TRG, FR-STR, FR-ADM |
+| `amon.cpp` | I/O + coord. | Air monitor: BPF-filtered radiotap sockets, STA watches on request, STA_MONITOR_REQ/REPORT, monitor results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
+| `ctrl.cpp` | I/O | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
+| `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
+| `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
+| `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
+| `steer.cpp` | coord. | Source-side state machine, target-side admission and reservations | `startSteer`, `tickSteer`, `on*` handlers, `runLbRound` | FR-TRG, FR-STR, FR-ADM |
 | `tools/donghoa_cli.cpp` | tool | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
 
 ## 4. Runtime design
@@ -116,28 +116,28 @@ every periodic message at once.
 
 ### 4.2 Event loop
 
-`Daemon::run()` rebuilds the descriptor list for `os::poll_readable` on each pass. The array holds every L2
+`Daemon::run()` rebuilds the descriptor list for `os::pollReadable` on each pass. The array holds every L2
 port, the event socket of every connected hostapd, and the control socket.
 It calls `poll()` with a 100 ms timeout [NFR-PRF-1], then:
 
-1. L2 port readable: `msg_rx(port)` drains every queued frame.
-2. hostapd event socket readable: drain events into `handle_event`. A
+1. L2 port readable: `receiveMsg(port)` drains every queued frame.
+2. hostapd event socket readable: drain events into `handleEvent`. A
    receive error closes that hostapd connection.
-3. Control socket readable: `ctrl_handle`.
-4. Monitor socket readable: `amon_rx(port)` drains frames into the watches.
-5. Always: `run_timers(now)`.
+3. Control socket readable: `handleCtrl`.
+4. Monitor socket readable: `receiveAmon(port)` drains frames into the watches.
+5. Always: `runTimers(now)`.
 
-`run_timers` dispatches:
+`runTimers` dispatches:
 
 | Timer | Period (default) | Action |
 |---|---|---|
-| `next_sta_poll` | `sta_poll_interval_ms` (1 s) | `poll_bss` then `poll_stas`, which runs the RSSI/band triggers |
-| `next_hello` | 2 s | `send_hello` |
-| `next_bss_status` | 5 s | `send_bss_status` |
-| `next_sta_status` | 10 s | `send_sta_status` |
-| `next_rf_status` | 10 s | `send_rf_status` |
-| `next_lb` | `lb_interval_ms` (10 s) | `steer_lb_round` |
-| every pass | ≤ 100 ms | `steer_tick` (transaction deadlines, reservation expiry), `amon_tick` (finished watches → reports), `retransmit`, `peer_expire` |
+| `mNextStaPoll` | `sta_poll_interval_ms` (1 s) | `pollBss` then `pollStas`, which runs the RSSI/band triggers |
+| `mNextHello` | 2 s | `sendHello` |
+| `mNextBssStatus` | 5 s | `sendBssStatus` |
+| `mNextStaStatus` | 10 s | `sendStaStatus` |
+| `mNextRfStatus` | 10 s | `sendRfStatus` |
+| `mNextLb` | `lb_interval_ms` (10 s) | `runLbRound` |
+| every pass | ≤ 100 ms | `tickSteer` (transaction deadlines, reservation expiry), `tickAmon` (finished watches → reports), `retransmit`, `expirePeers` |
 
 ### 4.3 Blocking calls and worst-case latency
 
@@ -146,7 +146,7 @@ blocking calls are:
 
 | Call | Bound | Effect when the bound is hit |
 |---|---|---|
-| `hapd::Conn::cmd` (send + wait for reply) | 1 s (`kCmdTimeoutMs`) | Connection closed; BSS marked down at the next poll; reconnect after 5 s |
+| `hapd::Conn::runCommand` (send + wait for reply) | 1 s (`CMD_TIMEOUT_MS`) | Connection closed; BSS marked down at the next poll; reconnect after 5 s |
 | `hapd::Conn::open` ATTACH reply | 1 s | Open fails; retried after 5 s |
 | `Survey::get` receive | 0.5 s per `poll` | Sample invalid; hostapd utilisation used instead |
 
@@ -184,15 +184,15 @@ slots are found by scanning, and running out is logged [NFR-CAP-1].
 
 | Entity | Created | Updated | Removed |
 |---|---|---|---|
-| Peer | First valid message from a new origin (`peer_get`) | Each new message: `last_seen`, path; `boot_id` change resets sequence state | Silence > `peer_timeout_ms`, or BYE → `peer_remove` (NR entries, remote STAs, steering, reservations) |
-| Remote BSS | BSS_INFO in HELLO/BSS_STATUS | Each BSS_INFO (`ts`); a content change clears `nr_installed`; BSS_LOAD sets `load` | Not advertised for 3 × BSS-status period + hello period, or peer removed → `REMOVE_NEIGHBOR` |
+| Peer | First valid message from a new origin (`getPeer`) | Each new message: `lastSeen`, path; `boot_id` change resets sequence state | Silence > `peer_timeout_ms`, or BYE → `removePeer` (NR entries, remote STAs, steering, reservations) |
+| Remote BSS | BSS_INFO in HELLO/BSS_STATUS | Each BSS_INFO (`ts`); a content change clears `nrInstalled`; BSS_LOAD sets `load` | Not advertised for 3 × BSS-status period + hello period, or peer removed → `REMOVE_NEIGHBOR` |
 | Remote STA | STA_ENTRY or STA_EVENT(assoc) from a peer | Same | STA_EVENT(disassoc), local association of the STA, 3 × STA-status period, peer removed |
-| Local BSS | Config (`local_init`) | Each poll: info, load, `up` | Never; marked down on hostapd loss and up again on reconnect |
-| Local STA | Authorised in `STA-FIRST/NEXT`, or `AP-STA-CONNECTED` (`sta_get`, with initial cooldown) | Each poll (`sta_apply_sample`); move between local BSSes resets RSSI and the beacon cache | `AP-STA-DISCONNECTED`, missing from a poll, BSS down |
-| Transaction | `steer_start` | State machine (§6.6) | `txn_end` / `txn_no_candidate` |
+| Local BSS | Config (`initLocal`) | Each poll: info, load, `up` | Never; marked down on hostapd loss and up again on reconnect |
+| Local STA | Authorised in `STA-FIRST/NEXT`, or `AP-STA-CONNECTED` (`getSta`, with initial cooldown) | Each poll (`applyStaSample`); move between local BSSes resets RSSI and the beacon cache | `AP-STA-DISCONNECTED`, missing from a poll, BSS down |
+| Transaction | `startSteer` | State machine (§6.6) | `endTxn` / `failTxnNoCandidate` |
 | Reservation | Accepted STEER_REQ | — | Local association of the STA, STEER_RESULT, expiry, source peer lost |
 | Pending TX | `unicast` with ACK_REQ | Each retransmission | ACK received, 4th transmission unacknowledged, or peer unreachable |
-| Monitor watch | STA_MONITOR_REQ from a peer, a local steer (`request_monitors`) or `MONITOR` | Each matching frame adds to the per-frequency sum | Watch time over (`amon_tick` → report) |
+| Monitor watch | STA_MONITOR_REQ from a peer, a local steer (`requestMonitors`) or `MONITOR` | Each matching frame adds to the per-frequency sum | Watch time over (`tickAmon` → report) |
 
 ## 6. Component design
 
@@ -212,7 +212,7 @@ slots are found by scanning, and running out is logged [NFR-CAP-1].
 
 ### 6.2 Messaging (`msg.cpp`, `proto.cpp`) [FR-REL, FR-SEC, FR-STE]
 
-**Encoding.** `msg_begin` writes the 24-byte header with the next `msg_id` and
+**Encoding.** `beginMsg` writes the 24-byte header with the next `msg_id` and
 this boot's `boot_id`. TLVs are appended with `Message::add`, which reserve room
 for the AUTH TLV and set `overflow` instead of writing past 1400 bytes.
 `Message::finish` sets `body_len` and, when a key is configured, sets the AUTH
@@ -229,7 +229,7 @@ to the caller.
 logs once 4 transmissions are unacknowledged, or when the peer is gone. An
 ACK TLV clears the matching `(peer, msg_id)` entry.
 
-**Receive path (`msg_rx`):**
+**Receive path (`receiveMsg`):**
 
 ```
 frame -> arcp::parse_header (magic, version 1, body fits)  -- else drop
@@ -245,38 +245,38 @@ frame -> arcp::parse_header (magic, version 1, body fits)  -- else drop
       -> new peer: next_hello = next_bss_status = 0 (introduce ourselves) [FR-DSC-3]
 ```
 
-**Replay window (`peer_accept_seq`).** `seq_hi` is the highest `msg_id`
+**Replay window (`acceptPeerSeq`).** `seqHi` is the highest `msg_id`
 accepted and `seq_win` a 64-bit bitmap, where bit *i* means `seq_hi − i` has
 been seen. A higher id shifts the window. An id inside the window is accepted
 once. An id older than 64 is rejected. A new `boot_id` resets the window to
 the new id.
 
-**TLV dispatch (`rx_tlvs`):**
+**TLV dispatch (`handleTlvs`):**
 
 | TLV | Handling |
 |---|---|
 | AP_INFO | Store the peer name |
-| BSS_INFO | `peer_bss_update`; if not yet installed → `nr_sync` after the message |
+| BSS_INFO | `updatePeerBss`; if not yet installed → `syncNeighbors` after the message |
 | BSS_LOAD | Attach load to the remote BSS (`has_load`) |
-| STA_ENTRY | `remote_sta_update` |
+| STA_ENTRY | `updateRemoteSta` |
 | RF_INFO | Replace the peer's RF list (≤ 4) |
-| STA_EVENT | Update or forget the remote STA, then `steer_on_sta_event` |
-| STEER_REQ / RESP / RESULT | `steer_on_req` / `steer_on_resp` / `steer_on_result` |
-| ACK | `ack_received` |
+| STA_EVENT | Update or forget the remote STA, then `onStaEvent` |
+| STEER_REQ / RESP / RESULT | `onSteerReq` / `onSteerResp` / `onSteerResult` |
+| ACK | `onAckReceived` |
 
-**Splitting.** `send_sta_status` starts a new message whenever the next
+**Splitting.** `sendStaStatus` starts a new message whenever the next
 STA_ENTRY would not fit (`Message::room`), so any number of STAs (≤ 256) is
 reported [FR-STE-2].
 
 ### 6.3 Peer management (`peer.cpp`) [FR-DSC, FR-STE-5]
 
-`peer_expire` runs on every loop pass:
+`expirePeers` runs on every loop pass:
 - it removes peers silent for longer than `peer_timeout_ms`;
 - it removes remote BSSes no longer advertised, deleting their neighbor
   entries;
 - it ages out remote STAs.
 
-`peer_remove` calls `steer_on_peer_lost` first:
+`removePeer` calls `onPeerLost` first:
 - transactions negotiating with that peer move to their next candidate;
 - reservations held for that peer are released.
 
@@ -291,7 +291,7 @@ hostapd's socket, so a hostapd running as another user (OpenWrt: `network`)
 can deliver its replies [IR-2]. Unsolicited `<N>` messages arriving on the
 command socket are skipped.
 
-**BSS refresh (`bss_refresh`, every poll):**
+**BSS refresh (`refreshBss`, every poll):**
 1. `STATUS`, parsed for this ifname: freq → channel/band, BSSID, SSID,
    `num_sta`, TX power, HT/VHT/HE/EHT, width. On the transition to up, also
    `GET_CONFIG`: `secured` from `wpa`, and a warning when `mdid` is set but no
@@ -306,34 +306,34 @@ command socket are skipped.
 4. `bss_load`, including `accepting` = `policy::admit(...) == ACCEPT` with the
    current reservations counted [FR-ADM-2].
 5. If the BSS came up or its info changed, clear every remote
-   `nr_installed` flag and run `nr_sync`.
+   `nrInstalled` flag and run `syncNeighbors`.
 
-**STA poll (`poll_stas`):**
+**STA poll (`pollStas`):**
 - Walk `STA-FIRST`/`STA-NEXT`, at most 256 per BSS, and keep only
   `[AUTHORIZED]` STAs.
-- `sta_apply_sample` updates RSSI (EWMA ¾, rounded), the low-sample count,
+- `applyStaSample` updates RSSI (EWMA ¾, rounded), the low-sample count,
   throughput from Δbytes, rates and inactivity, and derives the capability
   flags [FR-MON-3].
 - STAs of that BSS not seen in this poll are removed [FR-MON-5].
-- Each STA seen in this poll then goes to `steer_on_sta_poll` (triggers).
+- Each STA seen in this poll then goes to `onStaPoll` (triggers).
 
-**Events (`handle_event`):**
+**Events (`handleEvent`):**
 
 | Event | Handling |
 |---|---|
-| `AP-STA-CONNECTED` | Create the STA, clear `away`, forget it as remote, multicast STA_EVENT(assoc), feed `steer_on_sta_event` locally |
-| `AP-STA-DISCONNECTED` | Ignored if the STA now belongs to another local BSS (move between local BSSes); otherwise multicast STA_EVENT(disassoc), `steer_on_local_disassoc`, remove |
+| `AP-STA-CONNECTED` | Create the STA, clear `away`, forget it as remote, multicast STA_EVENT(assoc), feed `onStaEvent` locally |
+| `AP-STA-DISCONNECTED` | Ignored if the STA now belongs to another local BSS (move between local BSSes); otherwise multicast STA_EVENT(disassoc), `onLocalDisassoc`, remove |
 | `BEACON-RESP-RX` | Parse the report body; a non-zero report mode or an unparsable body counts as "no report" |
-| `BSS-TM-RESP` | Parse status and target BSSID → `steer_on_btm_resp` |
+| `BSS-TM-RESP` | Parse status and target BSSID → `onBtmResp` |
 
-**Neighbor database (`nr_sync`) [FR-NBR]:**
+**Neighbor database (`syncNeighbors`) [FR-NBR]:**
 - Local siblings (same SSID) are set on each other on every call. hostapd
   treats a repeated `SET_NEIGHBOR` as an update.
 - A remote BSS is installed once in every local BSS of the same ESS and then
-  flagged `nr_installed` until its info changes.
-- `nr_build_hex` sets the Mobility Domain bit per receiving BSS, comparing
+  flagged `nrInstalled` until its info changes.
+- `buildNrHex` sets the Mobility Domain bit per receiving BSS, comparing
   MDIDs.
-- `nr_remove` sends `REMOVE_NEIGHBOR` to every local BSS of that ESS.
+- `removeNeighbor` sends `REMOVE_NEIGHBOR` to every local BSS of that ESS.
 
 ### 6.5 Decision policy (`policy.cpp`) [FR-POL, FR-TRG, FR-ADM-1]
 
@@ -383,9 +383,9 @@ policy::backoff_ms(failures) = min(steer_cooldown_ms * 2^failures, steer_backoff
 
 | State | Entered by | Deadline | Exits |
 |---|---|---|---|
-| MEASURE | `steer_start` after hostapd accepted the (single) Beacon Request and/or air monitor requests were sent | max(`beacon_req_timeout_ms`, `amon_duration_ms` + 500 ms) | Every candidate has an 11k report (with `score_model 1`, the serving BSS too); or, once no 11k report is pending, every candidate has any measurement; or a refused/empty 11k report with no monitor report pending; or the deadline → `evaluate` |
+| MEASURE | `startSteer` after hostapd accepted the (single) Beacon Request and/or air monitor requests were sent | max(`beacon_req_timeout_ms`, `amon_duration_ms` + 500 ms) | Every candidate has an 11k report (with `score_model 1`, the serving BSS too); or, once no 11k report is pending, every candidate has any measurement; or a refused/empty 11k report with no monitor report pending; or the deadline → `evaluate` |
 | NEGOTIATE | `advance` sent STEER_REQ | `steer_resp_timeout_ms` + 1500 ms | ACCEPT → BTM; reject, timeout or peer lost → next candidate |
-| BTM | `send_btm` accepted by hostapd | `btm_timeout_ms` | BSS-TM-RESP 0 → ROAM; ≠ 0 → BTM_REJECT; deadline → BTM_TIMEOUT; association seen → outcome |
+| BTM | `sendBtm` accepted by hostapd | `btm_timeout_ms` | BSS-TM-RESP 0 → ROAM; ≠ 0 → BTM_REJECT; deadline → BTM_TIMEOUT; association seen → outcome |
 | ROAM | BTM accept | `roam_timeout_ms` | Association at the candidate → SUCCESS; at another BSS → WRONG_TARGET; deadline → ROAM_TIMEOUT |
 
 In BTM and ROAM, an association reported back at the source BSS is ignored.
@@ -394,15 +394,15 @@ the STA leaving is expected.
 
 #### 6.6.2 Steps
 
-1. **`steer_start`:** refused when the STA already has a transaction, its BSS
+1. **`startSteer`:** refused when the STA already has a transaction, its BSS
    is down, or all 16 slots are busy.
-2. **`build_pool`:** every local BSS that is up and every remote BSS with the
+2. **`buildPool`:** every local BSS that is up and every remote BSS with the
    same SSID, except the source. For BAND, only higher bands; with a forced
    target, only that BSSID. At most 16. An empty pool applies the cooldown.
-3. **`request_beacons`:** collect the distinct (op class, channel) pairs of
+3. **`requestBeacons`:** collect the distinct (op class, channel) pairs of
    the candidates (with `score_model 1`, the serving channel first), up to 8,
    and send **one** `REQ_BEACON <sta> <hex>`. The hex comes from
-   `bcn_req_build_hex`: wildcard BSSID, the source's SSID subelement,
+   `buildBcnReqHex`: wildcard BSSID, the source's SSID subelement,
    Reporting Detail 0, mode and duration from config. Several channels are
    encoded as Channel 255 plus one AP Channel Report subelement (ID 51) per
    operating class. A STA handles one beacon measurement at a time: with
@@ -411,10 +411,10 @@ the STA leaving is expected.
    answers `FAIL` for a mode the STA did not advertise (RM Enabled
    Capabilities, not visible through the control interface). The request
    is therefore retried in active, then passive mode (passive ≥ 120 TU), and
-   the accepted mode is kept in `sta.bcn_mode` for later steers. Only when
+   the accepted mode is kept in `sta.bcnMode` for later steers. Only when
    all fail is the STA marked as lacking 11k (`bcn_unsupported`). Table mode
    is not a fallback, because it measures nothing new.
-   **`request_monitors`** runs in parallel (§6.10): STA_MONITOR_REQ to each
+   **`requestMonitors`** runs in parallel (§6.10): STA_MONITOR_REQ to each
    candidate owner with AIR_MONITOR, and a local watch for local candidates
    when this AP has a monitor.
 4. **Beacon reports:** stored in the STA's 16-entry cache (the oldest entry
@@ -436,46 +436,46 @@ the STA leaving is expected.
 
    Then it scores, drops ineligible candidates and sorts by score.
 6. **`advance`:** walks the sorted candidates.
-   - Local: `policy::admit` locally, then `send_btm`.
+   - Local: `policy::admit` locally, then `sendBtm`.
    - Remote: STEER_REQ (ACK_REQ) carrying txn id, STA, source and target
      BSSIDs, reason, measured RCPI, STA flags and current RSSI → NEGOTIATE.
    - List exhausted: in MEASURE (nothing was ever tried) → "no suitable
      candidate"; otherwise → ABORTED.
-7. **`send_btm`:**
+7. **`sendBtm`:**
    `BSS_TM_REQ <sta> pref=1 abridged=1 valid_int=<n> [disassoc_imminent=1 disassoc_timer=<t>] neighbor=<bssid>,<info>,<op>,<ch>,<phy>,0301ff`.
    - The Mobility Domain bit is added when the MDIDs match.
    - Subelement 3 sets candidate preference 255.
    - If hostapd refuses the command, the state is set to BTM, so the target
      still receives STEER_RESULT, and the transaction ends ABORTED, counted
      as a failure.
-8. **`txn_end`:** logs the outcome and sends STEER_RESULT when the candidate
+8. **`endTxn`:** logs the outcome and sends STEER_RESULT when the candidate
    is remote and BTM was reached. It applies cooldown or backoff (§6.5,
    [FR-STR-9]) and frees the slot.
 
 #### 6.6.3 Target side
 
-`steer_on_req`, in order:
+`onSteerReq`, in order:
 - UNKNOWN_BSS if the target BSS is not local and up;
 - BUSY if this AP has its own transaction for the STA;
 - otherwise `policy::admit`.
 
 On ACCEPT it takes a free or expired reservation slot, or answers BUSY when
 none is left, and replies STEER_RESP (ACK_REQ) with `hold_ms`. Reservations
-are released in `steer_on_sta_event` (association at this AP), in
-`steer_on_result` (matching txn and source), in `steer_tick` (expiry) and in
-`steer_on_peer_lost` [FR-ADM-3].
+are released in `onStaEvent` (association at this AP), in
+`onSteerResult` (matching txn and source), in `tickSteer` (expiry) and in
+`onPeerLost` [FR-ADM-3].
 
 #### 6.6.4 Triggers
 
-- `steer_on_sta_poll`, after each STA sample:
+- `onStaPoll`, after each STA sample:
   - skip if the STA is away, in cooldown, lacks 11v, or has a transaction
     [FR-TRG-5];
   - otherwise RSSI trigger first, then band trigger.
-- `steer_lb_round`, every `lb_interval_ms`: for each overloaded BSS, pick
+- `runLbRound`, every `lb_interval_ms`: for each overloaded BSS, pick
   the eligible STA with the lowest RSSI and start a LOAD steer. One STA per
   BSS per round limits churn.
 - Manual (`ctrl.cpp` `STEER`): clears the STA's cooldown and calls
-  `steer_start(MANUAL, target)`.
+  `startSteer(MANUAL, target)`.
 
 ### 6.7 Control interface (`ctrl.cpp`) [IR-3]
 
@@ -491,10 +491,10 @@ commands only read state, except `STEER`.
 
 ### 6.8 Configuration (`config.cpp`) [IR-1, FR-SEC-3]
 
-`config_line` strips comments, splits key and value, and handles string keys
+`parseConfigLine` strips comments, splits key and value, and handles string keys
 explicitly. Integer and boolean keys go through a table of offsets into
 `Config`, so adding a parameter means one table line plus a default.
-An unknown key or a bad number is an error. `config_load` additionally
+An unknown key or a bad number is an error. `loadConfig` additionally
 requires at least one `bss` and one transport.
 
 ### 6.9 Security design [FR-SEC, NFR-SEC]
@@ -504,7 +504,7 @@ requires at least one `bss` and one transport.
 | Rogue AP injects state or steering commands | HMAC-SHA256/128 on every message; fail closed on mismatch in both directions | Shared group key: any AP holding it is trusted |
 | Replay within one boot | 64-entry per-peer window | — |
 | Replay of an earlier boot's messages | none | Accepted for 1.0 (NFR-SEC-2). Fix: persistent boot counter |
-| Timing attack on MAC check | Constant-time compare (`ct_equal`) | — |
+| Timing attack on MAC check | Constant-time compare (`ctEqual`) | — |
 | Leaking 802.11r keys | ARCP carries no key material (C-2) | — |
 | Local control socket abuse | Filesystem permissions on `ctrl_socket` | No authentication beyond the file mode |
 | Malformed frames | Bounds-checked header and TLV parsing; fixed buffers; length checks in every decoder | — |
@@ -520,31 +520,31 @@ filter attached (`amon_bpf`). The filter reads the radiotap length
 (little-endian, byte 2) and passes only probe requests (FC 0x40) and data
 frames with ToDS and not FromDS, power-save nulls included; 256 bytes per
 frame are enough. `air_monitor_sim <port>` reads the same frames from UDP for
-tests. `radiotap_parse` (`rrm.cpp`, pure) walks the present bitmaps (extended
+tests. `parseRadiotap` (`rrm.cpp`, pure) walks the present bitmaps (extended
 words included), aligns TSFT/Flags/Rate/Channel/FHSS/dBm-signal fields,
 rejects bad-FCS frames and frames without a signal, and returns the TA,
 frequency and dBm.
 
-**Watches.** `amon_watch_start` puts (STA, requester, txn, until) in one of
+**Watches.** `startAmonWatch` puts (STA, requester, txn, until) in one of
 16 slots. Every parsed frame whose TA matches an active watch adds its
 signal to that watch's accumulator for the frame's frequency (up to 4
-frequencies). `amon_tick` ends watches whose time is up. For each
+frequencies). `tickAmon` ends watches whose time is up. For each
 accumulator it emits one STA_MONITOR_RESULT per local BSS that is up on that
 frequency: average dBm, sample count, age of the last sample. Results go into
 one STA_MONITOR_REPORT, reliable unicast to the requester, or straight to
-`amon_on_result` when the requester is this AP. Nothing is sent if the STA
+`onAmonResult` when the requester is this AP. Nothing is sent if the STA
 was not heard.
 
-**Results.** `amon_on_result` logs the result and stores it in the STA's
+**Results.** `onAmonResult` logs the result and stores it in the STA's
 measurement cache as `MEAS_AMON`, with level = RSSI + `amon_rssi_offset` and
-op class/channel from the BSS info. It then calls `steer_on_monitor_result`,
-which ends MEASURE early when `measure_complete` allows it. The cache keeps
-11k (`MEAS_11K`) and monitor entries side by side; `level_lookup` prefers 11k.
+op class/channel from the BSS info. It then calls `onMonitorResult`,
+which ends MEASURE early when `isMeasureComplete` allows it. The cache keeps
+11k (`MeasSrc::STA_11K`) and monitor entries side by side; `levelLookup` prefers 11k.
 
-**Requests.** `request_monitors` (in `steer_start`) sends one request per
+**Requests.** `requestMonitors` (in `startSteer`) sends one request per
 candidate owner that advertises AIR_MONITOR. HELLO sets that flag when
 `n_amon > 0`, and receivers store it in `peer.flags`. It also starts a local
-watch for local candidates when this AP has a monitor. `amon_on_req` answers
+watch for local candidates when this AP has a monitor. `onAmonReq` answers
 peers. The `MONITOR <sta> [<ms>]` control command starts a local watch with
 txn 0 for diagnostics.
 
@@ -588,7 +588,7 @@ STA        AP1 donghoa/hostapd                         AP2 donghoa/hostapd
 The same as 7.2 without the NEGOTIATE exchange: `advance` admits locally.
 Success is detected from the local `AP-STA-CONNECTED` on the target BSS. A
 move between local BSSes may report CONNECTED on the new BSS before
-DISCONNECTED on the old one, so `ev_disconnected` ignores a disconnect for a
+DISCONNECTED on the old one, so `onHapdDisconnected` ignores a disconnect for a
 STA that already belongs to the other BSS.
 
 ### 7.4 Failure paths
@@ -604,7 +604,7 @@ STA that already belongs to the other BSS.
 | Target refuses or does not answer | Next candidate; when none is left → ABORTED (no failure counted) |
 | STA rejects the BTM (e.g. status 7) | BTM_REJECT, failure counted, STEER_RESULT to the target, which releases its reservation |
 | STA accepts but never arrives | ROAM_TIMEOUT, failure counted; target reservation expires or is released by STEER_RESULT |
-| Peer disappears during NEGOTIATE | `steer_on_peer_lost` → next candidate |
+| Peer disappears during NEGOTIATE | `onPeerLost` → next candidate |
 
 ### 7.5 Steer of a STA without 802.11k (air monitor)
 
@@ -626,12 +626,12 @@ the watch.
 
 | Fault | Detection | Recovery | SRS |
 |---|---|---|---|
-| Bad config | `config_load` | Exit non-zero with the line number (procd respawn limits apply) | IR-1 |
+| Bad config | `loadConfig` | Exit non-zero with the line number (procd respawn limits apply) | IR-1 |
 | Raw socket not permitted | `socket()` / `bind()` fail | Exit with a message naming `CAP_NET_RAW` | §2.4 |
 | hostapd absent or restarted | open/command failure, timeout | BSS down, its STAs removed, reconnect every 5 s; on reconnect, neighbors reinstalled | FR-MON-6 |
 | hostapd as another user | Replies never arrive | Socket ownership copied at bind time | IR-2 |
 | nl80211 unavailable | `Survey::open` fails | Warning; hostapd utilisation used | IR-6 |
-| Peer lost | Timeout, BYE | `peer_remove` cleanup | FR-DSC-4,7 |
+| Peer lost | Timeout, BYE | `removePeer` cleanup | FR-DSC-4,7 |
 | Backhaul path lost | No more frames on that port | Unicast moves to the port of the next copy received | FR-REL-3 |
 | Unacknowledged reliable message | 4 transmissions | Logged and dropped; the transaction times out on its own deadline | FR-REL-1 |
 | Table full | Allocation scan fails | Log and skip (new peer, STA or reservation ignored, or BUSY) | NFR-CAP-1 |
@@ -702,7 +702,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | R10 | `PROTOCOL.md` says retransmitted "up to 4 times"; the code sends 4 transmissions in total (1 + 3 retransmissions) | Documentation ambiguity | Align the wording |
 | R11 | Early evaluation waits for a report from *every* candidate (and, with `score_model 1`, the serving BSS). A candidate the STA cannot hear, such as a remote AP out of range, makes every steer wait the full `beacon_req_timeout_ms` (1.5 s) | Slower steering, not wrong steering | Evaluate when the report for the single request is complete (all reports for its token received) |
 | R12 | Throughput model: peak rate assumes the STA matches the BSS capability with `sta_nss` streams; one sigmoid for all widths and bands | Over-estimates gain for low-end STAs (e.g. 1×1, HT-only) | Read STA HT/VHT/HE capabilities from hostapd `STA` output; calibrate per width from MCS sensitivity tables |
-| R13 | Air monitors hear a STA only on their own channel (uplink data on that channel, probe requests when it scans) | APs on other channels rarely measure an active STA; in 5 GHz plans with one channel per AP the monitor helps mostly via probes | A dedicated scan radio, or a vendor off-channel air-monitor API feeding `amon.cpp` (`amon_sample()` is the entry point) |
+| R13 | Air monitors hear a STA only on their own channel (uplink data on that channel, probe requests when it scans) | APs on other channels rarely measure an active STA; in 5 GHz plans with one channel per AP the monitor helps mostly via probes | A dedicated scan radio, or a vendor off-channel air-monitor API feeding `amon.cpp` (`addAmonSample()` is the entry point) |
 | R14 | Uplink RSSI stands in for the STA's downlink level; one global `amon_rssi_offset` | Biased when AP and STA TX power differ widely | Per-band offsets, or learn the offset from STAs that give both 11k and monitor values |
 | R15 | Monitor interfaces are created outside DongHoa and lost on reboot or `wifi` restart; the BPF program has no unit test | Monitor silently missing after a restart (logged) | Create them from the OpenWrt init script, re-open on interface events; test the filter with a BPF interpreter |
 
@@ -736,3 +736,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.2 | 2026-10-31 | Air monitor: new §6.10 and §7.5, `amon.c` in the module map and layering, event loop and timers, watch table in the data design, MEASURE rules with monitor reports, failure paths, error handling, tests (261 unit checks, itest PASS 1–6, real monitor on OpenWrt), D14, R13–R15, traceability |
 | 1.3 | 2026-10-31 | Per-module logging (`log.[ch]`), run-time `LOG` command, ARCP frame trace, syslog output (R8 resolved); beacon-report mode fallback in `request_beacons` |
 | 1.4 | 2026-11-01 | C++17 rewrite (MISRA C++:2023 based, no exceptions/RTTI/heap, libc only): layering with `os.cpp` as the single system-interface file, module catalogue, start-up sequence, data sizes (247,720 bytes), file and function names throughout. Behaviour and wire format unchanged |
+| 1.5 | 2026-11-01 | Identifiers renamed to the naming convention of CODING_CONVENTION §4 (camelCase verb-first functions, `mMember`, `sStatic`, `UPPER_CASE` constants and enumerators); function names updated throughout. Behaviour unchanged |

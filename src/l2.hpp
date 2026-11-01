@@ -16,7 +16,7 @@
 
 namespace donghoa {
 
-constexpr std::size_t kEthHdrLen = 14U;
+constexpr std::size_t ETH_HDR_LEN = 14U;
 
 class L2 {
 public:
@@ -26,24 +26,24 @@ public:
 		int ifindex{0};
 		IfName name{};
 		Mac mac{};
-		std::array<std::uint16_t, kMaxSimPeers> sim_peers{};
-		std::size_t n_sim_peers{0U};
+		std::array<std::uint16_t, MAX_SIM_PEERS> simPeers{};
+		std::size_t nSimPeers{0U};
 	};
 
-	bool add_iface(const IfName &ifname) noexcept;
-	bool add_sim(std::uint16_t port, const std::array<std::uint16_t, kMaxSimPeers> &peers,
+	bool addIface(const IfName &ifname) noexcept;
+	bool addSim(std::uint16_t port, const std::array<std::uint16_t, MAX_SIM_PEERS> &peers,
 		     std::size_t n, const Mac &mac) noexcept;
 	// Sends ARCP payload (header + body) to dst on one port.
 	bool send(std::size_t port, const Mac &dst, ByteView payload) noexcept;
-	// Receives one ARCP frame into payload. Rx::empty for frames to ignore.
+	// Receives one ARCP frame into payload. Rx::EMPTY for frames to ignore.
 	os::Rx recv(std::size_t port, Mac &src, const ByteSpan &payload, std::size_t &n) noexcept;
 
-	std::size_t size() const noexcept { return n_; }
-	const Port &port(std::size_t i) const noexcept { return ports_[i]; }
+	std::size_t size() const noexcept { return mN; }
+	const Port &port(std::size_t i) const noexcept { return mPorts[i]; }
 
 private:
-	std::array<Port, kMaxL2Ports> ports_{};
-	std::size_t n_{0U};
+	std::array<Port, MAX_L2_PORTS> mPorts{};
+	std::size_t mN{0U};
 };
 
 } // namespace donghoa

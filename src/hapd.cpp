@@ -8,63 +8,63 @@ namespace hapd {
 
 namespace {
 
-constexpr LogModule kMod{LogModule::hapd};
-constexpr int kCmdTimeoutMs = 1000;
+constexpr LogModule LOG_MODULE{LogModule::HAPD};
+constexpr int CMD_TIMEOUT_MS = 1000;
 
-std::uint32_t g_counter = 0U;
+std::uint32_t sCounter = 0U;
 
-void to_text(ByteView bytes, Reply &out) noexcept
+void toText(ByteView bytes, Reply &out) noexcept
 {
 	out.clear();
 	for (std::size_t i = 0U; i < bytes.size(); i++) {
-		(void)out.push_back(static_cast<char>(bytes[i]));
+		(void)out.pushBack(static_cast<char>(bytes[i]));
 	}
 }
 
 // Local client socket bound at /tmp/donghoa-<pid>-<ifname>-<tag><n>,
 // connected to hostapd's socket at remote.
-os::Fd open_one(const Path &remote, Path &local, const IfName &ifname, char tag) noexcept
+os::Fd openOne(const Path &remote, Path &local, const IfName &ifname, char tag) noexcept
 {
 	local.clear();
-	format_to(local, "/tmp/donghoa-{}-{}-", os::process_id(), ifname);
-	(void)local.push_back(tag);
-	format_to(local, "{}", g_counter);
-	g_counter++;
-	os::Fd fd = os::unix_bind(local.c_str(), false);
+	formatTo(local, "/tmp/donghoa-{}-{}-", os::processId(), ifname);
+	(void)local.pushBack(tag);
+	formatTo(local, "{}", sCounter);
+	sCounter++;
+	os::Fd fd = os::bindUnix(local.cStr(), false);
 	if (fd.valid()) {
 		// hostapd replies by sending to our socket, which needs write
 		// permission: OpenWrt runs hostapd as user "network".
-		os::share_owner(local.c_str(), remote.c_str());
-		if (!os::unix_connect(fd, remote.c_str())) {
+		os::shareOwner(local.cStr(), remote.cStr());
+		if (!os::connectUnix(fd, remote.cStr())) {
 			fd.reset();
 		}
 	}
 	if (!fd.valid()) {
-		os::remove_file(local.c_str());
+		os::removeFile(local.cStr());
 		local.clear();
 	}
 	return fd;
 }
 
 // Waits for a reply on fd, skipping unsolicited "<N>..." messages.
-bool recv_reply(const os::Fd &fd, Reply &reply, int timeout_ms) noexcept
+bool recvReply(const os::Fd &fd, Reply &reply, int timeoutMs) noexcept
 {
-	const Millis deadline = os::now_ms() + static_cast<Millis>(timeout_ms);
-	std::array<std::uint8_t, kReplyMax> buf{};
+	const Millis deadline = os::nowMs() + static_cast<Millis>(timeoutMs);
+	std::array<std::uint8_t, REPLY_MAX> buf{};
 	bool done = false;
 	bool ok = false;
 
 	while (!done) {
-		const Millis now = os::now_ms();
+		const Millis now = os::nowMs();
 		const int left = (now < deadline) ? static_cast<int>(deadline - now) : 0;
-		if (!os::wait_readable(fd.get(), left)) {
+		if (!os::waitReadable(fd.get(), left)) {
 			done = true;
 		} else {
-			const std::optional<std::size_t> n = os::recv_bytes(fd, span_of(buf));
+			const std::optional<std::size_t> n = os::recvBytes(fd, spanOf(buf));
 			if (!n.has_value()) {
 				done = true;
 			} else {
-				to_text(view_of(buf).first(*n), reply);
+				toText(viewOf(buf).first(*n), reply);
 				if ((*n == 0U) || (buf[0U] != static_cast<std::uint8_t>('<'))) {
 					ok = true;
 					done = true;
@@ -82,17 +82,17 @@ bool Conn::open(const Path &dir, const IfName &ifname) noexcept
 	Reply r;
 
 	close();
-	ifname_ = ifname;
-	path_.clear();
-	format_to(path_, "{}/{}", dir, ifname);
-	cmd_ = open_one(path_, local_cmd_, ifname, 'c');
-	if (cmd_.valid()) {
-		ev_ = open_one(path_, local_ev_, ifname, 'e');
+	mIfname = ifname;
+	mPath.clear();
+	formatTo(mPath, "{}/{}", dir, ifname);
+	mCmd = openOne(mPath, mLocalCmd, ifname, 'c');
+	if (mCmd.valid()) {
+		mEv = openOne(mPath, mLocalEv, ifname, 'e');
 	}
-	bool ok = cmd_.valid() && ev_.valid() && os::send_text(ev_, "ATTACH", false) &&
-		  recv_reply(ev_, r, kCmdTimeoutMs) && starts_with(r.view(), "OK");
+	bool ok = mCmd.valid() && mEv.valid() && os::sendText(mEv, "ATTACH", false) &&
+		  recvReply(mEv, r, CMD_TIMEOUT_MS) && startsWith(r.view(), "OK");
 	if (ok) {
-		logging::info(kMod, "connected to {}", path_);
+		logging::info(LOG_MODULE, "connected to {}", mPath);
 	} else {
 		close();
 	}
@@ -101,53 +101,53 @@ bool Conn::open(const Path &dir, const IfName &ifname) noexcept
 
 void Conn::close() noexcept
 {
-	if (ev_.valid()) {
-		(void)os::send_text(ev_, "DETACH", true);
+	if (mEv.valid()) {
+		(void)os::sendText(mEv, "DETACH", true);
 	}
-	ev_.reset();
-	cmd_.reset();
-	if (!local_cmd_.empty()) {
-		os::remove_file(local_cmd_.c_str());
+	mEv.reset();
+	mCmd.reset();
+	if (!mLocalCmd.empty()) {
+		os::removeFile(mLocalCmd.cStr());
 	}
-	if (!local_ev_.empty()) {
-		os::remove_file(local_ev_.c_str());
+	if (!mLocalEv.empty()) {
+		os::removeFile(mLocalEv.cStr());
 	}
-	local_cmd_.clear();
-	local_ev_.clear();
+	mLocalCmd.clear();
+	mLocalEv.clear();
 }
 
-bool Conn::cmd(std::string_view command, Reply &reply) noexcept
+bool Conn::runCommand(std::string_view command, Reply &reply) noexcept
 {
-	bool ok = cmd_.valid();
+	bool ok = mCmd.valid();
 
 	reply.clear();
 	if (ok) {
-		logging::dbg(kMod, "hapd[{}] > {}", ifname_, command);
-		ok = os::send_text(cmd_, command, false);
+		logging::dbg(LOG_MODULE, "hapd[{}] > {}", mIfname, command);
+		ok = os::sendText(mCmd, command, false);
 		if (!ok) {
-			logging::warn(kMod, "hapd[{}]: send: {}", ifname_, os::last_error());
+			logging::warn(LOG_MODULE, "hapd[{}]: send: {}", mIfname, os::lastError());
 			close();
 		}
 	}
 	if (ok) {
-		ok = recv_reply(cmd_, reply, kCmdTimeoutMs);
+		ok = recvReply(mCmd, reply, CMD_TIMEOUT_MS);
 		if (!ok) {
-			logging::warn(kMod, "hapd[{}]: no reply to '{}'", ifname_, sub_view(command, 0U, 32U));
+			logging::warn(LOG_MODULE, "hapd[{}]: no reply to '{}'", mIfname, subView(command, 0U, 32U));
 			close();
 		}
 	}
 	return ok;
 }
 
-os::Rx Conn::recv_event(Reply &ev) noexcept
+os::Rx Conn::recvEvent(Reply &ev) noexcept
 {
-	std::array<std::uint8_t, kReplyMax> buf{};
+	std::array<std::uint8_t, REPLY_MAX> buf{};
 	std::size_t n = 0U;
-	const os::Rx r = os::recv_nowait(ev_, span_of(buf), n);
+	const os::Rx r = os::recvNowait(mEv, spanOf(buf), n);
 
 	ev.clear();
-	if (r == os::Rx::data) {
-		ByteView v = view_of(buf).first(n);
+	if (r == os::Rx::DATA) {
+		ByteView v = viewOf(buf).first(n);
 		if ((n > 0U) && (v[0U] == static_cast<std::uint8_t>('<'))) {
 			std::size_t i = 0U;
 			while ((i < n) && (v[i] != static_cast<std::uint8_t>('>'))) {
@@ -155,7 +155,7 @@ os::Rx Conn::recv_event(Reply &ev) noexcept
 			}
 			v = (i < n) ? v.sub(i + 1U, n - i - 1U) : v;
 		}
-		to_text(v, ev);
+		toText(v, ev);
 	}
 	return r;
 }

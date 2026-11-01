@@ -8,223 +8,223 @@ namespace donghoa {
 
 namespace {
 
-constexpr LogModule kMod{LogModule::ctrl};
+constexpr LogModule LOG_MODULE{LogModule::CTRL};
 using Out = FixedString<8192U>;
 
-void put_bss(Out &o, const arcp::BssInfo &bi, const arcp::BssLoad *bl) noexcept
+void putBss(Out &o, const arcp::BssInfo &bi, const arcp::BssLoad *bl) noexcept
 {
-	format_to(o, "  bss {} ssid={} ch={} band={} op_class={} mdid={} caps={}", bi.bssid,
-		  SsidText{bi.ssid_view()}, bi.channel, bi.band, bi.op_class, hex(bi.mdid, 4U), hex(bi.caps, 4U));
+	formatTo(o, "  bss {} ssid={} ch={} band={} op_class={} mdid={} caps={}", bi.bssid,
+		  SsidText{bi.ssidView()}, bi.channel, bi.band, bi.opClass, hex(bi.mdid, 4U), hex(bi.caps, 4U));
 	if (bl != nullptr) {
-		format_to(o, " sta={} util={}% noise={} accepting={}", bl->sta_count, policy::util_to_pct(bl->util),
-			  bl->noise, ((bl->flags & arcp::kLoadAccepting) != 0U) ? 1 : 0);
+		formatTo(o, " sta={} util={}% noise={} accepting={}", bl->staCount, policy::utilToPct(bl->util),
+			  bl->noise, ((bl->flags & arcp::LOAD_ACCEPTING) != 0U) ? 1 : 0);
 	}
-	format_to(o, "\n");
+	formatTo(o, "\n");
 }
 
 // LOG                       show the level of every module
 // LOG <level>               set every module
 // LOG <level> <module>...   set the named modules
-void cmd_log(Out &o, std::string_view args) noexcept
+void cmdLog(Out &o, std::string_view args) noexcept
 {
 	Tokens t(args, " ");
 	std::string_view a;
 
 	if (t.next(a)) {
-		const std::optional<LogLevel> lvl = logging::parse_level(a);
+		const std::optional<LogLevel> lvl = logging::parseLevel(a);
 		if (!lvl.has_value()) {
-			format_to(o, "FAIL usage: LOG [err|warn|info|debug [<module>...]]\n");
+			formatTo(o, "FAIL usage: LOG [err|warn|info|debug [<module>...]]\n");
 			return;
 		}
 		std::string_view m;
 		bool any = false;
 		while (t.next(m)) {
-			const std::optional<LogModule> mod = logging::parse_module(m);
+			const std::optional<LogModule> mod = logging::parseModule(m);
 			if (!mod.has_value()) {
-				format_to(o, "FAIL unknown module {}\n", m);
+				formatTo(o, "FAIL unknown module {}\n", m);
 				return;
 			}
-			logging::set_level(*mod, *lvl);
+			logging::setLevel(*mod, *lvl);
 			any = true;
 		}
 		if (!any) {
-			logging::set_all(*lvl);
+			logging::setAll(*lvl);
 		}
 	}
-	for (std::size_t i = 0U; i < logging::kModules; i++) {
-		const LogModule mod = logging::module_at(i);
-		format_to(o, "{}={}\n", logging::module_name(mod), logging::level_name(logging::level(mod)));
+	for (std::size_t i = 0U; i < logging::MODULES; i++) {
+		const LogModule mod = logging::moduleAt(i);
+		formatTo(o, "{}={}\n", logging::moduleName(mod), logging::levelName(logging::level(mod)));
 	}
 }
 
 } // namespace
 
-bool Daemon::ctrl_open() noexcept
+bool Daemon::openCtrl() noexcept
 {
 	bool ok = true;
-	if (!cfg_.ctrl_socket.empty()) {
-		ctrl_fd_ = os::unix_bind(cfg_.ctrl_socket.c_str(), true);
-		ok = ctrl_fd_.valid();
+	if (!mCfg.ctrlSocket.empty()) {
+		mCtrlFd = os::bindUnix(mCfg.ctrlSocket.cStr(), true);
+		ok = mCtrlFd.valid();
 		if (!ok) {
-			logging::err(kMod, "bind {}: {}", cfg_.ctrl_socket, os::last_error());
+			logging::err(LOG_MODULE, "bind {}: {}", mCfg.ctrlSocket, os::lastError());
 		}
 	}
 	return ok;
 }
 
-void Daemon::ctrl_close() noexcept
+void Daemon::closeCtrl() noexcept
 {
-	if (ctrl_fd_.valid()) {
-		ctrl_fd_.reset();
-		os::remove_file(cfg_.ctrl_socket.c_str());
+	if (mCtrlFd.valid()) {
+		mCtrlFd.reset();
+		os::removeFile(mCfg.ctrlSocket.cStr());
 	}
 }
 
-void Daemon::ctrl_command(std::string_view req, Out &o) noexcept
+void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 {
-	const Millis now = os::now_ms();
+	const Millis now = os::nowMs();
 
 	if (req == "PING") {
-		format_to(o, "PONG\n");
+		formatTo(o, "PONG\n");
 	} else if (req == "STATUS") {
-		format_to(o, "ap_id={}\nname={}\nboot_id={}\n", ap_id_, cfg_.name, hex(boot_id_, 8U));
-		for (std::size_t i = 0U; i < l2_.size(); i++) {
-			format_to(o, "port={}\n", l2_.port(i).name);
+		formatTo(o, "ap_id={}\nname={}\nboot_id={}\n", mApId, mCfg.name, hex(mBootId, 8U));
+		for (std::size_t i = 0U; i < mL2.size(); i++) {
+			formatTo(o, "port={}\n", mL2.port(i).name);
 		}
-		for (std::size_t i = 0U; i < n_amon_; i++) {
-			format_to(o, "air_monitor={}\n", amon_[i].name);
+		for (std::size_t i = 0U; i < mNAmon; i++) {
+			formatTo(o, "air_monitor={}\n", mAmon[i].name);
 		}
-		for (std::size_t i = 0U; i < n_bss_; i++) {
-			format_to(o, "{} {}\n", bss_[i].cfg->ifname, bss_[i].up ? "up" : "down");
-			if (bss_[i].up) {
-				put_bss(o, bss_[i].info, &bss_[i].load);
+		for (std::size_t i = 0U; i < mNBss; i++) {
+			formatTo(o, "{} {}\n", mBss[i].cfg->ifname, mBss[i].up ? "up" : "down");
+			if (mBss[i].up) {
+				putBss(o, mBss[i].info, &mBss[i].load);
 			}
 		}
 	} else if (req == "PEERS") {
-		for (const Peer &p : peers_) {
+		for (const Peer &p : mPeers) {
 			if (!p.used) {
 				continue;
 			}
-			format_to(o, "peer {} name={} port={} age={}ms\n", p.id, p.name,
-				  p.port.has_value() ? l2_.port(*p.port).name.view() : std::string_view("-"),
-				  now - p.last_seen);
+			formatTo(o, "peer {} name={} port={} age={}ms\n", p.id, p.name,
+				  p.port.has_value() ? mL2.port(*p.port).name.view() : std::string_view("-"),
+				  now - p.lastSeen);
 			for (const RemoteBss &b : p.bss) {
 				if (b.used) {
-					put_bss(o, b.info, b.has_load ? &b.load : nullptr);
+					putBss(o, b.info, b.hasLoad ? &b.load : nullptr);
 				}
 			}
-			for (std::size_t k = 0U; k < p.n_rf; k++) {
+			for (std::size_t k = 0U; k < p.nRf; k++) {
 				const arcp::RfInfo &rf = p.rf[k];
-				format_to(o, "  radio {} freq={} ch={} util={}% noise={} txpower={}\n", rf.radio_id, rf.freq,
-					  rf.channel, policy::util_to_pct(rf.util), rf.noise, rf.tx_power);
+				formatTo(o, "  radio {} freq={} ch={} util={}% noise={} txpower={}\n", rf.radioId, rf.freq,
+					  rf.channel, policy::utilToPct(rf.util), rf.noise, rf.txPower);
 			}
 		}
 	} else if (req == "STAS") {
-		for (const Sta &s : sta_) {
+		for (const Sta &s : mSta) {
 			if (!s.used) {
 				continue;
 			}
-			const std::string_view bcn = s.bcn_unsupported ? std::string_view("none")
-						     : (s.bcn_mode.has_value() ? rrm::beacon_mode_name(*s.bcn_mode)
+			const std::string_view bcn = s.bcnUnsupported ? std::string_view("none")
+						     : (s.bcnMode.has_value() ? rrm::beaconModeName(*s.bcnMode)
 									      : std::string_view("unknown"));
-			const std::int64_t backoff = static_cast<std::int64_t>(s.next_steer_ms) - static_cast<std::int64_t>(now);
-			format_to(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} backoff={}ms\n", s.addr,
-				  bss_[s.bss].cfg->ifname, s.away ? "(away)" : "", s.rssi, s.tput_kbps,
-				  ((s.flags & arcp::kStaF11k) != 0U) ? "k" : "", ((s.flags & arcp::kStaF11v) != 0U) ? "v" : "",
-				  ((s.flags & arcp::kStaF11r) != 0U) ? "r" : "", bcn, backoff);
+			const std::int64_t backoff = static_cast<std::int64_t>(s.nextSteerMs) - static_cast<std::int64_t>(now);
+			formatTo(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} backoff={}ms\n", s.addr,
+				  mBss[s.bss].cfg->ifname, s.away ? "(away)" : "", s.rssi, s.tputKbps,
+				  ((s.flags & arcp::STA_F11K) != 0U) ? "k" : "", ((s.flags & arcp::STA_F11V) != 0U) ? "v" : "",
+				  ((s.flags & arcp::STA_F11R) != 0U) ? "r" : "", bcn, backoff);
 		}
-		for (const RemoteSta &r : rsta_) {
+		for (const RemoteSta &r : mRsta) {
 			if (r.used) {
-				format_to(o, "remote {} ap={} bss={} rssi={}\n", r.sta, r.ap, r.bssid, r.rssi);
+				formatTo(o, "remote {} ap={} bss={} rssi={}\n", r.sta, r.ap, r.bssid, r.rssi);
 			}
 		}
 	} else if (req == "STEERS") {
-		for (const SteerTxn &t : txn_) {
+		for (const SteerTxn &t : mTxn) {
 			if (t.used) {
-				const long cur = (t.cur >= kMaxCand) ? -1L : static_cast<long>(t.cur);
-				format_to(o, "txn {} sta {} state={} cand={}/{}\n", t.id, t.sta, steer_state_name(t.state), cur,
-					  t.n_cand);
+				const long cur = (t.cur >= MAX_CAND) ? -1L : static_cast<long>(t.cur);
+				formatTo(o, "txn {} sta {} state={} cand={}/{}\n", t.id, t.sta, steerStateName(t.state), cur,
+					  t.nCand);
 			}
 		}
-		for (const Reservation &r : resv_) {
+		for (const Reservation &r : mResv) {
 			if (r.used) {
-				format_to(o, "reservation sta {} bss={} txn={}\n", r.sta, bss_[r.bss].cfg->ifname, r.txn);
+				formatTo(o, "reservation sta {} bss={} txn={}\n", r.sta, mBss[r.bss].cfg->ifname, r.txn);
 			}
 		}
-	} else if (starts_with(req, "STEER ")) {
-		Tokens t(sub_view(req, 6U), " ");
+	} else if (startsWith(req, "STEER ")) {
+		Tokens t(subView(req, 6U), " ");
 		std::string_view a;
 		std::string_view b;
-		const bool has_a = t.next(a);
-		const bool has_b = t.next(b);
-		const std::optional<Mac> sta = has_a ? parse_mac(a) : std::optional<Mac>();
-		const std::optional<Mac> tgt = has_b ? parse_mac(b) : std::optional<Mac>();
-		if (!sta.has_value() || (has_b && !tgt.has_value())) {
-			format_to(o, "FAIL usage: STEER <sta> [<bssid>]\n");
+		const bool hasA = t.next(a);
+		const bool hasB = t.next(b);
+		const std::optional<Mac> sta = hasA ? parseMac(a) : std::optional<Mac>();
+		const std::optional<Mac> tgt = hasB ? parseMac(b) : std::optional<Mac>();
+		if (!sta.has_value() || (hasB && !tgt.has_value())) {
+			formatTo(o, "FAIL usage: STEER <sta> [<bssid>]\n");
 		} else {
-			Sta *const s = sta_find(*sta);
+			Sta *const s = findSta(*sta);
 			if (s == nullptr) {
-				format_to(o, "FAIL unknown sta\n");
+				formatTo(o, "FAIL unknown sta\n");
 			} else {
-				s->next_steer_ms = 0U;
-				const bool ok = steer_start(*s, arcp::SteerReason::manual, tgt.has_value() ? &*tgt : nullptr);
-				format_to(o, ok ? "OK\n" : "FAIL\n");
+				s->nextSteerMs = 0U;
+				const bool ok = startSteer(*s, arcp::SteerReason::MANUAL, tgt.has_value() ? &*tgt : nullptr);
+				formatTo(o, ok ? "OK\n" : "FAIL\n");
 			}
 		}
-	} else if (starts_with(req, "MONITOR ")) {
+	} else if (startsWith(req, "MONITOR ")) {
 		// Measure a STA with this AP's air monitors; the result goes to the
 		// log (and to the STA's measurements when it is associated here).
-		Tokens t(sub_view(req, 8U), " ");
+		Tokens t(subView(req, 8U), " ");
 		std::string_view a;
 		std::string_view b;
-		const bool has_a = t.next(a);
-		const bool has_b = t.next(b);
-		const std::optional<Mac> sta = has_a ? parse_mac(a) : std::optional<Mac>();
-		const std::optional<long> ms = has_b ? parse_long(b, 10, 1, 5000)
-						     : std::optional<long>(static_cast<long>(cfg_.pol.amon_duration_ms));
+		const bool hasA = t.next(a);
+		const bool hasB = t.next(b);
+		const std::optional<Mac> sta = hasA ? parseMac(a) : std::optional<Mac>();
+		const std::optional<long> ms = hasB ? parseLong(b, 10, 1, 5000)
+						     : std::optional<long>(static_cast<long>(mCfg.pol.amonDurationMs));
 		if (!sta.has_value() || !ms.has_value()) {
-			format_to(o, "FAIL usage: MONITOR <sta> [<ms 1..5000>]\n");
-		} else if (n_amon_ == 0U) {
-			format_to(o, "FAIL no air_monitor configured\n");
+			formatTo(o, "FAIL usage: MONITOR <sta> [<ms 1..5000>]\n");
+		} else if (mNAmon == 0U) {
+			formatTo(o, "FAIL no air_monitor configured\n");
 		} else {
-			format_to(o, amon_watch_start(*sta, ap_id_, 0U, static_cast<int>(*ms))
+			formatTo(o, startAmonWatch(*sta, mApId, 0U, static_cast<int>(*ms))
 					     ? "OK result in the log after the watch (logread -e donghoa)\n"
 					     : "FAIL\n");
 		}
 	} else if (req == "LOG") {
-		cmd_log(o, std::string_view());
-	} else if (starts_with(req, "LOG ")) {
-		cmd_log(o, sub_view(req, 4U));
+		cmdLog(o, std::string_view());
+	} else if (startsWith(req, "LOG ")) {
+		cmdLog(o, subView(req, 4U));
 	} else {
-		format_to(o, "UNKNOWN COMMAND\n");
+		formatTo(o, "UNKNOWN COMMAND\n");
 	}
 }
 
-void Daemon::ctrl_handle() noexcept
+void Daemon::handleCtrl() noexcept
 {
 	std::array<std::uint8_t, 255U> buf{};
-	bool more = ctrl_fd_.valid();
+	bool more = mCtrlFd.valid();
 
 	while (more) {
 		std::size_t n = 0U;
 		os::UnixAddr from;
-		more = os::recv_from(ctrl_fd_, span_of(buf), n, from) == os::Rx::data;
+		more = os::recvFrom(mCtrlFd, spanOf(buf), n, from) == os::Rx::DATA;
 		if (more) {
 			FixedString<255U> req;
 			for (std::size_t i = 0U; i < n; i++) {
-				(void)req.push_back(static_cast<char>(buf[i]));
+				(void)req.pushBack(static_cast<char>(buf[i]));
 			}
 			Out out;
-			ctrl_command(trim(req.view()), out);
+			runCtrlCommand(trim(req.view()), out);
 			if (out.empty()) {
-				format_to(out, "\n");
+				formatTo(out, "\n");
 			}
 			std::array<std::uint8_t, 8192U> reply{};
 			const std::string_view text = out.view();
 			for (std::size_t i = 0U; i < text.size(); i++) {
 				reply[i] = static_cast<std::uint8_t>(text[i]);
 			}
-			os::send_to(ctrl_fd_, view_of(reply).first(text.size()), from);
+			os::sendTo(mCtrlFd, viewOf(reply).first(text.size()), from);
 		}
 	}
 }

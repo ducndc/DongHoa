@@ -7,43 +7,43 @@ namespace donghoa {
 
 namespace {
 
-constexpr LogModule kMod{LogModule::peer};
+constexpr LogModule LOG_MODULE{LogModule::PEER};
 
 } // namespace
 
-bool peer_accept_seq(Peer &p, std::uint32_t boot_id, std::uint32_t msg_id) noexcept
+bool acceptPeerSeq(Peer &p, std::uint32_t bootId, std::uint32_t msgId) noexcept
 {
 	bool accept = false;
 
-	if (boot_id != p.boot_id) {
-		if (p.boot_id != 0U) {
-			logging::info(kMod, "peer {} restarted", p.id);
+	if (bootId != p.bootId) {
+		if (p.bootId != 0U) {
+			logging::info(LOG_MODULE, "peer {} restarted", p.id);
 		}
-		p.boot_id = boot_id;
-		p.seq_hi = msg_id;
-		p.seq_win = 1U;
+		p.bootId = bootId;
+		p.seqHi = msgId;
+		p.seqWin = 1U;
 		accept = true;
-	} else if (msg_id > p.seq_hi) {
-		const std::uint32_t diff = msg_id - p.seq_hi;
-		p.seq_win = (diff >= 64U) ? 0U : (p.seq_win << diff);
-		p.seq_win |= 1U;
-		p.seq_hi = msg_id;
+	} else if (msgId > p.seqHi) {
+		const std::uint32_t diff = msgId - p.seqHi;
+		p.seqWin = (diff >= 64U) ? 0U : (p.seqWin << diff);
+		p.seqWin |= 1U;
+		p.seqHi = msgId;
 		accept = true;
 	} else {
-		const std::uint32_t diff = p.seq_hi - msg_id;
+		const std::uint32_t diff = p.seqHi - msgId;
 		const std::uint64_t bit = (diff < 64U) ? (static_cast<std::uint64_t>(1U) << diff) : 0U;
-		if ((bit != 0U) && ((p.seq_win & bit) == 0U)) {
-			p.seq_win |= bit;
+		if ((bit != 0U) && ((p.seqWin & bit) == 0U)) {
+			p.seqWin |= bit;
 			accept = true;
 		}
 	}
 	return accept;
 }
 
-Peer *Daemon::peer_find(const Mac &id) noexcept
+Peer *Daemon::findPeer(const Mac &id) noexcept
 {
 	Peer *r = nullptr;
-	for (Peer &p : peers_) {
+	for (Peer &p : mPeers) {
 		if ((r == nullptr) && p.used && (p.id == id)) {
 			r = &p;
 		}
@@ -51,25 +51,25 @@ Peer *Daemon::peer_find(const Mac &id) noexcept
 	return r;
 }
 
-Peer *Daemon::peer_get(const Mac &id) noexcept
+Peer *Daemon::getPeer(const Mac &id) noexcept
 {
-	Peer *r = peer_find(id);
-	for (Peer &p : peers_) {
+	Peer *r = findPeer(id);
+	for (Peer &p : mPeers) {
 		if ((r == nullptr) && !p.used) {
 			p = Peer{};
 			p.used = true;
 			p.id = id;
-			logging::info(kMod, "peer {} discovered", id);
+			logging::info(LOG_MODULE, "peer {} discovered", id);
 			r = &p;
 		}
 	}
 	if (r == nullptr) {
-		logging::warn(kMod, "peer table full, ignoring {}", id);
+		logging::warn(LOG_MODULE, "peer table full, ignoring {}", id);
 	}
 	return r;
 }
 
-RemoteBss *Daemon::peer_bss_find(Peer &p, const Mac &bssid) noexcept
+RemoteBss *Daemon::findPeerBss(Peer &p, const Mac &bssid) noexcept
 {
 	RemoteBss *r = nullptr;
 	for (RemoteBss &b : p.bss) {
@@ -80,9 +80,9 @@ RemoteBss *Daemon::peer_bss_find(Peer &p, const Mac &bssid) noexcept
 	return r;
 }
 
-RemoteBss *Daemon::peer_bss_update(Peer &p, const arcp::BssInfo &bi) noexcept
+RemoteBss *Daemon::updatePeerBss(Peer &p, const arcp::BssInfo &bi) noexcept
 {
-	RemoteBss *rb = peer_bss_find(p, bi.bssid);
+	RemoteBss *rb = findPeerBss(p, bi.bssid);
 
 	if (rb == nullptr) {
 		for (RemoteBss &b : p.bss) {
@@ -93,27 +93,27 @@ RemoteBss *Daemon::peer_bss_update(Peer &p, const arcp::BssInfo &bi) noexcept
 		if (rb != nullptr) {
 			*rb = RemoteBss{};
 			rb->used = true;
-			logging::info(kMod, "peer {}: BSS {} ch {}", p.id, bi.bssid, bi.channel);
+			logging::info(LOG_MODULE, "peer {}: BSS {} ch {}", p.id, bi.bssid, bi.channel);
 		}
 	} else if (rb->info != bi) {
 		// Neighbor report content changed: re-install.
-		rb->nr_installed = false;
+		rb->nrInstalled = false;
 	} else {
 		// unchanged
 	}
 	if (rb != nullptr) {
 		rb->info = bi;
-		rb->ts = os::now_ms();
+		rb->ts = os::nowMs();
 	}
 	return rb;
 }
 
-RemoteBss *Daemon::remote_bss_lookup(const Mac &bssid, Peer **owner) noexcept
+RemoteBss *Daemon::lookupRemoteBss(const Mac &bssid, Peer **owner) noexcept
 {
 	RemoteBss *r = nullptr;
-	for (Peer &p : peers_) {
+	for (Peer &p : mPeers) {
 		if ((r == nullptr) && p.used) {
-			r = peer_bss_find(p, bssid);
+			r = findPeerBss(p, bssid);
 			if ((r != nullptr) && (owner != nullptr)) {
 				*owner = &p;
 			}
@@ -122,16 +122,16 @@ RemoteBss *Daemon::remote_bss_lookup(const Mac &bssid, Peer **owner) noexcept
 	return r;
 }
 
-void Daemon::peer_remove(Peer &p) noexcept
+void Daemon::removePeer(Peer &p) noexcept
 {
-	logging::info(kMod, "peer {} ({}) lost", p.id, p.name);
-	steer_on_peer_lost(p);
+	logging::info(LOG_MODULE, "peer {} ({}) lost", p.id, p.name);
+	onPeerLost(p);
 	for (const RemoteBss &b : p.bss) {
 		if (b.used) {
-			nr_remove(b.info);
+			removeNeighbor(b.info);
 		}
 	}
-	for (RemoteSta &r : rsta_) {
+	for (RemoteSta &r : mRsta) {
 		if (r.used && (r.ap == p.id)) {
 			r.used = false;
 		}
@@ -139,48 +139,48 @@ void Daemon::peer_remove(Peer &p) noexcept
 	p.used = false;
 }
 
-void Daemon::peer_expire(Millis now) noexcept
+void Daemon::expirePeers(Millis now) noexcept
 {
-	const Millis bss_age = (3U * static_cast<Millis>(cfg_.bss_status_ms)) + static_cast<Millis>(cfg_.hello_ms);
+	const Millis bssAge = (3U * static_cast<Millis>(mCfg.bssStatusMs)) + static_cast<Millis>(mCfg.helloMs);
 
-	for (Peer &p : peers_) {
+	for (Peer &p : mPeers) {
 		if (!p.used) {
 			continue;
 		}
-		if ((now - p.last_seen) > static_cast<Millis>(cfg_.peer_timeout_ms)) {
-			peer_remove(p);
+		if ((now - p.lastSeen) > static_cast<Millis>(mCfg.peerTimeoutMs)) {
+			removePeer(p);
 			continue;
 		}
 		// Drop BSSes the peer stopped advertising.
 		for (RemoteBss &b : p.bss) {
-			if (b.used && ((now - b.ts) > bss_age)) {
-				nr_remove(b.info);
+			if (b.used && ((now - b.ts) > bssAge)) {
+				removeNeighbor(b.info);
 				b.used = false;
 			}
 		}
 	}
-	for (RemoteSta &r : rsta_) {
-		if (r.used && ((now - r.ts) > (3U * static_cast<Millis>(cfg_.sta_status_ms)))) {
+	for (RemoteSta &r : mRsta) {
+		if (r.used && ((now - r.ts) > (3U * static_cast<Millis>(mCfg.staStatusMs)))) {
 			r.used = false;
 		}
 	}
 }
 
-void Daemon::remote_sta_update(const Mac &ap, const arcp::StaEntry &e) noexcept
+void Daemon::updateRemoteSta(const Mac &ap, const arcp::StaEntry &e) noexcept
 {
 	RemoteSta *r = nullptr;
-	RemoteSta *free_slot = nullptr;
+	RemoteSta *freeSlot = nullptr;
 
-	for (RemoteSta &x : rsta_) {
+	for (RemoteSta &x : mRsta) {
 		if ((r == nullptr) && x.used && (x.sta == e.sta)) {
 			r = &x;
 		}
-		if ((free_slot == nullptr) && !x.used) {
-			free_slot = &x;
+		if ((freeSlot == nullptr) && !x.used) {
+			freeSlot = &x;
 		}
 	}
-	if ((r == nullptr) && (free_slot != nullptr)) {
-		r = free_slot;
+	if ((r == nullptr) && (freeSlot != nullptr)) {
+		r = freeSlot;
 		r->used = true;
 		r->sta = e.sta;
 	}
@@ -189,13 +189,13 @@ void Daemon::remote_sta_update(const Mac &ap, const arcp::StaEntry &e) noexcept
 		r->bssid = e.bssid;
 		r->rssi = e.rssi;
 		r->flags = e.flags;
-		r->ts = os::now_ms();
+		r->ts = os::nowMs();
 	}
 }
 
-void Daemon::remote_sta_forget(const Mac &sta) noexcept
+void Daemon::forgetRemoteSta(const Mac &sta) noexcept
 {
-	for (RemoteSta &r : rsta_) {
+	for (RemoteSta &r : mRsta) {
 		if (r.used && (r.sta == sta)) {
 			r.used = false;
 		}

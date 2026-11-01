@@ -13,11 +13,11 @@ namespace donghoa {
 
 namespace {
 
-constexpr LogModule kMod{LogModule::survey};
-constexpr std::size_t kNlHdr = 16U;   // struct nlmsghdr
-constexpr std::size_t kGenlHdr = 4U;  // struct genlmsghdr
-constexpr std::size_t kAttrHdr = 4U;  // struct nlattr
-constexpr int kRecvTimeoutMs = 500;
+constexpr LogModule LOG_MODULE{LogModule::SURVEY};
+constexpr std::size_t NL_HDR = 16U;   // struct nlmsghdr
+constexpr std::size_t GENL_HDR = 4U;  // struct genlmsghdr
+constexpr std::size_t ATTR_HDR = 4U;  // struct nlattr
+constexpr int RECV_TIMEOUT_MS = 500;
 
 constexpr std::size_t align4(std::size_t n) noexcept
 {
@@ -30,59 +30,59 @@ public:
 	Request(std::uint16_t type, std::uint16_t flags, std::uint32_t seq, std::uint8_t cmd,
 		std::uint8_t version) noexcept
 	{
-		const ByteSpan s = span_of(buf_);
-		os::store_ne16(s, 4U, type);
-		os::store_ne16(s, 6U, flags);
-		os::store_ne32(s, 8U, seq);
-		buf_[kNlHdr] = cmd;
-		buf_[kNlHdr + 1U] = version;
-		len_ = kNlHdr + kGenlHdr;
+		const ByteSpan s = spanOf(mBuf);
+		os::storeNe16(s, 4U, type);
+		os::storeNe16(s, 6U, flags);
+		os::storeNe32(s, 8U, seq);
+		mBuf[NL_HDR] = cmd;
+		mBuf[NL_HDR + 1U] = version;
+		mLen = NL_HDR + GENL_HDR;
 	}
 
 	void attr(std::uint16_t type, ByteView data) noexcept
 	{
-		const std::size_t total = kAttrHdr + data.size();
-		if ((align4(len_) + align4(total)) <= buf_.size()) {
-			const ByteSpan s = span_of(buf_);
-			const std::size_t at = align4(len_);
-			os::store_ne16(s, at, static_cast<std::uint16_t>(total));
-			os::store_ne16(s, at + 2U, type);
+		const std::size_t total = ATTR_HDR + data.size();
+		if ((align4(mLen) + align4(total)) <= mBuf.size()) {
+			const ByteSpan s = spanOf(mBuf);
+			const std::size_t at = align4(mLen);
+			os::storeNe16(s, at, static_cast<std::uint16_t>(total));
+			os::storeNe16(s, at + 2U, type);
 			for (std::size_t i = 0U; i < data.size(); i++) {
-				buf_[at + kAttrHdr + i] = data[i];
+				mBuf[at + ATTR_HDR + i] = data[i];
 			}
-			len_ = at + align4(total);
+			mLen = at + align4(total);
 		}
 	}
 
 	ByteView finish() noexcept
 	{
-		os::store_ne32(span_of(buf_), 0U, static_cast<std::uint32_t>(len_));
-		return view_of(buf_).first(len_);
+		os::storeNe32(spanOf(mBuf), 0U, static_cast<std::uint32_t>(mLen));
+		return viewOf(mBuf).first(mLen);
 	}
 
 private:
-	std::array<std::uint8_t, 64U> buf_{};
-	std::size_t len_{0U};
+	std::array<std::uint8_t, 64U> mBuf{};
+	std::size_t mLen{0U};
 };
 
 // Attribute of the given type inside attrs, or an empty view.
-ByteView find_attr(ByteView attrs, std::uint16_t type) noexcept
+ByteView findAttr(ByteView attrs, std::uint16_t type) noexcept
 {
 	ByteView found;
 	std::size_t off = 0U;
 	bool more = true;
 
-	while (more && ((attrs.size() - off) >= kAttrHdr)) {
-		const std::size_t len = os::load_ne16(attrs, off);
-		const std::uint16_t t = static_cast<std::uint16_t>(os::load_ne16(attrs, off + 2U) &
+	while (more && ((attrs.size() - off) >= ATTR_HDR)) {
+		const std::size_t len = os::loadNe16(attrs, off);
+		const std::uint16_t t = static_cast<std::uint16_t>(os::loadNe16(attrs, off + 2U) &
 								   static_cast<std::uint16_t>(NLA_TYPE_MASK));
-		if ((len < kAttrHdr) || (len > (attrs.size() - off))) {
+		if ((len < ATTR_HDR) || (len > (attrs.size() - off))) {
 			more = false;
 		} else if (t == type) {
-			found = attrs.sub(off + kAttrHdr, len - kAttrHdr);
+			found = attrs.sub(off + ATTR_HDR, len - ATTR_HDR);
 			// An attribute may legitimately be empty (a flag): mark found.
 			if (found.empty()) {
-				found = attrs.sub(off, kAttrHdr);
+				found = attrs.sub(off, ATTR_HDR);
 			}
 			more = false;
 		} else {
@@ -93,34 +93,34 @@ ByteView find_attr(ByteView attrs, std::uint16_t type) noexcept
 	return found;
 }
 
-bool has_attr(ByteView attrs, std::uint16_t type) noexcept
+bool hasAttr(ByteView attrs, std::uint16_t type) noexcept
 {
-	return !find_attr(attrs, type).empty();
+	return !findAttr(attrs, type).empty();
 }
 
-void parse_survey(ByteView msg, SurveySample &out) noexcept
+void parseSurvey(ByteView msg, SurveySample &out) noexcept
 {
-	const ByteView attrs = msg.sub(kNlHdr + kGenlHdr, msg.size() - (kNlHdr + kGenlHdr));
-	const ByteView si = find_attr(attrs, static_cast<std::uint16_t>(NL80211_ATTR_SURVEY_INFO));
+	const ByteView attrs = msg.sub(NL_HDR + GENL_HDR, msg.size() - (NL_HDR + GENL_HDR));
+	const ByteView si = findAttr(attrs, static_cast<std::uint16_t>(NL80211_ATTR_SURVEY_INFO));
 
-	if (!si.empty() && has_attr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_IN_USE))) {
+	if (!si.empty() && hasAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_IN_USE))) {
 		out = SurveySample{};
 		out.valid = true;
-		const ByteView f = find_attr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_FREQUENCY));
+		const ByteView f = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_FREQUENCY));
 		if (f.size() >= 4U) {
-			out.freq = static_cast<int>(os::load_ne32(f, 0U));
+			out.freq = static_cast<int>(os::loadNe32(f, 0U));
 		}
-		const ByteView n = find_attr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_NOISE));
+		const ByteView n = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_NOISE));
 		if (n.size() >= 1U) {
 			out.noise = static_cast<std::int8_t>(n[0U]);
 		}
-		const ByteView t = find_attr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME));
+		const ByteView t = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME));
 		if (t.size() >= 8U) {
-			out.active_ms = os::load_ne64(t, 0U);
+			out.activeMs = os::loadNe64(t, 0U);
 		}
-		const ByteView b = find_attr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME_BUSY));
+		const ByteView b = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME_BUSY));
 		if (b.size() >= 8U) {
-			out.busy_ms = os::load_ne64(b, 0U);
+			out.busyMs = os::loadNe64(b, 0U);
 		}
 	}
 }
@@ -132,32 +132,32 @@ bool Survey::open() noexcept
 	std::array<std::uint8_t, 16384U> buf{};
 	const std::array<std::uint8_t, 8U> name{{'n', 'l', '8', '0', '2', '1', '1', '\0'}};
 
-	family_ = 0U;
-	fd_ = os::netlink_open();
-	seq_++;
-	Request r(static_cast<std::uint16_t>(GENL_ID_CTRL), static_cast<std::uint16_t>(NLM_F_REQUEST), seq_,
+	mFamily = 0U;
+	mFd = os::openNetlink();
+	mSeq++;
+	Request r(static_cast<std::uint16_t>(GENL_ID_CTRL), static_cast<std::uint16_t>(NLM_F_REQUEST), mSeq,
 		  static_cast<std::uint8_t>(CTRL_CMD_GETFAMILY), 1U);
-	r.attr(static_cast<std::uint16_t>(CTRL_ATTR_FAMILY_NAME), view_of(name));
-	bool ok = fd_.valid() && os::netlink_send(fd_, r.finish());
+	r.attr(static_cast<std::uint16_t>(CTRL_ATTR_FAMILY_NAME), viewOf(name));
+	bool ok = mFd.valid() && os::sendNetlink(mFd, r.finish());
 	std::optional<std::size_t> n;
 	if (ok) {
-		n = os::netlink_recv(fd_, span_of(buf), kRecvTimeoutMs);
-		ok = n.has_value() && (*n >= (kNlHdr + kGenlHdr));
+		n = os::recvNetlink(mFd, spanOf(buf), RECV_TIMEOUT_MS);
+		ok = n.has_value() && (*n >= (NL_HDR + GENL_HDR));
 	}
 	if (ok) {
-		const ByteView msg = view_of(buf).first(*n);
-		ok = os::load_ne16(msg, 4U) != static_cast<std::uint16_t>(NLMSG_ERROR);
+		const ByteView msg = viewOf(buf).first(*n);
+		ok = os::loadNe16(msg, 4U) != static_cast<std::uint16_t>(NLMSG_ERROR);
 		if (ok) {
-			const std::size_t len = os::load_ne32(msg, 0U);
-			const ByteView attrs = msg.sub(kNlHdr + kGenlHdr, ((len <= *n) ? len : *n) - (kNlHdr + kGenlHdr));
-			const ByteView id = find_attr(attrs, static_cast<std::uint16_t>(CTRL_ATTR_FAMILY_ID));
+			const std::size_t len = os::loadNe32(msg, 0U);
+			const ByteView attrs = msg.sub(NL_HDR + GENL_HDR, ((len <= *n) ? len : *n) - (NL_HDR + GENL_HDR));
+			const ByteView id = findAttr(attrs, static_cast<std::uint16_t>(CTRL_ATTR_FAMILY_ID));
 			ok = id.size() >= 2U;
-			family_ = ok ? os::load_ne16(id, 0U) : 0U;
+			mFamily = ok ? os::loadNe16(id, 0U) : 0U;
 		}
 	}
 	if (!ok) {
-		logging::warn(kMod, "nl80211 unavailable, channel utilisation from hostapd only");
-		fd_.reset();
+		logging::warn(LOG_MODULE, "nl80211 unavailable, channel utilisation from hostapd only");
+		mFd.reset();
 	}
 	return ok;
 }
@@ -166,35 +166,35 @@ bool Survey::get(int ifindex, SurveySample &out) noexcept
 {
 	std::array<std::uint8_t, 16384U> buf{};
 	std::array<std::uint8_t, 4U> idx{};
-	bool ok = fd_.valid() && (family_ != 0U);
+	bool ok = mFd.valid() && (mFamily != 0U);
 	bool done = !ok;
 
 	out.valid = false;
 	if (ok) {
-		seq_++;
-		os::store_ne32(span_of(idx), 0U, static_cast<std::uint32_t>(ifindex));
-		Request r(family_, static_cast<std::uint16_t>(NLM_F_REQUEST | NLM_F_DUMP), seq_,
+		mSeq++;
+		os::storeNe32(spanOf(idx), 0U, static_cast<std::uint32_t>(ifindex));
+		Request r(mFamily, static_cast<std::uint16_t>(NLM_F_REQUEST | NLM_F_DUMP), mSeq,
 			  static_cast<std::uint8_t>(NL80211_CMD_GET_SURVEY), 0U);
-		r.attr(static_cast<std::uint16_t>(NL80211_ATTR_IFINDEX), view_of(idx));
-		ok = os::netlink_send(fd_, r.finish());
+		r.attr(static_cast<std::uint16_t>(NL80211_ATTR_IFINDEX), viewOf(idx));
+		ok = os::sendNetlink(mFd, r.finish());
 		done = !ok;
 	}
 	while (!done) {
-		const std::optional<std::size_t> n = os::netlink_recv(fd_, span_of(buf), kRecvTimeoutMs);
+		const std::optional<std::size_t> n = os::recvNetlink(mFd, spanOf(buf), RECV_TIMEOUT_MS);
 		if (!n.has_value()) {
 			ok = false;
 			done = true;
 		}
-		const ByteView all = view_of(buf).first(n.has_value() ? *n : 0U);
+		const ByteView all = viewOf(buf).first(n.has_value() ? *n : 0U);
 		std::size_t off = 0U;
-		while (!done && ((all.size() - off) >= kNlHdr)) {
-			const std::size_t len = os::load_ne32(all, off);
-			if ((len < kNlHdr) || (len > (all.size() - off))) {
+		while (!done && ((all.size() - off) >= NL_HDR)) {
+			const std::size_t len = os::loadNe32(all, off);
+			if ((len < NL_HDR) || (len > (all.size() - off))) {
 				break;
 			}
 			const ByteView msg = all.sub(off, len);
-			const std::uint16_t type = os::load_ne16(msg, 4U);
-			if (os::load_ne32(msg, 8U) == seq_) {
+			const std::uint16_t type = os::loadNe16(msg, 4U);
+			if (os::loadNe32(msg, 8U) == mSeq) {
 				if (type == static_cast<std::uint16_t>(NLMSG_DONE)) {
 					ok = out.valid;
 					done = true;
@@ -202,7 +202,7 @@ bool Survey::get(int ifindex, SurveySample &out) noexcept
 					ok = false;
 					done = true;
 				} else {
-					parse_survey(msg, out);
+					parseSurvey(msg, out);
 				}
 			}
 			off += align4(len);
@@ -214,10 +214,10 @@ bool Survey::get(int ifindex, SurveySample &out) noexcept
 int Survey::util(const SurveySample &prev, const SurveySample &cur) noexcept
 {
 	int u = -1;
-	if (prev.valid && cur.valid && (prev.freq == cur.freq) && (cur.active_ms > prev.active_ms) &&
-	    (cur.busy_ms >= prev.busy_ms)) {
-		const std::uint64_t da = cur.active_ms - prev.active_ms;
-		std::uint64_t db = cur.busy_ms - prev.busy_ms;
+	if (prev.valid && cur.valid && (prev.freq == cur.freq) && (cur.activeMs > prev.activeMs) &&
+	    (cur.busyMs >= prev.busyMs)) {
+		const std::uint64_t da = cur.activeMs - prev.activeMs;
+		std::uint64_t db = cur.busyMs - prev.busyMs;
 		if (db > da) {
 			db = da;
 		}

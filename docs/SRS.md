@@ -359,7 +359,7 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
 | Air monitor (FR-AMN, IR-13) | `test_air_monitor` (radiotap alignment, extended bitmaps, frame filter, TLV round trip, config); itest PASS 5 (STA without 11k, injected frames, monitor report, steer) in both scoring models | Real monitor path verified on OpenWrt/hwsim (BPF + `AF_PACKET` + parser: −27 dBm, matching the station table); cross-AP over the air not possible with hwsim; BPF program has no unit test |
 | OpenWrt service and BSSes from UCI (IR-7, IR-12) | — | OpenWrt procedure only: generated `bss` lines (names, `mdid`, `max_sta` from `maxassoc`) verified, and an interface rename via `reload_config` followed within 6 s; no automated test of the init script |
 
-Recommended additions: a unit test for `peer_accept_seq` (move it into a pure
+Recommended additions: a unit test for `acceptPeerSeq` (move it into a pure
 module); itest scenarios for peer timeout, packet loss with retransmission,
 and BTM rejection; a shell test of the init script's `bss` generation against
 fixture `ubus` output and hostapd configs; and, once SDD R11 is fixed, an

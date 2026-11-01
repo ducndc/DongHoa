@@ -11,8 +11,8 @@
 
 namespace donghoa {
 
-constexpr std::size_t kSha256Len = 32U;
-using Digest = std::array<std::uint8_t, kSha256Len>;
+constexpr std::size_t SHA256_LEN = 32U;
+using Digest = std::array<std::uint8_t, SHA256_LEN>;
 
 class Sha256 {
 public:
@@ -23,14 +23,14 @@ public:
 private:
 	void block() noexcept;
 
-	std::array<std::uint32_t, 8U> h_{};
-	std::array<std::uint8_t, 64U> buf_{};
-	std::uint64_t len_{0U};
-	std::size_t fill_{0U};
+	std::array<std::uint32_t, 8U> mH{};
+	std::array<std::uint8_t, 64U> mBuf{};
+	std::uint64_t mLen{0U};
+	std::size_t mFill{0U};
 };
 
-Digest sha256(ByteView data) noexcept;
-Digest hmac_sha256(ByteView key, ByteView msg) noexcept;
+Digest computeSha256(ByteView data) noexcept;
+Digest computeHmacSha256(ByteView key, ByteView msg) noexcept;
 
 } // namespace donghoa
 

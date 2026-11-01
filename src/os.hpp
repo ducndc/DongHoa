@@ -20,30 +20,30 @@ namespace os {
 // ---- time, process, randomness ----
 
 // Monotonic clock in milliseconds.
-Millis now_ms() noexcept;
-std::int32_t process_id() noexcept;
-std::optional<std::uint32_t> random_u32() noexcept;
+Millis nowMs() noexcept;
+std::int32_t processId() noexcept;
+std::optional<std::uint32_t> randomU32() noexcept;
 
 // ---- logging sinks ----
 
-void write_stderr(std::string_view line) noexcept;
-void write_stdout(std::string_view text) noexcept;
-void syslog_open() noexcept;
-void syslog_close() noexcept;
+void writeStderr(std::string_view line) noexcept;
+void writeStdout(std::string_view text) noexcept;
+void openSyslog() noexcept;
+void closeSyslog() noexcept;
 // prio: 0 err, 1 warning, 2 info, 3 debug
-void syslog_write(std::uint8_t prio, std::string_view line) noexcept;
+void writeSyslog(std::uint8_t prio, std::string_view line) noexcept;
 
 // ---- signals ----
 
 // SIGINT/SIGTERM set the stop flag; SIGPIPE is ignored.
-void install_signal_handlers() noexcept;
-bool stop_requested() noexcept;
+void installSignalHandlers() noexcept;
+bool stopRequested() noexcept;
 
 // ---- files ----
 
 // Reads a whole text file (at most out.capacity() bytes); false on error.
-bool read_text_file(const char *path, FixedString<16384U> &out) noexcept;
-void remove_file(const char *path) noexcept;
+bool readTextFile(const char *path, FixedString<16384U> &out) noexcept;
+void removeFile(const char *path) noexcept;
 
 // ---- file descriptors ----
 
@@ -51,31 +51,31 @@ void remove_file(const char *path) noexcept;
 class Fd {
 public:
 	Fd() noexcept = default;
-	explicit Fd(int fd) noexcept : fd_(fd) {}
+	explicit Fd(int fd) noexcept : mFd(fd) {}
 	~Fd() noexcept { reset(); }
 	Fd(const Fd &) = delete;
 	Fd &operator=(const Fd &) = delete;
-	Fd(Fd &&o) noexcept : fd_(o.fd_) { o.fd_ = -1; }
+	Fd(Fd &&o) noexcept : mFd(o.mFd) { o.mFd = -1; }
 	Fd &operator=(Fd &&o) noexcept;
 
-	int get() const noexcept { return fd_; }
-	bool valid() const noexcept { return fd_ >= 0; }
+	int get() const noexcept { return mFd; }
+	bool valid() const noexcept { return mFd >= 0; }
 	void reset() noexcept;
 
 private:
-	int fd_{-1};
+	int mFd{-1};
 };
 
-// Waits up to timeout_ms for any of fds to become readable. ready[i] is set
+// Waits up to timeoutMs for any of fds to become readable. ready[i] is set
 // for each readable (or failed) descriptor. Returns false on poll error.
-constexpr std::size_t kMaxPoll = 32U;
-bool poll_readable(const std::array<int, kMaxPoll> &fds, std::size_t n, int timeout_ms,
-		   std::array<bool, kMaxPoll> &ready) noexcept;
-// Waits for one descriptor; true if readable within timeout_ms.
-bool wait_readable(int fd, int timeout_ms) noexcept;
+constexpr std::size_t MAX_POLL = 32U;
+bool pollReadable(const std::array<int, MAX_POLL> &fds, std::size_t n, int timeoutMs,
+		   std::array<bool, MAX_POLL> &ready) noexcept;
+// Waits for one descriptor; true if readable within timeoutMs.
+bool waitReadable(int fd, int timeoutMs) noexcept;
 
 // Results of a non-blocking receive.
-enum class Rx : std::uint8_t { data, empty, error };
+enum class Rx : std::uint8_t { DATA, EMPTY, ERROR };
 
 // ---- UNIX datagram sockets ----
 
@@ -86,21 +86,21 @@ struct UnixAddr {
 };
 
 // Bound (non-blocking if nonblock) datagram socket at path (replaced).
-Fd unix_bind(const char *path, bool nonblock) noexcept;
-// Gives path the owner of other_path when they differ (hostapd running as
+Fd bindUnix(const char *path, bool nonblock) noexcept;
+// Gives path the owner of otherPath when they differ (hostapd running as
 // another user must be able to reply). Harmless when not root.
-void share_owner(const char *path, const char *other_path) noexcept;
-bool unix_connect(const Fd &fd, const char *path) noexcept;
-bool send_text(const Fd &fd, std::string_view text, bool dontwait) noexcept;
+void shareOwner(const char *path, const char *otherPath) noexcept;
+bool connectUnix(const Fd &fd, const char *path) noexcept;
+bool sendText(const Fd &fd, std::string_view text, bool dontwait) noexcept;
 // Blocking receive into buf; byte count, or nothing on error.
-std::optional<std::size_t> recv_bytes(const Fd &fd, const ByteSpan &buf) noexcept;
+std::optional<std::size_t> recvBytes(const Fd &fd, const ByteSpan &buf) noexcept;
 // Non-blocking receive.
-Rx recv_nowait(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept;
-Rx recv_from(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) noexcept;
-void send_to(const Fd &fd, ByteView data, const UnixAddr &to) noexcept;
+Rx recvNowait(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept;
+Rx recvFrom(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) noexcept;
+void sendTo(const Fd &fd, ByteView data, const UnixAddr &to) noexcept;
 // One request/reply exchange for a command-line client.
-bool unix_request(const char *server, const char *local, std::string_view request,
-		  const ByteSpan &reply, std::size_t &n, int timeout_ms) noexcept;
+bool sendUnixRequest(const char *server, const char *local, std::string_view request,
+		  const ByteSpan &reply, std::size_t &n, int timeoutMs) noexcept;
 
 // ---- raw Ethernet (AF_PACKET) ----
 
@@ -109,37 +109,37 @@ struct LinkInfo {
 	Mac mac{};
 };
 
-int ifname_to_index(const char *ifname) noexcept;
+int ifnameToIndex(const char *ifname) noexcept;
 // Socket for one EtherType on ifname, joined to the multicast group.
-Fd packet_open(const char *ifname, std::uint16_t ethertype, const Mac &group, LinkInfo &info) noexcept;
-bool packet_send(const Fd &fd, int ifindex, const Mac &dst, ByteView frame) noexcept;
+Fd openPacket(const char *ifname, std::uint16_t ethertype, const Mac &group, LinkInfo &info) noexcept;
+bool sendPacket(const Fd &fd, int ifindex, const Mac &dst, ByteView frame) noexcept;
 // Receives one frame; outgoing frames (our own) are reported as empty.
-Rx packet_recv(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept;
+Rx recvPacket(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept;
 
 // Air monitor: radiotap frames of every type on a monitor interface, with
 // a kernel filter passing only probe requests and ToDS data frames.
-Fd monitor_open(const char *ifname) noexcept;
+Fd openMonitor(const char *ifname) noexcept;
 
 // ---- UDP on loopback (simulation transport, test inputs) ----
 
-Fd udp_bind_loopback(std::uint16_t port) noexcept;
-void udp_send_loopback(const Fd &fd, std::uint16_t port, ByteView data) noexcept;
+Fd bindUdpLoopback(std::uint16_t port) noexcept;
+void sendUdpLoopback(const Fd &fd, std::uint16_t port, ByteView data) noexcept;
 
 // ---- generic netlink ----
 
-Fd netlink_open() noexcept;
-bool netlink_send(const Fd &fd, ByteView msg) noexcept;
-// Byte count received within timeout_ms, or nothing.
-std::optional<std::size_t> netlink_recv(const Fd &fd, const ByteSpan &buf, int timeout_ms) noexcept;
+Fd openNetlink() noexcept;
+bool sendNetlink(const Fd &fd, ByteView msg) noexcept;
+// Byte count received within timeoutMs, or nothing.
+std::optional<std::size_t> recvNetlink(const Fd &fd, const ByteSpan &buf, int timeoutMs) noexcept;
 // Host-order integers inside netlink messages (native endianness).
-std::uint16_t load_ne16(ByteView v, std::size_t off) noexcept;
-std::uint32_t load_ne32(ByteView v, std::size_t off) noexcept;
-std::uint64_t load_ne64(ByteView v, std::size_t off) noexcept;
-void store_ne16(const ByteSpan &s, std::size_t off, std::uint16_t v) noexcept;
-void store_ne32(const ByteSpan &s, std::size_t off, std::uint32_t v) noexcept;
+std::uint16_t loadNe16(ByteView v, std::size_t off) noexcept;
+std::uint32_t loadNe32(ByteView v, std::size_t off) noexcept;
+std::uint64_t loadNe64(ByteView v, std::size_t off) noexcept;
+void storeNe16(const ByteSpan &s, std::size_t off, std::uint16_t v) noexcept;
+void storeNe32(const ByteSpan &s, std::size_t off, std::uint32_t v) noexcept;
 
 // Text of the last system error (strerror of errno).
-std::string_view last_error() noexcept;
+std::string_view lastError() noexcept;
 
 } // namespace os
 } // namespace donghoa
