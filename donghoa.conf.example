@@ -1,0 +1,99 @@
+# DongHoa configuration. Format: "key value", '#' starts a comment.
+
+name ap-livingroom
+# AP identifier carried in every ARCP header. Defaults to the MAC of the
+# first 'iface'. Must be unique in the ESS.
+#ap_id 02:00:00:00:00:01
+
+# ---- logging ----
+# Level for every module: err, warn, info (default), debug. Modules logged at
+# debug: main l2 msg peer hapd local steer policy amon survey ctrl config
+# (msg at debug traces every ARCP frame). -d sets all to debug; levels can
+# also be changed at run time: donghoa_cli <socket> LOG debug steer
+#log_level info
+#log_debug steer,amon
+
+# L2 attachment points (repeatable). Prefer the bridge that joins the wired
+# uplink and the Wi-Fi backhaul: then ARCP reaches every AP regardless of
+# medium. A Wi-Fi backhaul must forward bridged frames (4-address/WDS or
+# 802.11s mesh). Do not list a bridge AND its member ports.
+iface br-lan
+
+# Shared secret: every message carries a truncated HMAC-SHA256.
+# Either a passphrase (>= 8 chars) or hex:<32..128 hex digits>.
+key change-me-to-a-long-random-secret
+
+# hostapd BSSes managed by this daemon (repeatable).
+#   mdid=<hex>   802.11r Mobility Domain (must match hostapd mobility_domain)
+#   max_sta=<n>  admission limit used for load balancing (0 = unlimited)
+#   ft_over_ds=1 advertise FT-over-DS
+bss wlan0 mdid=a1b2 max_sta=64
+bss wlan1 mdid=a1b2 max_sta=64
+
+hostapd_ctrl_dir /var/run/hostapd
+ctrl_socket /var/run/donghoa.sock
+
+# ---- timers (ms) ----
+#hello_interval_ms 2000
+#bss_status_interval_ms 5000
+#sta_status_interval_ms 10000
+#rf_status_interval_ms 10000
+#sta_poll_interval_ms 1000
+#peer_timeout_ms 7000
+
+# ---- policy ----
+#rssi_steering 1
+#load_balancing 1
+#band_steering 1
+#rssi_low -75            # dBm, STA below this for rssi_low_count polls -> roam
+#rssi_low_count 3
+#rssi_hysteresis 8       # dB the target must beat the current RSSI by
+#rssi_min_target -70     # dBm, minimum STA-measured target level
+#band_steer_rssi -55     # dBm, strong 2.4 GHz STA -> 5/6 GHz
+#util_high 70            # %, BSS overloaded
+#util_admit_max 80       # %, target refuses steer-in
+#lb_margin 15            # %, target must be below util_high - lb_margin
+#lb_rssi_tolerance 5     # dB of RSSI the STA may lose for load balancing
+#lb_only_idle 1
+#idle_kbps 50
+#lb_interval_ms 10000
+#util_weight 2           # score -= util_weight per 10 % target utilisation
+#band_bonus_5g 5
+#band_bonus_6g 8
+#steer_cooldown_ms 30000
+#steer_backoff_max_ms 600000
+#beacon_req_timeout_ms 1500
+#steer_resp_timeout_ms 1000
+#btm_timeout_ms 2000
+#roam_timeout_ms 5000
+#reserve_hold_ms 8000
+#btm_valid_int 100       # TBTTs
+#disassoc_imminent 0     # 1 = BTM with Disassociation Imminent
+#disassoc_timer 0        # TBTTs (with disassoc_imminent)
+#beacon_mode 1           # 0 passive, 1 active, 2 table; tried first, then active,
+                         # then passive (>= 120 TU) if the STA does not support it
+#beacon_duration 50      # TUs
+#assume_kvr 1            # treat STAs as 11k/v/r capable unless proven otherwise
+
+# ---- candidate scoring ----
+# 0: linear  score = dBm + band bonus - util_weight * util% / 10
+# 1: tput    score = expected throughput = q(RSSI) x peak PHY rate x free
+#            airtime; q is a sigmoid (50 % at tput_rssi_mid, 0.3/dB). A
+#            target must reach tput_gain_pct of the current throughput (RSSI
+#            and band steering) or not lose throughput (load balancing).
+#            Experimental; band steering only happens when 5/6 GHz is faster.
+#score_model 0
+#tput_rssi_mid -72       # dBm
+#tput_gain_pct 150       # %
+#sta_nss 2               # spatial streams assumed for the peak rate
+
+# ---- air monitor (STAs that give no 802.11k beacon report) ----
+# Radiotap monitor interfaces on this AP's radios, created beforehand, e.g.
+#   iw phy phy1 interface add mon1 type monitor && ip link set mon1 up
+# With one, this AP measures STAs on request (its own steers and its peers')
+# and advertises the capability. A radio hears only its own channel: uplink
+# data of STAs on that channel and probe requests of scanning STAs.
+#air_monitor mon1
+#amon_request 1          # ask peers' monitors when steering (in parallel with 11k)
+#amon_duration_ms 1000   # watch time per request
+#amon_rssi_offset 0      # dB added to monitor (uplink) RSSI
