@@ -69,7 +69,36 @@ Triggers, from `onStaPoll` and `runLbRound`:
   polls. A candidate must beat the current RSSI by `rssi_hysteresis` and reach
   at least `rssi_min_target`.
 - **Band:** a 2.4 GHz STA at or above `band_steer_rssi` is a candidate for a
-  5/6 GHz BSS of the same ESS, on this AP or a peer.
+  5/6 GHz BSS of the same ESS, on this AP or a peer. With `band_steer_6g`
+  (default on), a 5 GHz STA at or above `band_steer_6g_rssi` is a candidate
+  for a 6 GHz BSS, but only when it advertises 6 GHz operating classes or
+  was seen on 6 GHz (an unknown STA is not probed for 6 GHz). The STA must be
+  able to use a higher band (below). A band steer in which no candidate gets measured
+  backs the STA off exponentially for band steering (`steer_cooldown_ms ×
+  2^n`, up to `steer_backoff_max_ms`), until a 5/6 GHz level shows up.
+
+**STA bands.** The Supported Operating Classes element of the (re)association
+request (hostapd's `supp_op_classes=`) gives the bands a STA advertises:
+classes 81–84 = 2.4 GHz, 115–129 = 5 GHz, 131–137 = 6 GHz, read up to the
+130 or 0 delimiter. A band the STA was associated or measured on (11k report
+or air monitor) also counts. Automatic steers skip candidate BSSes on bands
+the STA neither advertises nor was seen on. A STA without the element counts
+as able to use every band, so the measurement decides, as before. A missing
+report never proves a band is absent (busy STA, DFS, 6 GHz probing rules).
+
+6 GHz allows only WPA3 (SAE), OWE and 802.1X with PMF; hostapd refuses PSK,
+FT-PSK and PSK-SHA256 on a 6 GHz BSS. A STA whose association uses one of
+those AKMs (hostapd's `AKMSuiteSelector` 00-0f-ac-2/4/6) is taken not to
+support WPA3, and 6 GHz is blocked for it even if it advertises 6 GHz. On a
+WPA2/WPA3 transition BSS this can miss a WPA3-capable STA that chose PSK;
+the STA's RSN capabilities are not visible through hostapd's control
+interface. No STA AKM (open BSS, or field missing) blocks nothing.
+`donghoa_cli <sock> STAS` shows them per STA as
+`bands=<usable>(<class>) adv=<advertised> seen=<seen>`, for example
+`bands=2g,5g(dual) adv=2g,5g seen=2g`. `<usable>` is advertised plus seen,
+minus blocked bands (then ` no6g=wpa2-psk` is added);
+`<class>` is `single`, `dual` or `tri`, or `unknown` when the STA advertised
+no operating classes (DongHoa then tries every band).
 - **Load:** the BSS utilisation is at or above `util_high`, or `max_sta` is
   reached. Each round moves one STA per overloaded BSS: the weakest idle STA
   (`lb_only_idle`). The target must sit below `util_high - lb_margin`, and the
@@ -129,6 +158,9 @@ builds may differ:
 - `STA` output fields `signal`, `rx_rate_info` / `tx_rate_info` (100 kbps
   units, e.g. `217 mcs 2 shortGI`), `ext_capab`, and `AKMSuiteSelector`
   printed as `00-0f-ac-4`. Verified.
+- `STA` field `supp_op_classes` (hex of the element body, Current Operating
+  Class first): present in hostapd 2025.03 `ctrl_iface_ap.c`; not yet checked
+  on the OpenWrt build.
 - `STATUS` field `chan_util_avg`, used only when the nl80211 survey is not
   available. Verified present.
 - The `BEACON-RESP-RX` hex payload starts at the Beacon Report's Operating
@@ -162,3 +194,6 @@ A STA busy with its own scan answers report mode `refused`.
 - The neighbor database holds 20 MHz op classes only. Wide-channel op classes
   are not advertised.
 - No MLO / multi-link awareness.
+- STAs mostly discover 6 GHz BSSes through RNR in 2.4/5 GHz beacons or FILS
+  discovery, which hostapd configures; DongHoa does not. Neighbor reports
+  for 6 GHz use op class 131 (20 MHz) only.

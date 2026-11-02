@@ -398,7 +398,9 @@ the STA leaving is expected.
    is down, or all 16 slots are busy.
 2. **`buildPool`:** every local BSS that is up and every remote BSS with the
    same SSID, except the source. For BAND, only higher bands; with a forced
-   target, only that BSSID. At most 16. An empty pool applies the cooldown.
+   target, only that BSSID. Except for MANUAL, only bands the STA can use
+   (`policy::isBandUsable`: not blocked — 6 GHz for a WPA2-PSK AKM — and
+   advertised in `supp_op_classes`, seen in use, or nothing advertised). At most 16. An empty pool applies the cooldown.
 3. **`requestBeacons`:** collect the distinct (op class, channel) pairs of
    the candidates (with `score_model 1`, the serving channel first), up to 8,
    and send **one** `REQ_BEACON <sta> <hex>`. The hex comes from

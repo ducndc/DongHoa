@@ -263,6 +263,27 @@ void testRrm()
 	      !rrm::isFtAkm("000fac-4"));
 	const std::array<std::uint8_t, 3U> ext{{0U, 0U, 0x08U}};
 	CHECK(rrm::hasBtmCapab(viewOf(ext)) && !rrm::hasBtmCapab(viewOf(ext).first(2U)));
+	CHECK(rrm::isAkmForbidden6g("00-0f-ac-2") && rrm::isAkmForbidden6g("00-0F-AC-4") &&
+	      rrm::isAkmForbidden6g("00-0f-ac-6"));
+	CHECK(!rrm::isAkmForbidden6g("00-0f-ac-8") && !rrm::isAkmForbidden6g("00-0f-ac-18") &&
+	      !rrm::isAkmForbidden6g("00-0f-ac-5") && !rrm::isAkmForbidden6g("50-6f-9a-2") &&
+	      !rrm::isAkmForbidden6g(""));
+
+	// Supported Operating Classes: current class first, then the list up
+	// to the 130 or 0 delimiter
+	CHECK(rrm::bandBit(arcp::BAND_5G) == rrm::BANDS_5G && rrm::bandBit(0U) == 0U);
+	CHECK(rrm::opClassBandBit(81U) == rrm::BANDS_2G && rrm::opClassBandBit(128U) == rrm::BANDS_5G &&
+	      rrm::opClassBandBit(134U) == rrm::BANDS_6G && rrm::opClassBandBit(12U) == 0U);
+	const std::array<std::uint8_t, 3U> only2g{{81U, 81U, 83U}};
+	CHECK(rrm::bandsFromOpClasses(viewOf(only2g)) == rrm::BANDS_2G);
+	const std::array<std::uint8_t, 6U> tri{{115U, 81U, 115U, 128U, 131U, 134U}};
+	CHECK(rrm::bandsFromOpClasses(viewOf(tri)) == (rrm::BANDS_2G | rrm::BANDS_5G | rrm::BANDS_6G));
+	// 6 GHz class after the OneHundredAndThirty delimiter is not a class
+	const std::array<std::uint8_t, 5U> delim{{81U, 81U, 130U, 131U, 0U}};
+	CHECK(rrm::bandsFromOpClasses(viewOf(delim)) == rrm::BANDS_2G);
+	const std::array<std::uint8_t, 4U> zero{{81U, 0U, 115U, 131U}};
+	CHECK(rrm::bandsFromOpClasses(viewOf(zero)) == rrm::BANDS_2G);
+	CHECK(rrm::bandsFromOpClasses(ByteView()) == 0U);
 }
 
 void testHapdParsers()
@@ -278,7 +299,7 @@ void testHapdParsers()
 		"aid=1\ncapability=0x11\nlisten_interval=10\nrx_bytes=1000\ntx_bytes=2000\n"
 		"inactive_msec=120\nsignal=-67\nrx_rate_info=8667 vhtmcs 9\n"
 		"tx_rate_info=4333\nconnected_time=42\next_capab=0400080000000040\n"
-		"AKMSuiteSelector=00-0f-ac-4\n";
+		"AKMSuiteSelector=00-0f-ac-4\nsupp_op_classes=5151537376\n";
 
 	std::optional<hapd::Status> st = hapd::parseStatus(status, "wlan1-1");
 	CHECK(st.has_value());
@@ -299,7 +320,11 @@ void testHapdParsers()
 		CHECK(s->inactiveMs == 120U && s->connectedS == 42U);
 		CHECK(s->rxRateMbps == 866U && s->txRateMbps == 433U);
 		CHECK(s->btmKnown && s->btm && s->ftKnown && s->ft);
+		CHECK(s->bands == (rrm::BANDS_2G | rrm::BANDS_5G));
+		CHECK(s->akmNo6g); // FT-PSK
 	}
+	const std::optional<hapd::Sta> s2 = hapd::parseSta("aa:bb:cc:dd:ee:02\nsignal=-40\n");
+	CHECK(s2.has_value() && (s2->bands == 0U));
 	CHECK(!hapd::parseSta("FAIL\n").has_value());
 	CHECK(!hapd::parseSta("").has_value());
 
@@ -363,12 +388,39 @@ void testPolicy()
 
 	CHECK(policy::isRssiTriggered(p, -80, 3) && !policy::isRssiTriggered(p, -80, 2));
 	CHECK(!policy::isRssiTriggered(p, -70, 5) && !policy::isRssiTriggered(p, 0, 5));
-	CHECK(policy::isBandTriggered(p, arcp::BAND_2G, -50) && !policy::isBandTriggered(p, arcp::BAND_5G, -50));
+	CHECK(policy::isBandTriggered(p, arcp::BAND_2G, -50) && policy::isBandTriggered(p, arcp::BAND_5G, -50));
+	CHECK(!policy::isBandTriggered(p, arcp::BAND_5G, -60) && !policy::isBandTriggered(p, arcp::BAND_6G, -40));
+	{
+		Config c6;
+		c6.pol.bandSteer6g = false;
+		CHECK(policy::isBandTriggered(c6.pol, arcp::BAND_2G, -50) &&
+		      !policy::isBandTriggered(c6.pol, arcp::BAND_5G, -50));
+	}
 	CHECK(policy::isBssOverloaded(p, 75, 1, 0) && !policy::isBssOverloaded(p, 50, 1, 0));
 	CHECK(policy::isBssOverloaded(p, -1, 32, 32));
 	CHECK(policy::admit(p, 50, 5, 0, 0) == arcp::SteerStatus::ACCEPT);
 	CHECK(policy::admit(p, 50, 9, 1, 10) == arcp::SteerStatus::CAPACITY);
 	CHECK(policy::admit(p, 90, 1, 0, 0) == arcp::SteerStatus::LOAD);
+	// Band usability: unknown counts as usable; seen overrides advertised;
+	// blocked (6 GHz, WPA2-PSK) always wins
+	using B = policy::StaBands;
+	constexpr std::uint8_t ALL = rrm::BANDS_2G | rrm::BANDS_5G | rrm::BANDS_6G;
+	CHECK(policy::isBandUsable(B{0U, 0U, 0U}, arcp::BAND_6G));
+	CHECK(!policy::isBandUsable(B{rrm::BANDS_2G, rrm::BANDS_2G, 0U}, arcp::BAND_5G));
+	CHECK(policy::isBandUsable(B{rrm::BANDS_2G, rrm::BANDS_5G, 0U}, arcp::BAND_5G));
+	CHECK(!policy::isBandUsable(B{ALL, 0U, rrm::BANDS_6G}, arcp::BAND_6G));
+	CHECK(!policy::isBandUsable(B{0U, 0U, rrm::BANDS_6G}, arcp::BAND_6G));
+	CHECK(policy::isBandUsable(B{ALL, 0U, rrm::BANDS_6G}, arcp::BAND_5G));
+	CHECK(!policy::hasHigherBand(B{rrm::BANDS_2G, rrm::BANDS_2G, 0U}, arcp::BAND_2G));
+	CHECK(policy::hasHigherBand(B{rrm::BANDS_2G | rrm::BANDS_6G, 0U, 0U}, arcp::BAND_2G));
+	CHECK(policy::hasHigherBand(B{0U, 0U, 0U}, arcp::BAND_2G));
+	// From 5 GHz only with 6 GHz advertised or seen, and not blocked
+	CHECK(policy::hasHigherBand(B{ALL, 0U, 0U}, arcp::BAND_5G));
+	CHECK(policy::hasHigherBand(B{0U, rrm::BANDS_6G, 0U}, arcp::BAND_5G));
+	CHECK(!policy::hasHigherBand(B{0U, 0U, 0U}, arcp::BAND_5G));
+	CHECK(!policy::hasHigherBand(B{rrm::BANDS_2G | rrm::BANDS_5G, 0U, 0U}, arcp::BAND_5G));
+	CHECK(!policy::hasHigherBand(B{ALL, 0U, rrm::BANDS_6G}, arcp::BAND_5G));
+	CHECK(!policy::hasHigherBand(B{ALL, 0U, 0U}, arcp::BAND_6G));
 	CHECK(policy::backoffMs(p, 0) == 30000 && policy::backoffMs(p, 2) == 120000);
 	CHECK(policy::backoffMs(p, 20) == p.steerBackoffMaxMs);
 	CHECK(policy::utilToPct(255) == -1 && policy::utilToPct(128) == 50 && policy::utilToPct(0) == 0);

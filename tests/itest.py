@@ -12,6 +12,14 @@ Scenarios:
   5. air monitor: a STA without 802.11k is measured by a peer's monitor
      (radiotap frames injected over UDP) and steered there
   6. peer departure (BYE) removes the neighbor entries
+  7. band steering 2.4 -> 5 GHz on AP1's own sibling BSS: a STA that
+     advertises only 2.4 GHz operating classes is never measured or
+     steered, a dual-band one is steered, and one that advertises nothing
+     and never reports a 5 GHz level backs off exponentially
+  8. 6 GHz on AP1's own 6 GHz BSS: a tri-band WPA3 STA goes 2.4 -> 6 GHz, a
+     tri-band WPA2-PSK STA goes to 5 GHz instead (6 GHz needs WPA3/OWE), a
+     5 GHz STA advertising 6 GHz goes 5 -> 6 GHz, and a 5 GHz STA without
+     6 GHz operating classes is left alone
 
 Environment:
   DONGHOA_BIN, DONGHOA_CLI_BIN  commands to run instead of ./donghoa and
@@ -48,6 +56,17 @@ CLI = shlex.split(os.environ.get("DONGHOA_CLI_BIN", os.path.join(ROOT, "donghoa_
 STA_MAC = "aa:bb:cc:dd:ee:01"
 STA2_MAC = "aa:bb:cc:dd:ee:02"  # no 802.11k
 B1, B2 = "02:00:00:00:01:00", "02:00:00:00:02:00"
+B1G = "02:00:00:00:01:01"  # AP1's 2.4 GHz BSS
+STA3_MAC = "aa:bb:cc:dd:ee:03"  # 2.4 GHz only
+STA4_MAC = "aa:bb:cc:dd:ee:04"  # 2.4 + 5 GHz
+STA5_MAC = "aa:bb:cc:dd:ee:05"  # no Supported Operating Classes, no 5 GHz level
+B6 = "02:00:00:00:01:02"  # AP1's 6 GHz BSS
+STA6_MAC = "aa:bb:cc:dd:ee:06"  # tri-band, SAE, on 2.4 GHz
+STA7_MAC = "aa:bb:cc:dd:ee:07"  # tri-band, FT-PSK, on 2.4 GHz
+STA8_MAC = "aa:bb:cc:dd:ee:08"  # tri-band, SAE, on 5 GHz
+STA9_MAC = "aa:bb:cc:dd:ee:09"  # no operating classes, SAE, on 5 GHz
+SAE = "00-0f-ac-8"
+TRI = "5151737c83"  # current 81; 81, 115, 124, 131
 # Extra config lines for every AP, ";"-separated, e.g. "score_model 1".
 EXTRA = os.environ.get("DONGHOA_ITEST_EXTRA", "").replace(";", "\n")
 
@@ -145,6 +164,8 @@ def main():
         h1, h2, h3 = (os.path.join(tmp, f"hostapd{i}") for i in (1, 2, 3))
         ap1 = world.add_bss(h1, "ap1-wl0", B1, "home", 5180, 36, util=40)
         ap2 = world.add_bss(h2, "ap2-wl0", B2, "home", 5745, 149, util=25)
+        ap1g = world.add_bss(h1, "ap1-wl1", B1G, "home", 2437, 6)
+        world.add_bss(h1, "ap1-wl2", B6, "home", 5955, 1)
         world.add_bss(h3, "ap3-wl0", "02:00:00:00:03:00", "home", 2437, 6)
         sta = Sta(STA_MAC, -82, {B2: (124, 149, -55)}, rrm={0})  # passive only
         ap1.stas[STA_MAC] = sta
@@ -160,6 +181,8 @@ def main():
         for i, c in enumerate(cfgs):
             cfg = os.path.join(tmp, f"ap{i + 1}.conf")
             mon = f"air_monitor_sim {mon_port}\n" if i == 1 else ""
+            if i == 0:
+                mon = "bss ap1-wl1 mdid=a1b2\nbss ap1-wl2 mdid=a1b2\n"
             write_cfg(cfg, *c, extra=mon + EXTRA)
             path = os.path.join(tmp, f"ap{i + 1}.log")
             open(path, "w").close()
@@ -264,6 +287,68 @@ def main():
         wait_for(lambda: B2 not in ap1.neighbors, 3, "REMOVE_NEIGHBOR for AP2")
         assert B2 not in cli(socks[0], "PEERS")
         print("PASS 6: BYE removes peer and its neighbor report entry")
+
+        if "score_model 1" in EXTRA:
+            # The mock BSSes are 20 MHz: with the throughput model a band
+            # change is not the required tput_gain_pct gain, so no band steer.
+            print("SKIP 7, 8: band steering scenarios assume score_model 0 (20 MHz mock BSSes)")
+            ok = True
+            return 0
+        mark(logs, "S7 band steering 2.4 -> 5 GHz checks the STA's operating classes")
+        # All three sit close to AP1 on 2.4 GHz (band steering trigger).
+        # Each "sees" AP1's 5 GHz BSS, so only the band check keeps STA3
+        # from being measured and steered.
+        sta3 = Sta(STA3_MAC, -40, {B1: (115, 36, -45)}, op_classes="515152")
+        sta4 = Sta(STA4_MAC, -40, {B1: (115, 36, -50)}, op_classes="5151737c")
+        sta5 = Sta(STA5_MAC, -40, {})
+        t0 = time.monotonic()
+        with world.lock:
+            for s in (sta3, sta4, sta5):
+                ap1g.add_sta(s)
+        wait_for(lambda: any(t[0] == B1G and t[1] == STA4_MAC and t[2] == B1 for t in world.btm_log),
+                 5, "band-steering BTM for dual-band STA4 to AP1's 5 GHz BSS")
+        wait_for(lambda: STA4_MAC in ap1.stas, 3, "STA4 to move to 5 GHz")
+        # cooldown 1500 ms: 3000 ms after the first empty measurement,
+        # 6000 ms after the second
+        wait_for(lambda: "sta " + STA5_MAC + ": no higher-band level (2 in a row), next band steer in 6000 ms"
+                 in open(logs[0].name).read(), 10, "band backoff to grow for STA5")
+        assert time.monotonic() - t0 > 3.0, "second band attempt came before the backoff"
+        stas = cli(socks[0], "STAS")
+        line = {m: next((l for l in stas.splitlines() if l.startswith("sta " + m)), "")
+                for m in (STA3_MAC, STA4_MAC, STA5_MAC)}
+        assert "bands=2g(single) adv=2g seen=2g" in line[STA3_MAC], stas
+        assert "bands=2g,5g(dual) adv=2g,5g seen=2g,5g" in line[STA4_MAC], stas
+        assert "bands=2g(unknown) adv=- seen=2g" in line[STA5_MAC], stas
+        assert not any(c.startswith("REQ_BEACON " + STA3_MAC) for c in ap1g.cmd_log), \
+            "2.4 GHz-only STA must not be measured for band steering"
+        assert not any(t[1] == STA3_MAC for t in world.btm_log), "2.4 GHz-only STA must not be steered"
+        print("PASS 7: band steering skips a 2.4 GHz-only STA, steers a dual-band one, backs off when unmeasured")
+
+        mark(logs, "S8 6 GHz: 2.4 -> 6 (WPA3), WPA2-PSK kept off 6 GHz, 5 -> 6, no 6 GHz classes")
+        both = {B6: (131, 1, -48), B1: (115, 36, -52)}  # 6 GHz scores higher (bonus 8 vs 5)
+        sta6 = Sta(STA6_MAC, -40, both, op_classes=TRI, akm=SAE)
+        sta7 = Sta(STA7_MAC, -40, both, op_classes=TRI)
+        sta8 = Sta(STA8_MAC, -45, {B6: (131, 1, -50)}, op_classes="73517376" "7c83", akm=SAE)
+        sta9 = Sta(STA9_MAC, -45, {B6: (131, 1, -50)}, akm=SAE)
+        n_btm = len(world.btm_log)
+        with world.lock:
+            ap1g.add_sta(sta6)
+            ap1g.add_sta(sta7)
+            ap1.add_sta(sta8)
+            ap1.add_sta(sta9)
+        btm_to = lambda mac, src: [t[2] for t in world.btm_log[n_btm:] if t[1] == mac and t[0] == src]
+        wait_for(lambda: B6 in btm_to(STA6_MAC, B1G), 5, "STA6 band-steered 2.4 -> 6 GHz")
+        wait_for(lambda: B1 in btm_to(STA7_MAC, B1G), 5, "WPA2-PSK STA7 band-steered to 5 GHz")
+        wait_for(lambda: B6 in btm_to(STA8_MAC, B1), 5, "STA8 band-steered 5 -> 6 GHz")
+        assert B6 not in btm_to(STA7_MAC, B1G), "WPA2-PSK STA must not be sent to 6 GHz"
+        stas = cli(socks[0], "STAS")
+        line7 = next((l for l in stas.splitlines() if l.startswith("sta " + STA7_MAC)), "")
+        assert "adv=2g,5g,6g" in line7 and "no6g=wpa2-psk" in line7, stas
+        time.sleep(1.0)
+        assert not any(t[1] == STA9_MAC for t in world.btm_log), "STA9 has no 6 GHz classes: no 5 -> 6 steer"
+        assert not any(c.startswith("REQ_BEACON " + STA9_MAC) for c in ap1.cmd_log), \
+            "STA9 must not be measured for 5 -> 6 GHz"
+        print("PASS 8: 6 GHz: 2.4 -> 6 (WPA3), WPA2-PSK to 5 GHz instead, 5 -> 6, none without 6 GHz classes")
         ok = True
     finally:
         for p in procs:

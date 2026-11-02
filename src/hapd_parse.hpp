@@ -45,6 +45,8 @@ struct Sta {
 	bool btm{false};
 	bool ftKnown{false};
 	bool ft{false};
+	std::uint8_t bands{0U}; // rrm::BANDS_* from supp_op_classes, 0 if absent
+	bool akmNo6g{false};    // its AKM is not allowed on 6 GHz (WPA2-PSK)
 };
 
 // "STA <addr>" / "STA-FIRST" / "STA-NEXT" output.

@@ -38,22 +38,24 @@ constexpr std::array<CfgInt, 6U> CFG_INTS{{
 	{"peer_timeout_ms", &Config::peerTimeoutMs},
 }};
 
-constexpr std::array<PolBool, 7U> POL_BOOLS{{
+constexpr std::array<PolBool, 8U> POL_BOOLS{{
 	{"rssi_steering", &PolicyConfig::rssiSteering},
 	{"load_balancing", &PolicyConfig::loadBalancing},
 	{"band_steering", &PolicyConfig::bandSteering},
+	{"band_steer_6g", &PolicyConfig::bandSteer6g},
 	{"lb_only_idle", &PolicyConfig::lbOnlyIdle},
 	{"disassoc_imminent", &PolicyConfig::disassocImminent},
 	{"assume_kvr", &PolicyConfig::assumeKvr},
 	{"amon_request", &PolicyConfig::amonRequest},
 }};
 
-constexpr std::array<PolInt, 29U> POL_INTS{{
+constexpr std::array<PolInt, 30U> POL_INTS{{
 	{"rssi_low", &PolicyConfig::rssiLow},
 	{"rssi_low_count", &PolicyConfig::rssiLowCount},
 	{"rssi_hysteresis", &PolicyConfig::rssiHysteresis},
 	{"rssi_min_target", &PolicyConfig::rssiMinTarget},
 	{"band_steer_rssi", &PolicyConfig::bandSteerRssi},
+	{"band_steer_6g_rssi", &PolicyConfig::bandSteer6gRssi},
 	{"util_high", &PolicyConfig::utilHigh},
 	{"util_admit_max", &PolicyConfig::utilAdmitMax},
 	{"lb_margin", &PolicyConfig::lbMargin},

@@ -105,6 +105,27 @@ std::optional<AirFrame> parseRadiotap(ByteView buf) noexcept;
 bool hasBtmCapab(ByteView ext) noexcept;
 // AKM suite selector as printed by hostapd ("00-0f-ac-4").
 bool isFtAkm(std::string_view akm) noexcept;
+// AKM a STA cannot use on 6 GHz (WPA2-Personal: PSK, FT-PSK, PSK-SHA256).
+// 6 GHz allows only SAE, OWE and 802.1X with PMF. A STA that chose such an
+// AKM on a transition-mode BSS is taken not to support WPA3.
+bool isAkmForbidden6g(std::string_view akm) noexcept;
+
+// Bands a STA can use, as a bit mask: advertised in its Supported Operating
+// Classes element, or seen in use. 0 = nothing known.
+constexpr std::uint8_t BANDS_2G = 0x01U;
+constexpr std::uint8_t BANDS_5G = 0x02U;
+constexpr std::uint8_t BANDS_6G = 0x04U;
+
+// arcp::BAND_* as a BANDS_* bit; 0 for an unknown band.
+std::uint8_t bandBit(std::uint8_t band) noexcept;
+// BANDS_* bit of a global operating class (Annex E, Table E-4); 0 if the
+// class is not a 2.4/5/6 GHz one.
+std::uint8_t opClassBandBit(std::uint8_t opClass) noexcept;
+// Bands in a Supported Operating Classes element body (no ID/length, as
+// hostapd prints it in supp_op_classes=): the Current Operating Class,
+// then the supported classes up to the OneHundredAndThirty (130) or Zero
+// delimiter. 130 is a delimiter there, not the 5 GHz 80+80 class.
+std::uint8_t bandsFromOpClasses(ByteView body) noexcept;
 
 } // namespace rrm
 } // namespace donghoa

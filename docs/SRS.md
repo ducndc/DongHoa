@@ -214,9 +214,10 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | FR-TRG-1 | **RSSI.** With `rssi_steering` on, a STA whose smoothed RSSI is below `rssi_low` (−75 dBm), after `rssi_low_count` (3) consecutive low samples, shall trigger a steer with reason RSSI. | T-U `test_policy`, T-I 3 |
-| FR-TRG-2 | **Band.** With `band_steering` on, a STA on 2.4 GHz whose RSSI is at least `band_steer_rssi` (−55 dBm) shall trigger a steer with reason BAND, towards higher bands only. | T-U, T-O |
+| FR-TRG-2 | **Band.** With `band_steering` on, a STA on 2.4 GHz whose RSSI is at least `band_steer_rssi` (−55 dBm) shall trigger a steer with reason BAND, towards higher bands only, when it can use a higher band (FR-TRG-6). With `band_steer_6g` also on, a STA on 5 GHz whose RSSI is at least `band_steer_6g_rssi` (−55 dBm) shall trigger a BAND steer towards 6 GHz, only when 6 GHz is advertised or seen for it and not blocked. After a band steer in which no candidate was measured, the next band steer of that STA shall wait `steer_cooldown_ms` × 2^n (n = such steers in a row, capped at `steer_backoff_max_ms`); a 5/6 GHz level of the STA resets n. | T-U, T-I 7, 8, T-O |
 | FR-TRG-3 | **Load.** Every `lb_interval_ms` (10000), with `load_balancing` on, each BSS whose utilisation is at least `util_high` (70 %) or whose STA count has reached `max_sta` shall offload one STA: the weakest STA that is eligible. With `lb_only_idle`, only STAs below `idle_kbps` qualify. | T-U, T-I 4 |
 | FR-TRG-4 | **Manual.** `STEER <sta> [<bssid>]` shall start a steer with reason MANUAL. It ignores the STA's cooldown and, when a BSSID is given, considers only that BSS. | T-O |
+| FR-TRG-6 | **STA bands.** The daemon shall take the bands a STA advertises from hostapd's `supp_op_classes` (Supported Operating Classes: 81–84 = 2.4 GHz, 115–129 = 5 GHz, 131–137 = 6 GHz, up to the 130 or 0 delimiter), and add every band the STA was associated or measured on. A STA whose association AKM is PSK, FT-PSK or PSK-SHA256 (not allowed on 6 GHz) shall have 6 GHz blocked. Automatic steers shall consider only candidates on usable bands. A STA that advertises no classes counts as able to use every band that is not blocked. | T-U `test_rrm`, `test_policy`, `test_hapd_parsers`, T-I 7, 8 |
 | FR-TRG-5 | Automatic triggers shall skip a STA that lacks 11v, is "away", is in cooldown or backoff, or already has a transaction. | I |
 
 ### 4.6 Steering transaction, source side (STR)
@@ -352,7 +353,7 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
 | hostapd parsers (IR-2, FR-MON-2/3) | `test_hapd_parsers` (mock format); itest | Real hostapd output: OpenWrt procedure (T-O) |
 | Discovery, neighbor DB (FR-DSC, FR-NBR) | itest PASS 1, 5 | Peer **timeout** expiry and `boot_id` restart: no test |
 | Policy (FR-POL, FR-TRG-1..3, FR-ADM-1, FR-STR-9) | `test_policy`, `test_policy_tput` (sigmoid table, peak rates, the five SDD §6.5 scenarios, hard gates in both models); itest PASS 3, 4 in both models (`DONGHOA_ITEST_EXTRA="score_model 1"`) | Calibration of the throughput model against real STAs (SDD R12) |
-| Steering flow (FR-STR) | itest PASS 3 (remote RSSI roam), PASS 4 (load) | BTM reject, timeouts, WRONG_TARGET, manual steer, band steer: OpenWrt procedure only (manual and band steer verified, BTM reject with status 7 verified; throughput model verified refusing band steering at equal width and steering to a VHT80 BSS) |
+| Steering flow (FR-STR) | itest PASS 3 (remote RSSI roam), PASS 4 (load), PASS 7 (local band steer, band check, band backoff), PASS 8 (2.4 → 6 GHz, WPA2-PSK kept off 6 GHz, 5 → 6 GHz) | BTM reject, timeouts, WRONG_TARGET, manual steer, band steer: OpenWrt procedure only (manual and band steer verified, BTM reject with status 7 verified; throughput model verified refusing band steering at equal width and steering to a VHT80 BSS) |
 | Reservations (FR-ADM-2/3) | itest PASS 3 (accept) | Expiry and peer-loss release: no test |
 | Reliability (FR-REL) | — | Retransmission, duplicate re-ACK, replay window, path failover: **no automated test** (`peer.cpp` and `msg.cpp` are not linked into the unit tests) |
 | Resilience (FR-MON-6, NFR-REL-1) | — | hostapd restart verified manually on OpenWrt |
@@ -383,6 +384,8 @@ measurement timeout.
 | `rssi_steering` / `band_steering` / `load_balancing` | 1 / 1 / 1 | on/off |
 | `rssi_low` / `rssi_low_count` / `rssi_hysteresis` / `rssi_min_target` | −75 / 3 / 8 / −70 | dBm / samples / dB / dBm |
 | `band_steer_rssi` | −55 | dBm |
+| `band_steer_6g` | 1 | on/off: 5 → 6 GHz band steering |
+| `band_steer_6g_rssi` | −55 | dBm |
 | `util_high` / `util_admit_max` / `lb_margin` | 70 / 80 / 15 | % |
 | `lb_rssi_tolerance` / `lb_only_idle` / `idle_kbps` / `lb_interval_ms` | 5 / 1 / 50 / 10000 | dB / bool / kbit/s / ms |
 | `util_weight` / `band_bonus_5g` / `band_bonus_6g` | 2 / 5 / 8 | score points |

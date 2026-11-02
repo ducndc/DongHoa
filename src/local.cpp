@@ -128,6 +128,11 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h) noexcept
 	s.txRate = h.txRateMbps;
 	s.rxRate = h.rxRateMbps;
 
+	if (h.bands != 0U) {
+		s.bandsAdv = h.bands;
+	}
+	s.bandsBlocked = h.akmNo6g ? rrm::BANDS_6G : static_cast<std::uint8_t>(0U);
+	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | rrm::bandBit(mBss[s.bss].info.band));
 	s.flags = 0U;
 	if (h.btmKnown ? h.btm : assume) {
 		s.flags = static_cast<std::uint8_t>(s.flags | arcp::STA_F11V);

@@ -3,6 +3,8 @@
 
 #include <array>
 
+#include "rrm.hpp"
+
 namespace donghoa {
 namespace policy {
 
@@ -156,7 +158,9 @@ bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount) noexcept
 
 bool isBandTriggered(const PolicyConfig &p, std::uint8_t band, int rssi) noexcept
 {
-	return p.bandSteering && (band == arcp::BAND_2G) && (rssi != 0) && (rssi >= p.bandSteerRssi);
+	const bool from2g = (band == arcp::BAND_2G) && (rssi >= p.bandSteerRssi);
+	const bool from5g = p.bandSteer6g && (band == arcp::BAND_5G) && (rssi >= p.bandSteer6gRssi);
+	return p.bandSteering && (rssi != 0) && (from2g || from5g);
 }
 
 bool isBssOverloaded(const PolicyConfig &p, int utilPct, int staCount, int maxSta) noexcept
@@ -182,6 +186,34 @@ arcp::SteerStatus admit(const PolicyConfig &p, int utilPct, int staCount, int re
 		// admitted
 	}
 	return s;
+}
+
+bool isBandUsable(const StaBands &b, std::uint8_t band) noexcept
+{
+	const std::uint8_t bit = rrm::bandBit(band);
+	bool ok = true;
+	if (bit == 0U) {
+		ok = true;
+	} else if ((b.blocked & bit) != 0U) {
+		ok = false;
+	} else {
+		ok = (b.advertised == 0U) || ((static_cast<std::uint8_t>(b.advertised | b.seen) & bit) != 0U);
+	}
+	return ok;
+}
+
+bool hasHigherBand(const StaBands &b, std::uint8_t curBand) noexcept
+{
+	bool r = false;
+	if (curBand < arcp::BAND_5G) {
+		r = isBandUsable(b, arcp::BAND_5G) || isBandUsable(b, arcp::BAND_6G);
+	} else if (curBand == arcp::BAND_5G) {
+		const std::uint8_t known = static_cast<std::uint8_t>(b.advertised | b.seen);
+		r = ((known & rrm::BANDS_6G) != 0U) && ((b.blocked & rrm::BANDS_6G) == 0U);
+	} else {
+		r = false; // 6 GHz is the top band
+	}
+	return r;
 }
 
 int backoffMs(const PolicyConfig &p, int failures) noexcept

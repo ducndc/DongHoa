@@ -166,10 +166,19 @@ std::optional<Sta> parseSta(std::string_view buf) noexcept
 				s.btm = rrm::hasBtmCapab(viewOf(e).first(*n));
 			}
 		}
+		const std::optional<std::string_view> soc = getKv(buf, "supp_op_classes");
+		if (soc.has_value()) {
+			std::array<std::uint8_t, 255U> oc{};
+			const std::optional<std::size_t> n = hexDecode(*soc, spanOf(oc));
+			if (n.has_value()) {
+				s.bands = rrm::bandsFromOpClasses(viewOf(oc).first(*n));
+			}
+		}
 		const std::optional<std::string_view> akm = getKv(buf, "AKMSuiteSelector");
 		if (akm.has_value()) {
 			s.ftKnown = true;
 			s.ft = rrm::isFtAkm(*akm);
+			s.akmNo6g = rrm::isAkmForbidden6g(*akm);
 		}
 		r = s;
 	}

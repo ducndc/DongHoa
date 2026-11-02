@@ -12,8 +12,13 @@ import time
 
 
 class Sta:
-    def __init__(self, mac, signal, view, btm_accept=True, tput_bytes=0, rrm=True):
+    def __init__(self, mac, signal, view, btm_accept=True, tput_bytes=0, rrm=True,
+                 op_classes=None, akm="00-0f-ac-4"):
         self.mac = mac
+        self.akm = akm  # AKMSuiteSelector of the association (FT-PSK default)
+        # Supported Operating Classes element body as hex (current class
+        # first), printed as supp_op_classes=; None: element not sent.
+        self.op_classes = op_classes
         # Beacon report modes advertised in RM Enabled Capabilities
         # (0 passive, 1 active, 2 table). True: all, False: none. Like
         # hostapd, REQ_BEACON for a mode not advertised fails.
@@ -80,12 +85,15 @@ class MockBss:
     def sta_text(self, sta):
         sta.rx_bytes += sta.tput_bytes
         sta.tx_bytes += sta.tput_bytes
-        return (
+        text = (
             "%s\nflags=[AUTH][ASSOC][AUTHORIZED][WMM][HT]\nrx_bytes=%d\ntx_bytes=%d\n"
             "inactive_msec=100\nsignal=%d\nrx_rate_info=1200\ntx_rate_info=1200\n"
-            "connected_time=10\next_capab=0000080000000040\nAKMSuiteSelector=00-0f-ac-4\n"
-            % (sta.mac, sta.rx_bytes, sta.tx_bytes, sta.signal)
+            "connected_time=10\next_capab=0000080000000040\nAKMSuiteSelector=%s\n"
+            % (sta.mac, sta.rx_bytes, sta.tx_bytes, sta.signal, sta.akm)
         )
+        if sta.op_classes:
+            text += "supp_op_classes=%s\n" % sta.op_classes
+        return text
 
     def handle(self, cmd, addr):
         self.cmd_log.append(cmd)

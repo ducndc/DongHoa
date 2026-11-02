@@ -11,6 +11,26 @@ namespace {
 constexpr LogModule LOG_MODULE{LogModule::CTRL};
 using Out = FixedString<8192U>;
 
+// rrm::BANDS_* mask as text, "-" for none.
+std::string_view bandsName(std::uint8_t bands) noexcept
+{
+	constexpr std::array<std::string_view, 8U> NAMES{"-",  "2g",    "5g",    "2g,5g",
+							  "6g", "2g,6g", "5g,6g", "2g,5g,6g"};
+	return NAMES[static_cast<std::size_t>(bands & 0x07U)];
+}
+
+// single/dual/tri from the bands a STA can use; "unknown" when it
+// advertised no operating classes (every band is then tried).
+std::string_view bandClass(std::uint8_t advertised, std::uint8_t usable) noexcept
+{
+	constexpr std::array<std::string_view, 4U> NAMES{"none", "single", "dual", "tri"};
+	std::size_t n = 0U;
+	for (std::uint8_t b = usable & 0x07U; b != 0U; b = static_cast<std::uint8_t>(b & (b - 1U))) {
+		n++;
+	}
+	return (advertised == 0U) ? std::string_view("unknown") : NAMES[n];
+}
+
 void putBss(Out &o, const arcp::BssInfo &bi, const arcp::BssLoad *bl) noexcept
 {
 	formatTo(o, "  bss {} ssid={} ch={} band={} op_class={} mdid={} caps={}", bi.bssid,
@@ -128,10 +148,15 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 						     : (s.bcnMode.has_value() ? rrm::beaconModeName(*s.bcnMode)
 									      : std::string_view("unknown"));
 			const std::int64_t backoff = static_cast<std::int64_t>(s.nextSteerMs) - static_cast<std::int64_t>(now);
-			formatTo(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} backoff={}ms\n", s.addr,
-				  mBss[s.bss].cfg->ifname, s.away ? "(away)" : "", s.rssi, s.tputKbps,
+			const std::uint8_t usable = static_cast<std::uint8_t>(
+				static_cast<std::uint8_t>(s.bandsAdv | s.bandsSeen) & static_cast<std::uint8_t>(~s.bandsBlocked));
+			formatTo(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} bands={}({}) adv={} seen={}{} "
+				    "backoff={}ms\n",
+				  s.addr, mBss[s.bss].cfg->ifname, s.away ? "(away)" : "", s.rssi, s.tputKbps,
 				  ((s.flags & arcp::STA_F11K) != 0U) ? "k" : "", ((s.flags & arcp::STA_F11V) != 0U) ? "v" : "",
-				  ((s.flags & arcp::STA_F11R) != 0U) ? "r" : "", bcn, backoff);
+				  ((s.flags & arcp::STA_F11R) != 0U) ? "r" : "", bcn, bandsName(usable),
+				  bandClass(s.bandsAdv, usable), bandsName(s.bandsAdv), bandsName(s.bandsSeen),
+				  ((s.bandsBlocked & rrm::BANDS_6G) != 0U) ? " no6g=wpa2-psk" : "", backoff);
 		}
 		for (const RemoteSta &r : mRsta) {
 			if (r.used) {

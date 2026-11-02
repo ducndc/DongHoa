@@ -83,6 +83,11 @@ struct Sta {
 	Millis lastPollMs{0U};
 	Millis nextSteerMs{0U};
 	int steerFailures{0};
+	std::uint8_t bandsAdv{0U};  // rrm::BANDS_* from supp_op_classes, 0 = unknown
+	std::uint8_t bandsSeen{0U}; // rrm::BANDS_* it was associated or measured on
+	std::uint8_t bandsBlocked{0U}; // rrm::BANDS_* it cannot join (6 GHz: WPA2-PSK AKM)
+	int bandEmpty{0};           // band steers in a row with no candidate measured
+	Millis nextBandMs{0U};      // band steering backoff
 	std::array<Measurement, MAX_MEAS> meas{};
 	std::size_t nMeas{0U};
 };
@@ -157,6 +162,7 @@ struct SteerTxn {
 	std::size_t cur{MAX_CAND}; // candidate in negotiation / BTM; MAX_CAND = none
 	bool bcnOutstanding{false}; // 11k request sent, no report or refusal yet
 	bool amonPending{false};    // air monitor reports requested
+	bool anyMeasured{false};    // some candidate had a level at evaluate()
 	Mac forcedTarget{};         // manual steer target, zero = any
 };
 

@@ -43,6 +43,8 @@ struct PolicyConfig {
 	int rssiHysteresis{8};   // dB the target must beat the current RSSI by
 	int rssiMinTarget{-70}; // dBm: minimum STA-measured target level
 	int bandSteerRssi{-55}; // dBm: 2.4 GHz STA above this -> 5/6 GHz
+	bool bandSteer6g{true};    // also steer 5 GHz STAs that support 6 GHz up
+	int bandSteer6gRssi{-55}; // dBm: 5 GHz STA above this -> 6 GHz
 
 	int utilHigh{70};        // %: local BSS overloaded
 	int utilAdmitMax{80};   // %: target refuses steer-in above this

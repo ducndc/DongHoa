@@ -177,6 +177,12 @@ void Daemon::storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_
 	e->opClass = opClass;
 	e->channel = channel;
 	e->ts = ts;
+	// A level on a band proves the STA can use it.
+	const std::uint8_t bit = rrm::opClassBandBit(opClass);
+	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | bit);
+	if ((bit & (rrm::BANDS_5G | rrm::BANDS_6G)) != 0U) {
+		s.bandEmpty = 0;
+	}
 }
 
 // ---- transaction end ----
@@ -219,14 +225,29 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	t.used = false;
 }
 
-// No candidate at all: wait a cooldown; not a STA failure.
+// No candidate at all: wait a cooldown; not a STA failure. A band steer
+// in which no candidate was measured at all says nothing about the STA's
+// bands, but repeating it every cooldown wastes airtime: back off
+// exponentially until a higher-band level shows up.
 void Daemon::failTxnNoCandidate(SteerTxn &t) noexcept
 {
 	Sta *const s = findSta(t.sta);
+	const Millis now = os::nowMs();
 
 	logging::info(LOG_MODULE, "steer #{} {} ({}): no suitable candidate", t.id, t.sta, reasonName(t.reason));
 	if (s != nullptr) {
-		s->nextSteerMs = os::nowMs() + static_cast<Millis>(mCfg.pol.steerCooldownMs);
+		s->nextSteerMs = now + static_cast<Millis>(mCfg.pol.steerCooldownMs);
+		if (t.reason == arcp::SteerReason::BAND) {
+			if (!t.anyMeasured) {
+				s->bandEmpty++;
+			}
+			const int wait = policy::backoffMs(mCfg.pol, s->bandEmpty);
+			s->nextBandMs = now + static_cast<Millis>(wait);
+			if (!t.anyMeasured) {
+				logging::info(LOG_MODULE, "sta {}: no higher-band level ({} in a row), next band steer in {} ms",
+					      t.sta, s->bandEmpty, wait);
+			}
+		}
 	}
 	t.used = false;
 }
@@ -347,6 +368,7 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 		in.band = c.info.band;
 		in.peakMbps = policy::computePeakMbps(c.info.caps, c.info.bw, p.staNss);
 		in.estRssi = (be != nullptr) ? rrm::rcpiToDbm(be->rcpi) : policy::RSSI_UNKNOWN;
+		t.anyMeasured = t.anyMeasured || (be != nullptr);
 		c.rcpi = (be != nullptr) ? be->rcpi : 255U;
 		if ((in.estRssi == policy::RSSI_UNKNOWN) && (t.reason == arcp::SteerReason::MANUAL)) {
 			in.estRssi = p.rssiMinTarget; // operator decided
@@ -393,8 +415,16 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 void Daemon::buildPool(SteerTxn &t) noexcept
 {
 	const arcp::BssInfo &cur = mBss[t.bss].info;
-	const auto add = [&t](const arcp::BssInfo &bi, const Mac &ap, bool local) {
-		if ((t.nCand < t.cand.size()) && (t.forcedTarget.isZero() || (t.forcedTarget == bi.bssid))) {
+	const Sta *const s = findSta(t.sta);
+	// Skip bands the STA does not advertise (unless measured there) and
+	// 6 GHz for a WPA2-PSK STA; a manual steer goes where the operator says.
+	const auto usable = [&t, s](const arcp::BssInfo &bi) {
+		return (t.reason == arcp::SteerReason::MANUAL) || (s == nullptr) ||
+		       policy::isBandUsable(policy::StaBands{s->bandsAdv, s->bandsSeen, s->bandsBlocked}, bi.band);
+	};
+	const auto add = [&t, &usable](const arcp::BssInfo &bi, const Mac &ap, bool local) {
+		if ((t.nCand < t.cand.size()) && (t.forcedTarget.isZero() || (t.forcedTarget == bi.bssid)) &&
+		    usable(bi)) {
 			Candidate &c = t.cand[t.nCand];
 			c = Candidate{};
 			c.bssid = bi.bssid;
@@ -613,9 +643,11 @@ void Daemon::onStaPoll(Sta &s) noexcept
 	    (findTxnBySta(s.addr) != nullptr)) {
 		return;
 	}
+	const std::uint8_t band = mBss[s.bss].info.band;
 	if (policy::isRssiTriggered(p, s.rssi, s.lowCount)) {
 		(void)startSteer(s, arcp::SteerReason::RSSI, nullptr);
-	} else if (policy::isBandTriggered(p, mBss[s.bss].info.band, s.rssi)) {
+	} else if (policy::isBandTriggered(p, band, s.rssi) && (os::nowMs() >= s.nextBandMs) &&
+		   policy::hasHigherBand(policy::StaBands{s.bandsAdv, s.bandsSeen, s.bandsBlocked}, band)) {
 		(void)startSteer(s, arcp::SteerReason::BAND, nullptr);
 	} else {
 		// no trigger

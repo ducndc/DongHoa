@@ -58,6 +58,21 @@ bool isLbStaEligible(const PolicyConfig &p, std::uint32_t tputKbps) noexcept;
 // Target-side admission control for STEER_REQ.
 arcp::SteerStatus admit(const PolicyConfig &p, int utilPct, int staCount, int reserved,
 			int maxSta) noexcept;
+// Bands of a STA (rrm::BANDS_* masks).
+struct StaBands {
+	std::uint8_t advertised{0U}; // Supported Operating Classes, 0 = not sent
+	std::uint8_t seen{0U};       // associated or measured on
+	std::uint8_t blocked{0U};    // cannot join (6 GHz with a WPA2-PSK AKM)
+};
+
+// Can the STA use band? Blocked bands never; otherwise an advertised or
+// seen band, or any band when it advertises nothing (the measurement then
+// decides).
+bool isBandUsable(const StaBands &b, std::uint8_t band) noexcept;
+// May a band steer start from curBand? From 2.4 GHz: some higher band is
+// usable. From 5 GHz: 6 GHz must be advertised or seen (and not blocked),
+// not just unknown.
+bool hasHigherBand(const StaBands &b, std::uint8_t curBand) noexcept;
 // Exponential backoff after failed steering attempts.
 int backoffMs(const PolicyConfig &p, int failures) noexcept;
 

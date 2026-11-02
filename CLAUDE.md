@@ -31,7 +31,7 @@ make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa dongho
 
 The unit tests form one binary with no filter. To focus on one area,
 comment out calls in `main()` of `tests/test_unit.cpp`. Run `make itest`
-after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 6`.
+after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 8`.
 
 ## Architecture essentials
 

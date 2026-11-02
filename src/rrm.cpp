@@ -306,13 +306,62 @@ bool hasBtmCapab(ByteView ext) noexcept
 	return (ext.size() > 2U) && ((ext[2U] & 0x08U) != 0U);
 }
 
-bool isFtAkm(std::string_view akm) noexcept
+std::uint8_t bandBit(std::uint8_t band) noexcept
 {
-	// 00-0F-AC: 3 FT-802.1X, 4 FT-PSK, 9 FT-SAE, 13 FT-802.1X-SHA384,
-	// 19 FT-PSK-SHA384, 25 FT-SAE-EXT-KEY
-	constexpr std::array<long, 6U> FT{3, 4, 9, 13, 19, 25};
+	std::uint8_t b = 0U;
+	if (band == arcp::BAND_2G) {
+		b = BANDS_2G;
+	} else if (band == arcp::BAND_5G) {
+		b = BANDS_5G;
+	} else if (band == arcp::BAND_6G) {
+		b = BANDS_6G;
+	} else {
+		// unknown band
+	}
+	return b;
+}
+
+std::uint8_t opClassBandBit(std::uint8_t opClass) noexcept
+{
+	std::uint8_t b = 0U;
+	if ((opClass >= 81U) && (opClass <= 84U)) {
+		b = BANDS_2G;
+	} else if ((opClass >= 115U) && (opClass <= 130U)) {
+		b = BANDS_5G;
+	} else if ((opClass >= 131U) && (opClass <= 137U)) {
+		b = BANDS_6G;
+	} else {
+		// country-specific, 60 GHz or unknown class
+	}
+	return b;
+}
+
+std::uint8_t bandsFromOpClasses(ByteView body) noexcept
+{
+	std::uint8_t bands = 0U;
+	if (!body.empty()) {
+		bands = opClassBandBit(body[0U]); // Current Operating Class
+		bool end = false;
+		for (std::size_t i = 1U; (i < body.size()) && !end; i++) {
+			const std::uint8_t oc = body[i];
+			if ((oc == 0U) || (oc == 130U)) {
+				end = true;
+			} else {
+				bands = static_cast<std::uint8_t>(bands | opClassBandBit(oc));
+			}
+		}
+	}
+	return bands;
+}
+
+namespace {
+
+// Suite type of an IEEE 802.11 (00-0f-ac) AKM selector as printed by
+// hostapd; empty for another OUI or a malformed selector.
+std::optional<long> ieeeAkmSuite(std::string_view akm) noexcept
+{
 	constexpr std::string_view OUI = "00-0f-ac-";
-	bool ft = false;
+	std::optional<long> s;
 
 	if (akm.size() > OUI.size()) {
 		bool oui = true;
@@ -321,13 +370,40 @@ bool isFtAkm(std::string_view akm) noexcept
 			const char lc = ((c >= 'A') && (c <= 'F')) ? static_cast<char>((c - 'A') + 'a') : c;
 			oui = oui && (lc == OUI[i]);
 		}
-		const std::optional<long> s =
-			oui ? parseLong(subView(akm, OUI.size()), 10, 0, 255) : std::optional<long>();
-		for (const long x : FT) {
-			ft = ft || (s.has_value() && (*s == x));
+		if (oui) {
+			s = parseLong(subView(akm, OUI.size()), 10, 0, 255);
 		}
 	}
-	return ft;
+	return s;
+}
+
+template <std::size_t N>
+bool isAkmIn(std::string_view akm, const std::array<long, N> &suites) noexcept
+{
+	const std::optional<long> s = ieeeAkmSuite(akm);
+	bool in = false;
+	for (const long x : suites) {
+		in = in || (s.has_value() && (*s == x));
+	}
+	return in;
+}
+
+} // namespace
+
+bool isFtAkm(std::string_view akm) noexcept
+{
+	// 00-0F-AC: 3 FT-802.1X, 4 FT-PSK, 9 FT-SAE, 13 FT-802.1X-SHA384,
+	// 19 FT-PSK-SHA384, 25 FT-SAE-EXT-KEY
+	constexpr std::array<long, 6U> FT{3, 4, 9, 13, 19, 25};
+	return isAkmIn(akm, FT);
+}
+
+bool isAkmForbidden6g(std::string_view akm) noexcept
+{
+	// 00-0F-AC: 2 PSK, 4 FT-PSK, 6 PSK-SHA256: WPA2-Personal. hostapd
+	// refuses these on a 6 GHz BSS (hostapd_config_check_bss_6g).
+	constexpr std::array<long, 3U> PSK{2, 4, 6};
+	return isAkmIn(akm, PSK);
 }
 
 } // namespace rrm
