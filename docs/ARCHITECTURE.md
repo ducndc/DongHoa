@@ -40,6 +40,8 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 
 ## Steering state machine (source AP, one transaction per STA)
 
+A rendered flowchart and message sequence are in [STEERING.md](STEERING.md).
+
 ```
             trigger (RSSI | band | load round | manual)
                  |
