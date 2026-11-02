@@ -717,7 +717,14 @@ void Daemon::onBtmResp(const hapd::BtmResp &r) noexcept
 		// 802.11v status: 1 reject, 2 insufficient beacons, 3 capacity,
 		// 5 delay requested, 6 candidate list provided, 7 no candidates
 		logging::info(LOG_MODULE, "steer #{} {}: BTM rejected, status {}", t->id, r.addr, r.status);
-		endTxn(*t, arcp::SteerOutcome::BTM_REJECT, static_cast<std::uint8_t>(r.status), true);
+		if ((t->cur + 1U) < t->nCand) {
+			// This candidate said no; try the next one before giving up.
+			sendResult(*t, arcp::SteerOutcome::BTM_REJECT, static_cast<std::uint8_t>(r.status));
+			t->cur++;
+			advance(*t);
+		} else {
+			endTxn(*t, arcp::SteerOutcome::BTM_REJECT, static_cast<std::uint8_t>(r.status), true);
+		}
 		return;
 	}
 	if (r.hasTarget && (t->cur < t->nCand) && (r.target != t->cand[t->cur].bssid)) {
@@ -877,7 +884,17 @@ void Daemon::tickSteer(Millis now) noexcept
 			advance(t);
 			break;
 		case SteerState::BTM:
-			endTxn(t, arcp::SteerOutcome::BTM_TIMEOUT, NO_STATUS, true);
+			if ((t.cur + 1U) < t.nCand) {
+				// No BTM response from this candidate; try the next one
+				// before giving up on the whole steer.
+				logging::info(LOG_MODULE, "steer #{}: no BTM response from {}, trying next candidate",
+					      t.id, t.cand[t.cur].bssid);
+				sendResult(t, arcp::SteerOutcome::BTM_TIMEOUT, NO_STATUS);
+				t.cur++;
+				advance(t);
+			} else {
+				endTxn(t, arcp::SteerOutcome::BTM_TIMEOUT, NO_STATUS, true);
+			}
 			break;
 		case SteerState::ROAM:
 			endTxn(t, arcp::SteerOutcome::ROAM_TIMEOUT, 0U, true);
