@@ -51,7 +51,19 @@ donghoa_cli /var/run/donghoa.sock STEER aa:bb:cc:dd:ee:ff [target-bssid]
 `LOG` shows each module's level; `LOG debug <module>...` raises it at run time
 and `LOG info` resets all. With `msg` at debug, every ARCP frame is traced:
 `tx STEER_REQ #19 02:00:00:00:00:02 via eth1 [ack-req] [auth]: STEER_REQ AUTH`.
-Modules: main l2 msg peer hapd local steer policy amon survey ctrl config.
+With `rrm` at debug (`LOG debug rrm`, or `log_debug rrm` in the config), the
+802.11k/v traffic with hostapd is dumped, raw and decoded: `REQ_BEACON`,
+`BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR` with their replies, and the
+`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY` events:
+
+```
+rrm: wl0 TX BSS_TM_REQ aa:bb:cc:dd:ee:01 pref=1 abridged=1 valid_int=100 neighbor=02:00:00:00:02:00,0x00001eaf,124,149,9,0301ff -> OK
+rrm: wl0   11v BTM request -> aa:bb:cc:dd:ee:01: candidate 02:00:00:00:02:00 op_class 124 ch 149 phy 9 info [reach=3 sec key_scope qos rrm imm_ba md ht vht] cand_pref 255; pref_list=1 abridged=1 valid_int=100
+rrm: wl0 RX BSS-TM-RESP aa:bb:cc:dd:ee:01 dialog_token=1 status_code=0 bss_termination_delay=0 target_bssid=02:00:00:00:02:00
+rrm: wl0   11v BTM response <- aa:bb:cc:dd:ee:01: status 0 (accept) target 02:00:00:00:02:00
+```
+
+Modules: main l2 msg peer hapd local steer policy amon survey ctrl config rrm.
 
 hostapd needs `bss_transition=1`, `rrm_neighbor_report=1`,
 `rrm_beacon_report=1` and an FT configuration whose `mobility_domain` matches

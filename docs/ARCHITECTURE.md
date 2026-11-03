@@ -37,6 +37,7 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 | `steer` | Steering state machine on the source AP, and admission/reservations on the target AP. |
 | `amon` | Air monitor: radiotap monitor sockets (BPF-filtered to uplink data and probe requests), STA watches on request, STA_MONITOR_REQ/REPORT. Lets STAs without 11k measurements be steered. |
 | `ctrl` | Local control socket used by `donghoa_cli` and the tests. |
+| `rrm_log` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, raw and decoded with the pure decoders in `rrm.cpp`. Called from `hapd::Conn`, so every caller is covered. |
 
 ## Steering state machine (source AP, one transaction per STA)
 

@@ -30,6 +30,7 @@ enum class LogModule : std::uint8_t {
 	SURVEY,
 	CTRL,
 	CONFIG,
+	RRM,
 	COUNT
 };
 

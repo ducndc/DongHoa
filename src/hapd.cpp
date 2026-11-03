@@ -2,6 +2,7 @@
 #include "hapd.hpp"
 
 #include "log.hpp"
+#include "rrm_log.hpp"
 
 namespace donghoa {
 namespace hapd {
@@ -134,6 +135,8 @@ bool Conn::runCommand(std::string_view command, Reply &reply) noexcept
 		if (!ok) {
 			logging::warn(LOG_MODULE, "hapd[{}]: no reply to '{}'", mIfname, subView(command, 0U, 32U));
 			close();
+		} else {
+			rrmlog::logCommand(mIfname.view(), command, reply.view());
 		}
 	}
 	return ok;
@@ -156,6 +159,7 @@ os::Rx Conn::recvEvent(Reply &ev) noexcept
 			v = (i < n) ? v.sub(i + 1U, n - i - 1U) : v;
 		}
 		toText(v, ev);
+		rrmlog::logEvent(mIfname.view(), ev.view());
 	}
 	return r;
 }

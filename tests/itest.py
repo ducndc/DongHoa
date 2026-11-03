@@ -233,6 +233,13 @@ def main():
         assert any(r[12:14] == "00" and int.from_bytes(bytes.fromhex(r[8:12]), "little") >= 120
                    for r in reqs), reqs
         assert "passive beacon reports" in open(logs[0].name).read()
+        # 802.11k/v dump (log module rrm, debug): commands and events, raw + decoded
+        l1 = open(logs[0].name).read()
+        for want in ("rrm: ap1-wl0 TX REQ_BEACON " + STA_MAC, "11k beacon request -> " + STA_MAC,
+                     "rrm: ap1-wl0 RX BEACON-RESP-RX " + STA_MAC, "11k beacon report <- " + STA_MAC,
+                     "11v BTM request -> " + STA_MAC, "11v BTM response <- " + STA_MAC + ": status 0 (accept)",
+                     "11k neighbor report entry " + B2):
+            assert want in l1, "rrm dump line missing: " + want
         print("PASS 3: RSSI roam: passive beacon report (active refused) -> STEER_REQ/RESP -> BTM -> roam")
 
         mark(logs, "S4 load balancing: busy AP2 offloads the STA to AP1")

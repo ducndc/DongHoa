@@ -234,6 +234,135 @@ std::optional<BeaconReport> parseBcnRepHex(std::string_view hex) noexcept
 	return r;
 }
 
+std::optional<BeaconRequest> parseBcnReqHex(std::string_view hex) noexcept
+{
+	std::array<std::uint8_t, 256U> b{};
+	std::optional<BeaconRequest> r;
+	const std::optional<std::size_t> n = hexDecode(hex, spanOf(b));
+
+	// op(1) ch(1) rand(2) dur(2) mode(1) bssid(6), then subelements
+	if (n.has_value() && (*n >= 13U)) {
+		const ByteView v = viewOf(b).first(*n);
+		BeaconRequest q;
+		q.opClass = v[0U];
+		q.channel = v[1U];
+		q.randInt = getLe16(v, 2U);
+		q.duration = getLe16(v, 4U);
+		q.mode = v[6U];
+		for (std::size_t i = 0U; i < q.bssid.b.size(); i++) {
+			q.bssid.b[i] = v[7U + i];
+		}
+		bool ok = true;
+		std::size_t k = 13U;
+		while (ok && ((k + 2U) <= v.size())) {
+			const std::uint8_t id = v[k];
+			const std::size_t len = v[k + 1U];
+			const ByteView body = v.sub(k + 2U, len);
+			ok = (body.size() == len);
+			if (!ok) {
+				// truncated subelement: keep what was decoded
+			} else if (id == 0U) {
+				q.hasSsid = true;
+				q.ssidLen = (len > q.ssid.size()) ? q.ssid.size() : len;
+				for (std::size_t i = 0U; i < q.ssidLen; i++) {
+					q.ssid[i] = body[i];
+				}
+			} else if ((id == 2U) && (len >= 1U)) {
+				q.detail = static_cast<int>(body[0U]);
+			} else if ((id == 51U) && (len >= 1U)) {
+				for (std::size_t i = 1U; (i < len) && (q.nChans < q.chans.size()); i++) {
+					q.chans[q.nChans] = OpChan{body[0U], body[i]};
+					q.nChans++;
+				}
+			} else {
+				// other subelements are not decoded
+			}
+			k += 2U + len;
+		}
+		r = q;
+	}
+	return r;
+}
+
+std::optional<NeighborReport> parseNrHex(std::string_view hex) noexcept
+{
+	std::array<std::uint8_t, 64U> b{};
+	std::optional<NeighborReport> r;
+	const std::optional<std::size_t> n = hexDecode(hex, spanOf(b));
+
+	// bssid(6) bssid_info(4, LE) op(1) ch(1) phy(1) [subelements]
+	if (n.has_value() && (*n >= 13U)) {
+		NeighborReport nr;
+		for (std::size_t i = 0U; i < nr.bssid.b.size(); i++) {
+			nr.bssid.b[i] = b[i];
+		}
+		nr.bssidInfo = getLe32(viewOf(b), 6U);
+		nr.opClass = b[10U];
+		nr.channel = b[11U];
+		nr.phyType = b[12U];
+		r = nr;
+	}
+	return r;
+}
+
+void describeBssidInfo(std::uint32_t bi, FixedString<96U> &out) noexcept
+{
+	struct Bit {
+		std::uint32_t mask;
+		std::string_view name;
+	};
+	constexpr std::array<Bit, 9U> BITS{{
+		{BI_SECURITY, "sec"},
+		{BI_KEY_SCOPE, "key_scope"},
+		{BI_QOS, "qos"},
+		{BI_RRM, "rrm"},
+		{BI_IMM_BA, "imm_ba"},
+		{BI_MOBILITY_DOMAIN, "md"},
+		{BI_HT, "ht"},
+		{BI_VHT, "vht"},
+		{BI_HE, "he"},
+	}};
+	out.clear();
+	formatTo(out, "reach={}", bi & BI_REACHABLE);
+	for (const Bit &x : BITS) {
+		if ((bi & x.mask) != 0U) {
+			formatTo(out, " {}", x.name);
+		}
+	}
+}
+
+std::string_view reportModeName(std::uint8_t mode) noexcept
+{
+	std::string_view n = "ok";
+	if ((mode & 0x04U) != 0U) {
+		n = "refused";
+	} else if ((mode & 0x02U) != 0U) {
+		n = "incapable";
+	} else if ((mode & 0x01U) != 0U) {
+		n = "late";
+	} else {
+		// report follows
+	}
+	return n;
+}
+
+std::string_view btmStatusName(int status) noexcept
+{
+	constexpr std::array<std::string_view, 9U> NAMES{
+		"accept",
+		"reject: unspecified",
+		"reject: insufficient beacons",
+		"reject: insufficient capacity",
+		"reject: BSS termination undesired",
+		"reject: BSS termination delay requested",
+		"reject: STA candidate list provided",
+		"reject: no suitable candidates",
+		"reject: leaving ESS",
+	};
+	return ((status >= 0) && (status < static_cast<int>(NAMES.size()))) ? NAMES[static_cast<std::size_t>(status)]
+									     : std::string_view("reserved");
+}
+
 std::optional<AirFrame> parseRadiotap(ByteView buf) noexcept
 {
 	// Radiotap fields before bit 6, in bit order: size and alignment

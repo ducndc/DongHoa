@@ -10,15 +10,21 @@ namespace logging {
 
 namespace {
 
-std::array<LogLevel, MODULES> sLevels{
-	LogLevel::INFO, LogLevel::INFO, LogLevel::INFO, LogLevel::INFO,
-	LogLevel::INFO, LogLevel::INFO, LogLevel::INFO, LogLevel::INFO,
-	LogLevel::INFO, LogLevel::INFO, LogLevel::INFO, LogLevel::INFO,
-};
+// Every module starts at INFO (filled, so a new module cannot be missed).
+constexpr std::array<LogLevel, MODULES> makeDefaultLevels() noexcept
+{
+	std::array<LogLevel, MODULES> a{};
+	for (LogLevel &l : a) {
+		l = LogLevel::INFO;
+	}
+	return a;
+}
+
+std::array<LogLevel, MODULES> sLevels = makeDefaultLevels();
 
 constexpr std::array<std::string_view, MODULES> MODULE_NAMES{
 	"main", "l2", "msg", "peer", "hapd", "local", "steer", "policy", "amon", "survey", "ctrl",
-	"config",
+	"config", "rrm",
 };
 
 constexpr std::array<std::string_view, 4U> LEVEL_NAMES{"err", "warn", "info", "debug"};

@@ -89,6 +89,45 @@ struct BeaconReport {
 // Beacon Report body (from Operating Class on), given as hex.
 std::optional<BeaconReport> parseBcnRepHex(std::string_view hex) noexcept;
 
+// ---- decoders for the 802.11k/v log (rrm_log.cpp) ----
+
+// Beacon Request fields as REQ_BEACON carries them (the inverse of
+// buildBcnReqHex). Unknown subelements are skipped.
+struct BeaconRequest {
+	std::uint8_t opClass{0U};
+	std::uint8_t channel{0U}; // 255: channels in AP Channel Reports
+	std::uint16_t randInt{0U}; // TU
+	std::uint16_t duration{0U}; // TU
+	std::uint8_t mode{0U};      // BeaconMode
+	Mac bssid{};
+	std::array<std::uint8_t, 32U> ssid{};
+	std::size_t ssidLen{0U};
+	bool hasSsid{false};
+	int detail{-1}; // Reporting Detail, -1 if absent
+	OpChanList chans{}; // from AP Channel Report subelements
+	std::size_t nChans{0U};
+};
+
+std::optional<BeaconRequest> parseBcnReqHex(std::string_view hex) noexcept;
+
+// Neighbor Report element body (the inverse of buildNrHex).
+struct NeighborReport {
+	Mac bssid{};
+	std::uint32_t bssidInfo{0U};
+	std::uint8_t opClass{0U};
+	std::uint8_t channel{0U};
+	std::uint8_t phyType{0U};
+};
+
+std::optional<NeighborReport> parseNrHex(std::string_view hex) noexcept;
+
+// BSSID Information bits as text, e.g. "reach=3 sec key_scope md ht vht".
+void describeBssidInfo(std::uint32_t bi, FixedString<96U> &out) noexcept;
+// Measurement Report Mode octet: "ok", "late", "incapable" or "refused".
+std::string_view reportModeName(std::uint8_t mode) noexcept;
+// BTM Response status code (IEEE 802.11-2020 Table 9-428).
+std::string_view btmStatusName(int status) noexcept;
+
 // A frame heard by an air monitor (radiotap monitor interface).
 struct AirFrame {
 	Mac ta{};      // transmitter: the STA

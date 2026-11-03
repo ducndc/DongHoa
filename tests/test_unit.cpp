@@ -251,6 +251,45 @@ void testRrm()
 			    "33025101" "3303732428");
 	CHECK(!rrm::buildBcnReqHex(three, 0U, rrm::BeaconMode::ACTIVE, 50U, nullptr, ByteView(), hex));
 
+	// Decoders for the rrm log: the inverse of the builders
+	{
+		const std::optional<rrm::BeaconRequest> q = rrm::parseBcnReqHex(hex.view());
+		CHECK(q.has_value());
+		if (q.has_value()) {
+			CHECK(q->opClass == 81U && q->channel == 255U && q->duration == 50U && q->randInt == 0U &&
+			      q->mode == static_cast<std::uint8_t>(rrm::BeaconMode::ACTIVE));
+			CHECK(q->bssid.b[0] == 0xffU && q->hasSsid && q->ssidLen == 4U && q->ssid[0] == 'h' &&
+			      q->detail == 0);
+			CHECK(q->nChans == 3U && q->chans[0].opClass == 81U && q->chans[0].channel == 1U &&
+			      q->chans[2].opClass == 115U && q->chans[2].channel == 40U);
+		}
+		CHECK(rrm::buildBcnReqHex(one, 1U, rrm::BeaconMode::PASSIVE, 120U, &b.bssid, ByteView(), hex));
+		const std::optional<rrm::BeaconRequest> q1 = rrm::parseBcnReqHex(hex.view());
+		CHECK(q1.has_value() && q1->channel == 36U && q1->duration == 120U && q1->mode == 0U &&
+		      q1->bssid == b.bssid && !q1->hasSsid && q1->nChans == 0U);
+		// truncated subelement: fixed fields still decoded
+		const std::optional<rrm::BeaconRequest> q2 = rrm::parseBcnReqHex("7324000032000" "1ffffffffffff" "0008686f");
+		CHECK(q2.has_value() && q2->channel == 36U && !q2->hasSsid);
+		CHECK(!rrm::parseBcnReqHex("7324").has_value() && !rrm::parseBcnReqHex("zz").has_value());
+
+		CHECK(rrm::buildNrHex(b, 0xa1b2U, nr));
+		const std::optional<rrm::NeighborReport> n = rrm::parseNrHex(nr.view());
+		CHECK(n.has_value() && n->bssid == b.bssid && n->opClass == 115U && n->channel == 36U &&
+		      n->phyType == rrm::PHY_VHT && n->bssidInfo == 0x1eafU);
+		CHECK(!rrm::parseNrHex("0200").has_value());
+		FixedString<96U> info;
+		rrm::describeBssidInfo(0x1eafU, info);
+		CHECK(info.view() == "reach=3 sec key_scope qos rrm imm_ba md ht vht");
+		rrm::describeBssidInfo(0U, info);
+		CHECK(info.view() == "reach=0");
+
+		CHECK(rrm::reportModeName(0U) == "ok" && rrm::reportModeName(1U) == "late" &&
+		      rrm::reportModeName(2U) == "incapable" && rrm::reportModeName(4U) == "refused" &&
+		      rrm::reportModeName(6U) == "refused");
+		CHECK(rrm::btmStatusName(0) == "accept" && rrm::btmStatusName(7) == "reject: no suitable candidates" &&
+		      rrm::btmStatusName(9) == "reserved" && rrm::btmStatusName(-1) == "reserved");
+	}
+
 	// op 115 ch 36 | start 8 | dur 50 | info 0 | rcpi 120 | rsni 0 | bssid | ant | tsf
 	const std::optional<rrm::BeaconReport> r = rrm::parseBcnRepHex(
 		"7324" "0000000000000000" "3200" "00" "78" "00" "020000000100" "00" "00000000");
@@ -702,6 +741,9 @@ void testLog()
 	CHECK(!logging::parseLevel("verbose").has_value());
 	CHECK(logging::parseModule("steer") == std::optional<LogModule>(LogModule::STEER));
 	CHECK(logging::parseModule("config") == std::optional<LogModule>(LogModule::CONFIG));
+	CHECK(logging::parseModule("rrm") == std::optional<LogModule>(LogModule::RRM));
+	// Every module, the last one included, starts at info
+	CHECK(logging::level(LogModule::RRM) == LogLevel::INFO && logging::level(LogModule::MAIN) == LogLevel::INFO);
 	CHECK(!logging::parseModule("nosuch").has_value());
 	CHECK(logging::moduleName(LogModule::AMON) == "amon" && logging::levelName(LogLevel::WARN) == "warn");
 
