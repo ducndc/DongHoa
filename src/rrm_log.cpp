@@ -116,8 +116,11 @@ void decodeBtmReq(std::string_view ifname, std::string_view args) noexcept
 		while ((n < v.size()) && f.next(v[n])) {
 			n++;
 		}
+		// 0x7fffffffL, not 0xffffffffL: on a 32-bit target long cannot hold
+		// 0xffffffff (it wraps to -1, making min > max and the parse always
+		// fail). BSSID Info never sets the top bit in practice.
 		const std::optional<long> bi = (n > 1U) && startsWith(v[1U], "0x")
-						       ? parseLong(subView(v[1U], 2U), 16, 0, 0xffffffffL)
+						       ? parseLong(subView(v[1U], 2U), 16, 0, 0x7fffffffL)
 						       : std::optional<long>();
 		formatTo(l, " candidate {} op_class {} ch {} phy {}", v[0U], v[2U], v[3U], v[4U]);
 		if (bi.has_value()) {

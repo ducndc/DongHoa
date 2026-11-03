@@ -370,8 +370,22 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 		in.estRssi = (be != nullptr) ? rrm::rcpiToDbm(be->rcpi) : policy::RSSI_UNKNOWN;
 		t.anyMeasured = t.anyMeasured || (be != nullptr);
 		c.rcpi = (be != nullptr) ? be->rcpi : 255U;
-		if ((in.estRssi == policy::RSSI_UNKNOWN) && (t.reason == arcp::SteerReason::MANUAL)) {
-			in.estRssi = p.rssiMinTarget; // operator decided
+		if (in.estRssi == policy::RSSI_UNKNOWN) {
+			if (t.reason == arcp::SteerReason::MANUAL) {
+				in.estRssi = p.rssiMinTarget; // operator decided
+			} else if ((t.reason == arcp::SteerReason::RSSI) &&
+				   ((s->bandsAdv & rrm::bandBit(c.info.band)) != 0U)) {
+				// The current band is already known bad (that is why this
+				// steer started) and the STA advertised this candidate's
+				// band in its Supported Operating Classes element. Trust
+				// that capability rather than refuse for lack of a fresh
+				// 11k/air monitor measurement, which a STA at the edge of
+				// range often never answers in time. Floor, not a real
+				// estimate: the lowest level that still clears score()'s
+				// eligibility checks, so a measured candidate always wins.
+				const int floor = ctx.curRssi + p.rssiHysteresis;
+				in.estRssi = (floor > p.rssiMinTarget) ? floor : p.rssiMinTarget;
+			}
 		}
 		if (c.local) {
 			const std::optional<std::size_t> b = findLocalBss(c.bssid);
