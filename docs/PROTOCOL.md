@@ -61,7 +61,7 @@ later versions can add fields there.
 | Type | Name | Value layout |
 |---|---|---|
 | 0x01 | AP_INFO | flags u16 (bit0 AIR_MONITOR: answers STA_MONITOR_REQ), hello_ms u16, num_bss u8, name_len u8, name |
-| 0x02 | BSS_INFO | bssid 6, freq u16, op_class u8, channel u8, band u8 (2/5/6), bw u8 (0=20..4=320), phy_type u8, caps u16, mdid u16, bssid_info u32, ssid_len u8, ssid |
+| 0x02 | BSS_INFO | bssid 6, freq u16, op_class u8, channel u8, band u8 (2/5/6), bw u8 (0=20..4=320), phy_type u8, caps u16, mdid u16, bssid_info u32, ssid_len u8, ssid, then only for a link of an AP MLD (Wi-Fi 7 MLO): mld_addr 6, link_id u8 (0–14). A receiver that finds no trailer treats the BSS as not affiliated with an AP MLD; an older receiver ignores the trailer. Links of one AP MLD carry the same mld_addr |
 | 0x03 | BSS_LOAD | bssid 6, sta_count u16, max_sta u16, util u8 (0–254, 255 = unknown), noise i8, tx_power i8, flags u8 (bit0 accepting steer-in) |
 | 0x04 | STA_ENTRY | sta 6, bssid 6, rssi i8, flags u8, connected_s u32, inactive_ms u32, tx_rate_mbps u16, rx_rate_mbps u16, tput_kbps u32 |
 | 0x05 | RF_INFO | radio_id u8, freq u16, op_class u8, channel u8, bw u8, util u8, noise i8, tx_power i8 |

@@ -87,6 +87,31 @@ the STA neither advertises nor was seen on. A STA without the element counts
 as able to use every band, so the measurement decides, as before. A missing
 report never proves a band is absent (busy STA, DFS, 6 GHz probing rules).
 
+**Wi-Fi 7 MLO.** hostapd gives each link of an AP MLD its own control socket,
+`<netdev>_link<id>`, so each link is one `bss` line (`bss ap-mld0_link0`,
+`bss ap-mld0_link1`, …). Its `STATUS` lists the BSS under the netdev name
+with `mld_addr[i]` and `mld_link_id[i]`; the survey uses the netdev part of
+the name. Links with the same MLD address form one AP MLD, also for peers
+(`BSS_INFO` trailer, PROTOCOL.md). An MLD STA is listed on every link under
+its MLD address with `peer_addr[<link id>]`:
+- It is one STA entry with one RSSI per link. Its RSSI and BSS are those of
+  its best link, and it is weak only when every link is (the low-RSSI count
+  is the minimum over the links). A link hostapd stops listing is dropped;
+  the STA goes when no link is left, or when any link reports it gone.
+  Traffic counters come from one link. `donghoa_cli STAS` adds
+  `mld links=<bss>:<link id>:<rssi>,…`; `STATUS`/`PEERS` add
+  `mld=<addr> link=<id>` to each AP MLD link.
+- No band steering: an MLD STA already uses several bands, and link use
+  inside the AP MLD is the MLD's job.
+- No steer to another link of its own AP MLD, for any reason.
+- A steer succeeds when the STA associates on any link of the target AP
+  MLD; association back on a link of the source AP MLD is not an outcome.
+- A legacy STA associated with one affiliated BSS of an AP MLD is steered
+  like any other STA, including to another affiliated BSS.
+
+The fields above come from the hostapd 2025.03 source; they have not been
+checked against a running AP MLD (OpenWrt with an MLO-capable driver).
+
 6 GHz allows only WPA3 (SAE), OWE and 802.1X with PMF; hostapd refuses PSK,
 FT-PSK and PSK-SHA256 on a 6 GHz BSS. A STA whose association uses one of
 those AKMs (hostapd's `AKMSuiteSelector` 00-0f-ac-2/4/6) is taken not to
@@ -197,7 +222,10 @@ A STA busy with its own scan answers report mode `refused`.
 - `boot_id` replay caveat (see PROTOCOL.md §5).
 - The neighbor database holds 20 MHz op classes only. Wide-channel op classes
   are not advertised.
-- No MLO / multi-link awareness.
+- MLO: no Multi-Link element in neighbor reports or BTM candidates (an MLD
+  STA learns the target AP MLD from its beacons when it associates), no
+  link reconfiguration or TID-to-link mapping (link use inside an AP MLD is
+  left to the MLD), and not yet run against a real AP MLD (see "Wi-Fi 7 MLO").
 - STAs mostly discover 6 GHz BSSes through RNR in 2.4/5 GHz beacons or FILS
   discovery, which hostapd configures; DongHoa does not. Neighbor reports
   for 6 GHz use op class 131 (20 MHz) only.

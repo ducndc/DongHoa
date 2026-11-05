@@ -710,7 +710,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | R3 | hostapd calls block the loop for up to 1 s each | Delayed timers while hostapd hangs (bounded, §4.3) | Asynchronous command queue |
 | R4 | `hapd_parse_status` falls back to entry 0 when the ifname is not among `bss[i]` | On multi-BSS radios, a wrong configured ifname would report the first BSS. On OpenWrt, generated `bss` lines (IR-12) avoid wrong names | Fail instead of falling back |
 | R5 | BTM/RRM/NR capabilities are always advertised | Wrong if hostapd lacks them; hostapd then rejects the commands and steering aborts | Read them from `GET_CONFIG` |
-| R6 | Neighbor reports use 20 MHz op classes; no MLO | Less precise candidate info for wide-channel and Wi-Fi 7 STAs | Derive op class from width; MLD awareness |
+| R6 | Neighbor reports use 20 MHz op classes and carry no Multi-Link element | Less precise candidate info for wide-channel and Wi-Fi 7 STAs (an MLD STA learns the target AP MLD only from its beacons) | Derive op class from width; Basic Multi-Link element in neighbor reports |
 | R7 | Control replies are limited to 8 KiB | `PEERS`/`STAS` output truncated in large deployments | Multi-datagram replies |
 | R8 | ~~All log lines reach OpenWrt syslog at `daemon.err`~~ **Resolved (1.3):** the OpenWrt service runs `donghoa -s`, which logs through `syslog(3)` with real priorities | — | — |
 | R9 | No automated tests for the replay window, retransmission, path failover or peer timeout | Regressions there would go unnoticed | See SRS §7 |

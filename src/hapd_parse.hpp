@@ -26,9 +26,19 @@ struct Status {
 	int numSta{0};
 	int maxTxpower{0};
 	int chanUtil{-1}; // 0..255, -1 if not reported
+	Mac mldAddr{};    // AP MLD address (mld_addr[i]), zero if not an MLD link
+	int linkId{-1};   // mld_link_id[i], -1 if not an MLD link
 };
 
-// "STATUS" output, choosing the per-BSS entry of ifname.
+// hostapd names the control socket of an AP MLD link "<netdev>_link<id>".
+// The netdev part of a control socket name (the whole name otherwise).
+std::string_view netdevName(std::string_view ctrlName) noexcept;
+// The link ID of such a name, empty for a plain netdev name.
+std::optional<int> ctrlLinkId(std::string_view ctrlName) noexcept;
+
+// "STATUS" output, choosing the per-BSS entry of ifname: bss[i] equal to
+// ifname, or for "<netdev>_link<id>" bss[i] equal to <netdev> with
+// mld_link_id[i] equal to <id>.
 std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname) noexcept;
 
 struct Sta {
@@ -47,6 +57,11 @@ struct Sta {
 	bool ft{false};
 	std::uint8_t bands{0U}; // rrm::BANDS_* from supp_op_classes, 0 if absent
 	bool akmNo6g{false};    // its AKM is not allowed on 6 GHz (WPA2-PSK)
+	// Wi-Fi 7 MLO: an MLD STA (addr is its MLD address) lists its links
+	// as peer_addr[<link id>]=<link address>.
+	bool mld{false};
+	std::uint16_t linkMask{0U}; // bit = link ID with a peer_addr
+	int maxSimulLinks{-1};      // max_simul_links, -1 if absent
 };
 
 // "STA <addr>" / "STA-FIRST" / "STA-NEXT" output.

@@ -13,8 +13,12 @@ import time
 
 class Sta:
     def __init__(self, mac, signal, view, btm_accept=True, tput_bytes=0, rrm=True,
-                 op_classes=None, akm="00-0f-ac-4"):
+                 op_classes=None, akm="00-0f-ac-4", mld_links=None, link_signal=None):
         self.mac = mac
+        # Wi-Fi 7 MLO: link id -> link address (peer_addr[]) for an MLD STA,
+        # printed only by AP MLD links; per-link signal by BSSID.
+        self.mld_links = dict(mld_links or {})
+        self.link_signal = dict(link_signal or {})
         self.akm = akm  # AKMSuiteSelector of the association (FT-PSK default)
         # Supported Operating Classes element body as hex (current class
         # first), printed as supp_op_classes=; None: element not sent.
@@ -33,9 +37,13 @@ class Sta:
 
 
 class MockBss:
-    def __init__(self, world, ctrl_dir, ifname, bssid, ssid, freq, channel, util=None):
+    def __init__(self, world, ctrl_dir, ifname, bssid, ssid, freq, channel, util=None,
+                 netdev=None, mld=None, link_id=None):
         self.world = world
-        self.ifname = ifname
+        self.ifname = ifname  # control socket name ("<netdev>_link<id>" for an AP MLD link)
+        self.netdev = netdev or ifname
+        self.mld = mld        # AP MLD address, None for a plain BSS
+        self.link_id = link_id
         self.bssid = bssid
         self.ssid = ssid
         self.freq = freq
@@ -75,9 +83,12 @@ class MockBss:
         lines = [
             "state=ENABLED", "freq=%d" % self.freq, "channel=%d" % self.channel,
             "ieee80211n=1", "ieee80211ac=%d" % (self.freq > 5000), "ieee80211ax=0",
-            "max_txpower=20", "bss[0]=" + self.ifname, "bssid[0]=" + self.bssid,
+            "max_txpower=20", "bss[0]=" + self.netdev, "bssid[0]=" + self.bssid,
             "ssid[0]=" + self.ssid, "num_sta[0]=%d" % len(self.stas),
         ]
+        if self.mld:
+            lines += ["ieee80211be=1", "mld_addr[0]=" + self.mld, "mld_id[0]=0",
+                      "mld_link_id[0]=%d" % self.link_id]
         if self.util is not None:
             lines.append("chan_util_avg=%d" % self.util)
         return "\n".join(lines) + "\n"
@@ -89,8 +100,12 @@ class MockBss:
             "%s\nflags=[AUTH][ASSOC][AUTHORIZED][WMM][HT]\nrx_bytes=%d\ntx_bytes=%d\n"
             "inactive_msec=100\nsignal=%d\nrx_rate_info=1200\ntx_rate_info=1200\n"
             "connected_time=10\next_capab=0000080000000040\nAKMSuiteSelector=%s\n"
-            % (sta.mac, sta.rx_bytes, sta.tx_bytes, sta.signal, sta.akm)
+            % (sta.mac, sta.rx_bytes, sta.tx_bytes, sta.link_signal.get(self.bssid, sta.signal), sta.akm)
         )
+        if self.mld and sta.mld_links:
+            for lid, addr in sorted(sta.mld_links.items()):
+                text += "peer_addr[%d]=%s\n" % (lid, addr)
+            text += "max_simul_links=1\n"
         if sta.op_classes:
             text += "supp_op_classes=%s\n" % sta.op_classes
         return text
@@ -216,8 +231,12 @@ class World:
             sig = sta.view.get(dst_bssid, (0, 0, sta.signal))[2]
             sta.view[src_bssid] = (0, src.channel, sta.signal)
             sta.signal = sig
+            sta.link_signal = {}
             dst.add_sta(sta)
-            src.remove_sta(mac)
+            # An MLD STA leaves every link of the source AP MLD.
+            for b in self.bss_by_bssid.values():
+                if b is not dst and mac in b.stas:
+                    b.remove_sta(mac)
 
     def start(self):
         self.thread.start()

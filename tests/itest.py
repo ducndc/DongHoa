@@ -20,6 +20,10 @@ Scenarios:
      tri-band WPA2-PSK STA goes to 5 GHz instead (6 GHz needs WPA3/OWE), a
      5 GHz STA advertising 6 GHz goes 5 -> 6 GHz, and a 5 GHz STA without
      6 GHz operating classes is left alone
+  9. Wi-Fi 7 MLO: AP1's AP MLD (link 0 on 5 GHz, link 1 on 2.4 GHz) and an
+     MLD STA on both links: one STA entry with per-link RSSI, no band
+     steering onto its own link, no roam while one link is still good, and
+     when every link is weak a roam to another BSS, never to its own AP MLD
 
 Environment:
   DONGHOA_BIN, DONGHOA_CLI_BIN  commands to run instead of ./donghoa and
@@ -67,6 +71,9 @@ STA8_MAC = "aa:bb:cc:dd:ee:08"  # tri-band, SAE, on 5 GHz
 STA9_MAC = "aa:bb:cc:dd:ee:09"  # no operating classes, SAE, on 5 GHz
 SAE = "00-0f-ac-8"
 TRI = "5151737c83"  # current 81; 81, 115, 124, 131
+BMLD = "02:00:00:00:01:1f"  # AP1's AP MLD address
+BM0, BM1 = "02:00:00:00:01:10", "02:00:00:00:01:11"  # its links: 0 = 5 GHz ch 44, 1 = 2.4 GHz ch 11
+STA10_MAC = "aa:bb:cc:dd:ee:10"  # MLD STA (MLD address)
 # Extra config lines for every AP, ";"-separated, e.g. "score_model 1".
 EXTRA = os.environ.get("DONGHOA_ITEST_EXTRA", "").replace(";", "\n")
 
@@ -166,6 +173,9 @@ def main():
         ap2 = world.add_bss(h2, "ap2-wl0", B2, "home", 5745, 149, util=25)
         ap1g = world.add_bss(h1, "ap1-wl1", B1G, "home", 2437, 6)
         world.add_bss(h1, "ap1-wl2", B6, "home", 5955, 1)
+        world.add_bss(h1, "ap1-mld_link0", BM0, "home", 5220, 44, netdev="ap1-mld", mld=BMLD, link_id=0)
+        apm1 = world.add_bss(h1, "ap1-mld_link1", BM1, "home", 2462, 11, netdev="ap1-mld", mld=BMLD,
+                             link_id=1)
         world.add_bss(h3, "ap3-wl0", "02:00:00:00:03:00", "home", 2437, 6)
         sta = Sta(STA_MAC, -82, {B2: (124, 149, -55)}, rrm={0})  # passive only
         ap1.stas[STA_MAC] = sta
@@ -182,7 +192,8 @@ def main():
             cfg = os.path.join(tmp, f"ap{i + 1}.conf")
             mon = f"air_monitor_sim {mon_port}\n" if i == 1 else ""
             if i == 0:
-                mon = "bss ap1-wl1 mdid=a1b2\nbss ap1-wl2 mdid=a1b2\n"
+                mon = ("bss ap1-wl1 mdid=a1b2\nbss ap1-wl2 mdid=a1b2\n"
+                       "bss ap1-mld_link0 mdid=a1b2\nbss ap1-mld_link1 mdid=a1b2\n")
             write_cfg(cfg, *c, extra=mon + EXTRA)
             path = os.path.join(tmp, f"ap{i + 1}.log")
             open(path, "w").close()
@@ -298,7 +309,7 @@ def main():
         if "score_model 1" in EXTRA:
             # The mock BSSes are 20 MHz: with the throughput model a band
             # change is not the required tput_gain_pct gain, so no band steer.
-            print("SKIP 7, 8: band steering scenarios assume score_model 0 (20 MHz mock BSSes)")
+            print("SKIP 7, 8, 9: band steering and MLO scenarios assume score_model 0 (20 MHz mock BSSes)")
             ok = True
             return 0
         mark(logs, "S7 band steering 2.4 -> 5 GHz checks the STA's operating classes")
@@ -356,6 +367,45 @@ def main():
         assert not any(c.startswith("REQ_BEACON " + STA9_MAC) for c in ap1.cmd_log), \
             "STA9 must not be measured for 5 -> 6 GHz"
         print("PASS 8: 6 GHz: 2.4 -> 6 (WPA3), WPA2-PSK to 5 GHz instead, 5 -> 6, none without 6 GHz classes")
+
+        mark(logs, "S9 MLO: MLD STA on both links of AP1's AP MLD")
+        apm0 = world.bss_by_bssid[BM0]
+        # Both own links look better than B1 in beacon reports: only the
+        # own-AP-MLD rule keeps the roam off them, whichever link is the source.
+        sta10 = Sta(STA10_MAC, -40, {B1: (115, 36, -50), BM0: (115, 44, -35), BM1: (81, 11, -30)},
+                    mld_links={0: "aa:bb:cc:dd:ee:20", 1: "aa:bb:cc:dd:ee:21"},
+                    link_signal={BM0: -45, BM1: -40})
+        n_btm = len(world.btm_log)
+        with world.lock:
+            apm0.add_sta(sta10)        # association link: event
+            apm1.stas[STA10_MAC] = sta10  # partner link: listed by STA-FIRST/NEXT
+        sta_line = lambda: next((l for l in cli(socks[0], "STAS").splitlines()
+                                 if l.startswith("sta " + STA10_MAC)), "")
+        wait_for(lambda: "mld links=" in sta_line(), 3, "MLD STA with its links in STAS")
+        # Strong on the 2.4 GHz link (-40): a non-MLD STA would be band-steered
+        time.sleep(3.0)
+        line = sta_line()
+        assert ("bss=ap1-mld_link1 " in line and "ap1-mld_link0:0:-45" in line
+                and "ap1-mld_link1:1:-40" in line and "rssi=-40 " in line), line
+        assert not any(t[1] == STA10_MAC for t in world.btm_log[n_btm:]), "MLD STA must not be band-steered"
+        assert "steer #" not in "".join(l for l in open(logs[0].name).read().split("=== S9")[-1].splitlines(True)
+                                         if STA10_MAC in l and "start" in l), "no steer may start"
+        st = cli(socks[0], "STATUS")
+        assert "mld=" + BMLD + " link=0" in st and "mld=" + BMLD + " link=1" in st, st
+        # One link weak, the other good: no roam
+        sta10.link_signal = {BM0: -45, BM1: -85}
+        time.sleep(3.0)
+        assert not any(t[1] == STA10_MAC for t in world.btm_log[n_btm:]), "no roam while a link is good"
+        assert "bss=ap1-mld_link0 " in sta_line(), sta_line()
+        # Every link weak: roam, to B1 (5 GHz), not to the AP MLD's own 5 GHz link
+        sta10.link_signal = {BM0: -86, BM1: -85}
+        wait_for(lambda: any(t[1] == STA10_MAC for t in world.btm_log[n_btm:]), 10, "roam of the MLD STA")
+        btm = [t for t in world.btm_log[n_btm:] if t[1] == STA10_MAC][0]
+        assert btm[2] == B1 and btm[2] not in (BM0, BM1), btm
+        wait_for(lambda: "finished: success" in "".join(
+            l for l in open(logs[0].name).read().split("=== S9")[-1].splitlines(True) if STA10_MAC in l),
+            4, "MLD STA roam recorded as success")
+        print("PASS 9: MLO: one entry per MLD STA, no band steer onto its own link, roam only when all links are weak")
         ok = True
     finally:
         for p in procs:

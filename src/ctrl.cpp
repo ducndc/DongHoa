@@ -70,6 +70,9 @@ void putBss(Out &o, const arcp::BssInfo &bi, const arcp::BssLoad *bl) noexcept
 	capsName(bi.caps, caps);
 	formatTo(o, "  bss {} ssid={} ch={} band={} op_class={} mdid={} caps={}", bi.bssid,
 		  SsidText{bi.ssidView()}, bi.channel, bi.band, bi.opClass, hex(bi.mdid, 4U), caps.view());
+	if (bi.isMldLink()) {
+		formatTo(o, " mld={} link={}", bi.mldAddr, bi.linkId);
+	}
 	if (bl != nullptr) {
 		formatTo(o, " sta={} util={}% noise={} accepting={}", bl->staCount, policy::utilToPct(bl->util),
 			  bl->noise, ((bl->flags & arcp::LOAD_ACCEPTING) != 0U) ? 1 : 0);
@@ -192,13 +195,26 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			const std::int64_t backoff = static_cast<std::int64_t>(s.nextSteerMs) - static_cast<std::int64_t>(now);
 			const std::uint8_t usable = static_cast<std::uint8_t>(
 				static_cast<std::uint8_t>(s.bandsAdv | s.bandsSeen) & static_cast<std::uint8_t>(~s.bandsBlocked));
-			formatTo(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} bands={}({}) adv={} seen={}{} "
-				    "backoff={}ms\n",
+			formatTo(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} bands={}({}) adv={} seen={}{}",
 				  s.addr, mBss[s.bss].cfg->ifname, s.away ? "(away)" : "", s.rssi, s.tputKbps,
 				  ((s.flags & arcp::STA_F11K) != 0U) ? "k" : "", ((s.flags & arcp::STA_F11V) != 0U) ? "v" : "",
 				  ((s.flags & arcp::STA_F11R) != 0U) ? "r" : "", bcn, bandsName(usable),
 				  bandClass(s.bandsAdv, usable), bandsName(s.bandsAdv), bandsName(s.bandsSeen),
-				  ((s.bandsBlocked & rrm::BANDS_6G) != 0U) ? " no6g=wpa2-psk" : "", backoff);
+				  ((s.bandsBlocked & rrm::BANDS_6G) != 0U) ? " no6g=wpa2-psk" : "");
+			// MLD STA: every link as <bss>:<link id>:<rssi>, best link first in bss=
+			if (s.mld) {
+				formatTo(o, " mld links=");
+				const char *sep = "";
+				for (const StaLink &l : s.links) {
+					if (l.used) {
+						formatTo(o, "{}{}:{}:{}", sep, mBss[l.bss].cfg->ifname, mBss[l.bss].info.linkId,
+							  l.rssi);
+						sep = ",";
+					}
+				}
+				formatTo(o, " max_simul_links={}", s.maxSimulLinks);
+			}
+			formatTo(o, " backoff={}ms\n", backoff);
 		}
 		for (const RemoteSta &r : mRsta) {
 			if (r.used) {

@@ -26,6 +26,34 @@ bool flagSet(std::string_view buf, std::string_view key) noexcept
 
 } // namespace
 
+std::string_view netdevName(std::string_view ctrlName) noexcept
+{
+	constexpr std::string_view LINK = "_link";
+	const std::size_t at = ctrlName.rfind(LINK);
+	std::string_view r = ctrlName;
+	if ((at != std::string_view::npos) && (at > 0U)) {
+		const std::string_view id = subView(ctrlName, at + LINK.size());
+		if (parseLong(id, 10, 0, 14).has_value()) {
+			r = subView(ctrlName, 0U, at);
+		}
+	}
+	return r;
+}
+
+std::optional<int> ctrlLinkId(std::string_view ctrlName) noexcept
+{
+	constexpr std::string_view LINK = "_link";
+	std::optional<int> r;
+	const std::string_view base = netdevName(ctrlName);
+	if (base.size() < ctrlName.size()) {
+		const std::optional<long> id = parseLong(subView(ctrlName, base.size() + LINK.size()), 10, 0, 14);
+		if (id.has_value()) {
+			r = static_cast<int>(*id);
+		}
+	}
+	return r;
+}
+
 std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname) noexcept
 {
 	std::optional<Status> r;
@@ -43,6 +71,8 @@ std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname)
 
 		st.channel = cb->channel;
 		st.band = cb->band;
+		const std::string_view base = netdevName(ifname);
+		const std::optional<int> link = ctrlLinkId(ifname);
 		for (std::size_t i = 0U; (i < 16U) && !found; i++) {
 			const std::optional<std::string_view> v = getKv(buf, indexed("bss", i).view());
 			if (!v.has_value()) {
@@ -51,6 +81,15 @@ std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname)
 			if (*v == ifname) {
 				idx = i;
 				found = true;
+			} else if (link.has_value() && (*v == base)) {
+				// AP MLD link: several links share the netdev name
+				const std::optional<long> li = getKvInt(buf, indexed("mld_link_id", i).view());
+				if (!li.has_value() || (*li == *link)) {
+					idx = i;
+					found = true;
+				}
+			} else {
+				// another BSS
 			}
 		}
 		const std::optional<std::string_view> bssid = getKv(buf, indexed("bssid", idx).view());
@@ -64,6 +103,13 @@ std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname)
 					st.ssid[i] = static_cast<std::uint8_t>((*ssid)[i]);
 				}
 				st.ssidLen = static_cast<std::uint8_t>(n);
+			}
+			const std::optional<std::string_view> mld = getKv(buf, indexed("mld_addr", idx).view());
+			const std::optional<Mac> mldMac = mld.has_value() ? parseMac(*mld) : std::optional<Mac>();
+			const std::optional<long> mldLink = getKvInt(buf, indexed("mld_link_id", idx).view());
+			if (mldMac.has_value() && mldLink.has_value() && (*mldLink >= 0) && (*mldLink <= 14)) {
+				st.mldAddr = *mldMac;
+				st.linkId = static_cast<int>(*mldLink);
 			}
 			const std::optional<long> nsta = getKvInt(buf, indexed("num_sta", idx).view());
 			if (nsta.has_value()) {
@@ -179,6 +225,17 @@ std::optional<Sta> parseSta(std::string_view buf) noexcept
 			s.ftKnown = true;
 			s.ft = rrm::isFtAkm(*akm);
 			s.akmNo6g = rrm::isAkmForbidden6g(*akm);
+		}
+		for (std::size_t i = 0U; i < 15U; i++) {
+			const std::optional<std::string_view> pa = getKv(buf, indexed("peer_addr", i).view());
+			if (pa.has_value() && parseMac(*pa).has_value()) {
+				s.mld = true;
+				s.linkMask = static_cast<std::uint16_t>(s.linkMask | (1U << i));
+			}
+		}
+		const std::optional<long> msl = getKvInt(buf, "max_simul_links");
+		if (msl.has_value()) {
+			s.maxSimulLinks = static_cast<int>(*msl);
 		}
 		r = s;
 	}

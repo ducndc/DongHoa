@@ -281,6 +281,16 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-AMN-5 | A refused or unanswered Beacon Request shall not end MEASURE while monitor reports are pending. MEASURE shall end early when every candidate has an 11k report, or, once no 11k report is pending, when every candidate has any measurement; otherwise at max(`beacon_req_timeout_ms`, `amon_duration_ms` + 500 ms). | T-I 5 |
 | FR-AMN-6 | Without monitors on any candidate AP, steering behaviour shall be unchanged. | T-I 1–4, 6 |
 
+### 4.12 Wi-Fi 7 multi-link operation (MLO)
+
+| ID | Requirement | Verif. |
+|---|---|---|
+| FR-MLO-1 | A `bss` line naming an AP MLD link's control socket (`<netdev>_link<id>`) shall take that link's entry from hostapd `STATUS` (`bss[i]` = netdev and `mld_link_id[i]` = id), its AP MLD address from `mld_addr[i]`, and use the netdev for nl80211. | T-U `test_mlo`, T-I 9 |
+| FR-MLO-2 | BSS_INFO shall carry the AP MLD address and link ID of an AP MLD link as an optional trailer, ignored by older receivers; without it a BSS is not an MLD link. | T-U `test_mlo` |
+| FR-MLO-3 | A STA listed with `peer_addr[]` (MLD STA) shall be one entry per MLD address across the links of its AP MLD, with RSSI per link. Its RSSI and BSS shall be its best link's; it shall be RSSI-triggered only when every measured link has been below `rssi_low` for `rssi_low_count` samples. Being listed on another link of the same AP MLD shall not count as a move. | T-U, T-I 9 |
+| FR-MLO-4 | An MLD STA shall not be band-steered, and no steer shall send it to another link of its own AP MLD. | T-I 9 |
+| FR-MLO-5 | For an MLD STA, association on any link of the target AP MLD shall count as success, and association on a link of the source AP MLD shall not end the transaction. A legacy STA shall be handled as before, also between the affiliated BSSes of one AP MLD. | T-I 9 (local target), I |
+
 ## 5. Non-functional requirements
 
 ### 5.1 Performance
@@ -340,8 +350,9 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
   association-rejection based steering.
 - Off-channel listening for unassociated STAs (air monitors hear only their
   own channel), and channel or TX-power planning.
-- Multi-Link Operation (802.11be MLO) awareness, and wide-channel operating
-  classes in neighbor reports (20 MHz only).
+- For MLO (§4.12): Multi-Link elements in neighbor reports and BTM
+  candidates, link reconfiguration and TID-to-link mapping. Wide-channel
+  operating classes in neighbor reports (20 MHz only).
 - A central controller. All decisions are made per AP, by the source AP.
 
 ## 7. Verification matrix
@@ -376,7 +387,7 @@ measurement timeout.
 | `iface` | — | L2 port, repeatable (≤ 8) |
 | `sim_port`, `sim_peer` | — | UDP test transport |
 | `key` | none | `hex:<≥32 hex digits>` or passphrase ≥ 8 characters |
-| `bss <ifname> [mdid=<hex>] [max_sta=<n>] [ft_over_ds=1]` | — | Managed BSS, repeatable (≤ 8) |
+| `bss <ifname> [mdid=<hex>] [max_sta=<n>] [ft_over_ds=1]` | — | Managed BSS, repeatable (≤ 8). `<ifname>` is hostapd's control socket name: the netdev, or `<netdev>_link<id>` for an AP MLD link (≤ 22 characters) |
 | `hostapd_ctrl_dir` | `/var/run/hostapd` | |
 | `ctrl_socket` | none | Control socket path |
 | `hello_interval_ms` / `bss_status_interval_ms` / `sta_status_interval_ms` / `rf_status_interval_ms` | 2000 / 5000 / 10000 / 10000 | ms |

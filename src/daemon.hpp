@@ -63,11 +63,22 @@ struct Measurement {
 	Millis ts{0U};
 };
 
+// One link of an MLD STA: the local BSS (an AP MLD link) it is on.
+struct StaLink {
+	bool used{false};
+	std::size_t bss{0U};   // index into Daemon::mBss
+	int rssi{0};           // smoothed dBm on this link, 0 = unknown
+	int lowCount{0};       // consecutive samples below rssi_low on this link
+	Millis lastPollMs{0U};
+};
+
+constexpr std::size_t MAX_STA_LINKS = 3U;
+
 struct Sta {
 	bool used{false};
 	Mac addr{};
-	std::size_t bss{0U};        // index into Daemon::mBss
-	int rssi{0};                // smoothed dBm, 0 = unknown
+	std::size_t bss{0U};        // index into Daemon::mBss (MLD STA: its strongest link)
+	int rssi{0};                // smoothed dBm, 0 = unknown (MLD STA: best link)
 	int lowCount{0};
 	std::uint64_t rxBytes{0U};
 	std::uint64_t txBytes{0U};
@@ -91,6 +102,11 @@ struct Sta {
 	Millis nextBandMs{0U};      // band steering backoff
 	std::array<Measurement, MAX_MEAS> meas{};
 	std::size_t nMeas{0U};
+	// Wi-Fi 7 MLO: an MLD STA is one entry (addr = MLD address) with one
+	// StaLink per AP MLD link it is seen on. Non-MLD STAs leave these unused.
+	bool mld{false};
+	int maxSimulLinks{-1};
+	std::array<StaLink, MAX_STA_LINKS> links{};
 };
 
 // ---- remote side ----
@@ -164,6 +180,7 @@ struct SteerTxn {
 	bool bcnOutstanding{false}; // 11k request sent, no report or refusal yet
 	bool amonPending{false};    // air monitor reports requested
 	bool anyMeasured{false};    // some candidate had a level at evaluate()
+	bool staMld{false};         // MLD STA (kept: its entry may go before the outcome)
 	Mac forcedTarget{};         // manual steer target, zero = any
 };
 
@@ -303,7 +320,14 @@ private:
 	void trace(std::string_view dir, ByteView frame, const Mac *peer, std::string_view port,
 		   int tries) const noexcept;
 	// local.cpp helpers
-	void applyStaSample(Sta &s, const hapd::Sta &h) noexcept;
+	void applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcept;
+	void updateStaLink(Sta &s, const hapd::Sta &h, std::size_t bss, Millis now) noexcept;
+	// Drops the links of s on bss not polled since start; false when the
+	// STA has no link left.
+	bool pruneStaLinks(Sta &s, std::size_t bss, Millis start) noexcept;
+	bool isSameApMld(std::size_t a, std::size_t b) const noexcept;
+	// BSS info of a local or remote BSSID, nullptr if unknown.
+	const arcp::BssInfo *findBssInfo(const Mac &bssid) noexcept;
 	void markBssDown(std::size_t i) noexcept;
 	void refreshBss(std::size_t i) noexcept;
 	void onHapdConnected(std::size_t bss, const Mac &addr) noexcept;

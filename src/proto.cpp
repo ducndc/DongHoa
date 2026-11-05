@@ -57,7 +57,13 @@ bool operator==(const BssInfo &a, const BssInfo &b) noexcept
 	return (a.bssid == b.bssid) && (a.freq == b.freq) && (a.opClass == b.opClass) &&
 	       (a.channel == b.channel) && (a.band == b.band) && (a.bw == b.bw) &&
 	       (a.phyType == b.phyType) && (a.caps == b.caps) && (a.mdid == b.mdid) &&
-	       (a.bssidInfo == b.bssidInfo) && isSameEss(a, b);
+	       (a.bssidInfo == b.bssidInfo) && isSameEss(a, b) && (a.mldAddr == b.mldAddr) &&
+	       (a.linkId == b.linkId);
+}
+
+bool isSameMld(const BssInfo &a, const BssInfo &b) noexcept
+{
+	return a.isMldLink() && b.isMldLink() && (a.mldAddr == b.mldAddr);
 }
 
 bool isSameEss(const BssInfo &a, const BssInfo &b) noexcept
@@ -128,9 +134,10 @@ bool Message::add(const ApInfo &v) noexcept
 
 bool Message::add(const BssInfo &v) noexcept
 {
-	std::array<std::uint8_t, 22U + 32U> b{};
+	std::array<std::uint8_t, 22U + 32U + 7U> b{};
 	const std::size_t sl = (v.ssidLen > 32U) ? 32U : v.ssidLen;
 	const ByteSpan s = spanOf(b);
+	std::size_t n = 22U + sl;
 
 	putMac(s, 0U, v.bssid);
 	putBe16(s, 6U, v.freq);
@@ -146,7 +153,13 @@ bool Message::add(const BssInfo &v) noexcept
 	for (std::size_t i = 0U; i < sl; i++) {
 		b[22U + i] = v.ssid[i];
 	}
-	return putTlv(Tlv::BSS_INFO, viewOf(b).first(22U + sl));
+	// Optional MLO trailer, only for an AP MLD link: older peers ignore it.
+	if (v.isMldLink()) {
+		putMac(s, n, v.mldAddr);
+		b[n + 6U] = v.linkId;
+		n += 7U;
+	}
+	return putTlv(Tlv::BSS_INFO, viewOf(b).first(n));
 }
 
 bool Message::add(const BssLoad &v) noexcept
@@ -401,6 +414,11 @@ bool decode(ByteView v, BssInfo &o) noexcept
 		o.ssidLen = v[21U];
 		for (std::size_t i = 0U; i < o.ssidLen; i++) {
 			o.ssid[i] = v[22U + i];
+		}
+		const std::size_t mld = 22U + o.ssidLen;
+		if (v.size() >= (mld + 7U)) {
+			o.mldAddr = getMac(v, mld);
+			o.linkId = v[mld + 6U];
 		}
 	}
 	return ok;

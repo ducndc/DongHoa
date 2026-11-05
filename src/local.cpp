@@ -12,6 +12,37 @@ namespace {
 constexpr LogModule LOG_MODULE{LogModule::LOCAL};
 constexpr Millis RECONNECT_MS = 5000U;
 
+// ifindex of the netdev behind a hostapd control socket name ("<netdev>"
+// or, for an AP MLD link, "<netdev>_link<id>"); 0 if there is none.
+int netdevIndex(const IfName &ctrlName) noexcept
+{
+	IfName dev;
+	(void)dev.assign(hapd::netdevName(ctrlName.view()));
+	return os::ifnameToIndex(dev.cStr());
+}
+
+// MLD STA: its RSSI is that of the best link, its BSS that link's, and it
+// counts as weak only when every measured link is (lowCount = minimum).
+void aggregateLinks(Sta &s) noexcept
+{
+	const StaLink *best = nullptr;
+	int low = -1;
+	for (const StaLink &l : s.links) {
+		if (!l.used || (l.rssi == 0)) {
+			continue;
+		}
+		if ((best == nullptr) || (l.rssi > best->rssi)) {
+			best = &l;
+		}
+		low = ((low < 0) || (l.lowCount < low)) ? l.lowCount : low;
+	}
+	if (best != nullptr) {
+		s.rssi = best->rssi;
+		s.bss = best->bss;
+		s.lowCount = low;
+	}
+}
+
 } // namespace
 
 void Daemon::initLocal() noexcept
@@ -20,7 +51,7 @@ void Daemon::initLocal() noexcept
 	for (std::size_t i = 0U; i < mNBss; i++) {
 		LocalBss &b = mBss[i];
 		b.cfg = &mCfg.bss[i];
-		b.ifindex = os::ifnameToIndex(b.cfg->ifname.cStr());
+		b.ifindex = netdevIndex(b.cfg->ifname);
 		b.hapdUtil = -1;
 	}
 	(void)mSurvey.open();
@@ -55,12 +86,16 @@ Sta *Daemon::getSta(const Mac &addr, std::size_t bss) noexcept
 	Sta *r = findSta(addr);
 
 	if (r != nullptr) {
-		if (r->bss != bss) {
+		// An MLD STA shows up on every link of the AP MLD: not a move.
+		const bool otherLink = r->mld && isSameApMld(r->bss, bss);
+		if ((r->bss != bss) && !otherLink) {
 			// Moved between local BSSes (e.g. band steering).
 			r->bss = bss;
 			r->rssi = 0;
 			r->lowCount = 0;
 			r->nMeas = 0U;
+			r->mld = false;
+			r->links = {};
 		}
 	} else {
 		for (Sta &s : mSta) {
@@ -105,39 +140,98 @@ arcp::StaEntry Daemon::fillEntry(const Sta &s) const noexcept
 	return e;
 }
 
-void Daemon::applyStaSample(Sta &s, const hapd::Sta &h) noexcept
+bool Daemon::isSameApMld(std::size_t a, std::size_t b) const noexcept
+{
+	return (a < mNBss) && (b < mNBss) && arcp::isSameMld(mBss[a].info, mBss[b].info);
+}
+
+void Daemon::updateStaLink(Sta &s, const hapd::Sta &h, std::size_t bss, Millis now) noexcept
+{
+	StaLink *l = nullptr;
+	for (StaLink &x : s.links) {
+		if ((l == nullptr) && x.used && (x.bss == bss)) {
+			l = &x;
+		}
+	}
+	for (StaLink &x : s.links) {
+		if ((l == nullptr) && !x.used) {
+			x = StaLink{};
+			x.used = true;
+			x.bss = bss;
+			l = &x;
+		}
+	}
+	if (l == nullptr) {
+		return; // more links than MAX_STA_LINKS
+	}
+	l->lastPollMs = now;
+	if (h.signal != 0) {
+		l->rssi = (l->rssi != 0) ? (((3 * l->rssi) + h.signal) - 2) / 4 : h.signal;
+		l->lowCount = (h.signal < mCfg.pol.rssiLow) ? (l->lowCount + 1) : 0;
+	}
+	aggregateLinks(s);
+}
+
+bool Daemon::pruneStaLinks(Sta &s, std::size_t bss, Millis start) noexcept
+{
+	std::array<StaLink, MAX_STA_LINKS> kept{};
+	std::size_t n = 0U;
+	for (const StaLink &l : s.links) {
+		const bool stale = (l.bss == bss) && (l.lastPollMs < start) && (l.lastPollMs != 0U);
+		if (l.used && !stale) {
+			kept[n] = l;
+			n++;
+		}
+	}
+	s.links = kept;
+	aggregateLinks(s);
+	return n > 0U;
+}
+
+void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcept
 {
 	const PolicyConfig &p = mCfg.pol;
 	const Millis now = os::nowMs();
 	const bool assume = p.assumeKvr;
 
-	if (h.signal != 0) {
+	if (h.mld) {
+		s.mld = true;
+		s.maxSimulLinks = h.maxSimulLinks;
+		updateStaLink(s, h, bss, now);
+	} else if (h.signal != 0) {
 		s.rssi = (s.rssi != 0) ? (((3 * s.rssi) + h.signal) - 2) / 4 : h.signal;
 		s.lowCount = (h.signal < p.rssiLow) ? (s.lowCount + 1) : 0;
+	} else {
+		// no signal in this sample
 	}
-	const std::uint64_t total = h.rxBytes + h.txBytes;
-	const std::uint64_t prev = s.rxBytes + s.txBytes;
-	if ((s.bytesTs != 0U) && (now > s.bytesTs) && (total >= prev)) {
-		s.tputKbps = static_cast<std::uint32_t>(((total - prev) * 8U) / (now - s.bytesTs));
+	// An MLD STA is listed on each link: take traffic counters from one
+	// link only (the first one seen), or the deltas mix two sources.
+	const bool counters = !s.mld || (s.links[0U].used && (s.links[0U].bss == bss));
+	if (counters) {
+		const std::uint64_t total = h.rxBytes + h.txBytes;
+		const std::uint64_t prev = s.rxBytes + s.txBytes;
+		if ((s.bytesTs != 0U) && (now > s.bytesTs) && (total >= prev)) {
+			s.tputKbps = static_cast<std::uint32_t>(((total - prev) * 8U) / (now - s.bytesTs));
+		}
+		s.rxBytes = h.rxBytes;
+		s.txBytes = h.txBytes;
+		s.bytesTs = now;
+		s.inactiveMs = h.inactiveMs;
+		s.connectedS = h.connectedS;
+		s.txRate = h.txRateMbps;
+		s.rxRate = h.rxRateMbps;
 	}
-	s.rxBytes = h.rxBytes;
-	s.txBytes = h.txBytes;
-	s.bytesTs = now;
-	s.inactiveMs = h.inactiveMs;
-	s.connectedS = h.connectedS;
-	s.txRate = h.txRateMbps;
-	s.rxRate = h.rxRateMbps;
 
 	if (h.bands != 0U) {
 		s.bandsAdv = h.bands;
 	}
 	s.bandsBlocked = h.akmNo6g ? rrm::BANDS_6G : static_cast<std::uint8_t>(0U);
-	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | rrm::bandBit(mBss[s.bss].info.band));
+	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | rrm::bandBit(mBss[bss].info.band));
 	s.flags = 0U;
 	if (h.btmKnown ? h.btm : assume) {
 		s.flags = static_cast<std::uint8_t>(s.flags | arcp::STA_F11V);
 	}
-	if (h.ftKnown ? h.ft : (assume && (mBss[s.bss].cfg->mdid != 0U))) {
+	if (h.ftKnown ? h.ft : (assume && (mBss[bss].cfg->mdid != 0U))) {
 		s.flags = static_cast<std::uint8_t>(s.flags | arcp::STA_F11R);
 	}
 	// No STA 11k indicator in ctrl output; hostapd refusing REQ_BEACON in
@@ -183,7 +277,7 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	}
 	if (!wasUp) {
 		// hostapd may have recreated the interface: look it up again
-		b.ifindex = os::ifnameToIndex(b.cfg->ifname.cStr());
+		b.ifindex = netdevIndex(b.cfg->ifname);
 		b.wiphy = mSurvey.findWiphy(b.ifindex);
 		b.surveyPrev = SurveySample{};
 		if (b.wiphy.has_value()) {
@@ -219,6 +313,10 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	b.info.bssidInfo = rrm::buildBssidInfo(b.info.caps, b.secured);
 	b.info.ssidLen = st->ssidLen;
 	b.info.ssid = st->ssid;
+	if (st->linkId >= 0) {
+		b.info.mldAddr = st->mldAddr;
+		b.info.linkId = static_cast<std::uint8_t>(st->linkId);
+	}
 
 	// Utilisation from the radio's survey (asynchronous: the dump asked on
 	// the previous poll), else from hostapd's chan_util_avg. A survey that
@@ -324,7 +422,7 @@ void Daemon::pollStas() noexcept
 			if (h->authorized) {
 				Sta *const s = getSta(h->addr, i);
 				if (s != nullptr) {
-					applyStaSample(*s, *h);
+					applyStaSample(*s, *h, i);
 				}
 			}
 		}
@@ -332,9 +430,15 @@ void Daemon::pollStas() noexcept
 			markBssDown(i);
 			continue;
 		}
-		// Drop STAs hostapd no longer reports (missed events).
+		// Drop STAs hostapd no longer reports (missed events); for an MLD
+		// STA only the link on this BSS, the STA when no link is left.
 		for (Sta &s : mSta) {
-			if (s.used && (s.bss == i) && (s.lastPollMs < start) && (s.lastPollMs != 0U)) {
+			if (!s.used) {
+				continue;
+			}
+			const bool gone = s.mld ? !pruneStaLinks(s, i, start)
+						: ((s.bss == i) && (s.lastPollMs < start) && (s.lastPollMs != 0U));
+			if (gone) {
 				onLocalDisassoc(s.addr);
 				s.used = false;
 			}
@@ -371,8 +475,10 @@ void Daemon::onHapdDisconnected(std::size_t bss, const Mac &addr) noexcept
 	Sta *const s = findSta(addr);
 
 	logging::info(LOG_MODULE, "sta {} disassociated from {}", addr, mBss[bss].cfg->ifname);
-	// A STA moving between local BSSes may report CONNECTED first.
-	if ((s == nullptr) || (s->bss == bss)) {
+	// A STA moving between local BSSes may report CONNECTED first. An MLD
+	// STA leaving any link of its AP MLD leaves the AP MLD.
+	const bool ownLink = (s != nullptr) && s->mld && isSameApMld(s->bss, bss);
+	if ((s == nullptr) || (s->bss == bss) || ownLink) {
 		sendStaEvent(addr, bss, arcp::StaEventType::DISASSOC, 0U);
 		onLocalDisassoc(addr);
 		if (s != nullptr) {

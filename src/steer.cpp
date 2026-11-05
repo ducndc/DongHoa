@@ -116,6 +116,13 @@ std::string_view steerStateName(SteerState s) noexcept
 	return n;
 }
 
+const arcp::BssInfo *Daemon::findBssInfo(const Mac &bssid) noexcept
+{
+	const std::optional<std::size_t> b = findLocalBss(bssid);
+	const RemoteBss *const rb = b.has_value() ? nullptr : lookupRemoteBss(bssid, nullptr);
+	return b.has_value() ? &mBss[*b].info : ((rb != nullptr) ? &rb->info : nullptr);
+}
+
 SteerTxn *Daemon::findTxnBySta(const Mac &sta) noexcept
 {
 	SteerTxn *r = nullptr;
@@ -432,9 +439,13 @@ void Daemon::buildPool(SteerTxn &t) noexcept
 	const Sta *const s = findSta(t.sta);
 	// Skip bands the STA does not advertise (unless measured there) and
 	// 6 GHz for a WPA2-PSK STA; a manual steer goes where the operator says.
-	const auto usable = [&t, s](const arcp::BssInfo &bi) {
-		return (t.reason == arcp::SteerReason::MANUAL) || (s == nullptr) ||
-		       policy::isBandUsable(policy::StaBands{s->bandsAdv, s->bandsSeen, s->bandsBlocked}, bi.band);
+	// An MLD STA never goes to another link of its own AP MLD: link
+	// selection inside the AP MLD is the MLD's job, not BTM's.
+	const auto usable = [&t, s, &cur](const arcp::BssInfo &bi) {
+		const bool ownMld = (s != nullptr) && s->mld && arcp::isSameMld(bi, cur);
+		return !ownMld &&
+		       ((t.reason == arcp::SteerReason::MANUAL) || (s == nullptr) ||
+			policy::isBandUsable(policy::StaBands{s->bandsAdv, s->bandsSeen, s->bandsBlocked}, bi.band));
 	};
 	const auto add = [&t, &usable](const arcp::BssInfo &bi, const Mac &ap, bool local) {
 		if ((t.nCand < t.cand.size()) && (t.forcedTarget.isZero() || (t.forcedTarget == bi.bssid)) &&
@@ -615,6 +626,7 @@ bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noe
 	t->bss = s.bss;
 	t->reason = reason;
 	t->started = os::nowMs();
+	t->staMld = s.mld;
 	if (target != nullptr) {
 		t->forcedTarget = *target;
 	}
@@ -660,7 +672,7 @@ void Daemon::onStaPoll(Sta &s) noexcept
 	const std::uint8_t band = mBss[s.bss].info.band;
 	if (policy::isRssiTriggered(p, s.rssi, s.lowCount)) {
 		(void)startSteer(s, arcp::SteerReason::RSSI, nullptr);
-	} else if (policy::isBandTriggered(p, band, s.rssi) && (os::nowMs() >= s.nextBandMs) &&
+	} else if (!s.mld && policy::isBandTriggered(p, band, s.rssi) && (os::nowMs() >= s.nextBandMs) &&
 		   policy::hasHigherBand(policy::StaBands{s.bandsAdv, s.bandsSeen, s.bandsBlocked}, band)) {
 		(void)startSteer(s, arcp::SteerReason::BAND, nullptr);
 	} else {
@@ -805,11 +817,19 @@ void Daemon::onStaEvent(const Mac &ap, const arcp::StaEvent &e) noexcept
 	    (t->cur >= t->nCand)) {
 		return;
 	}
-	if (e.bssid == mBss[t->bss].info.bssid) {
+	// Where the STA went; an MLD STA may (re)associate through any link of
+	// an AP MLD, so a link of the chosen (or the source) AP MLD counts.
+	// (A legacy STA can be steered between the affiliated BSSes of one AP
+	// MLD: for it only the exact BSSID counts.)
+	const arcp::BssInfo *const at = t->staMld ? findBssInfo(e.bssid) : nullptr;
+	const arcp::BssInfo &src = mBss[t->bss].info;
+	const bool backHome = (e.bssid == src.bssid) || ((at != nullptr) && arcp::isSameMld(*at, src));
+	if (backHome) {
 		return; // reassociated to the source
 	}
-	endTxn(*t, (e.bssid == t->cand[t->cur].bssid) ? arcp::SteerOutcome::SUCCESS : arcp::SteerOutcome::WRONG_TARGET,
-		0U, false);
+	const bool onTarget = (e.bssid == t->cand[t->cur].bssid) ||
+			      ((at != nullptr) && arcp::isSameMld(*at, t->cand[t->cur].info));
+	endTxn(*t, onTarget ? arcp::SteerOutcome::SUCCESS : arcp::SteerOutcome::WRONG_TARGET, 0U, false);
 }
 
 void Daemon::onLocalDisassoc(const Mac &sta) noexcept

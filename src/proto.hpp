@@ -142,6 +142,9 @@ struct ApInfo {
 	FixedString<32U> name{};
 };
 
+// BssInfo::linkId of a BSS that is not affiliated with an AP MLD.
+constexpr std::uint8_t LINK_NONE = 255U;
+
 struct BssInfo {
 	Mac bssid{};
 	std::uint16_t freq{0U};
@@ -155,8 +158,13 @@ struct BssInfo {
 	std::uint32_t bssidInfo{0U}; // 802.11 Neighbor Report BSSID Information
 	std::uint8_t ssidLen{0U};
 	std::array<std::uint8_t, 32U> ssid{};
+	// Wi-Fi 7 MLO: the AP MLD this BSS is a link of (zero: none) and its
+	// link ID. Optional trailing fields of BSS_INFO.
+	Mac mldAddr{};
+	std::uint8_t linkId{LINK_NONE};
 
 	ByteView ssidView() const noexcept { return ByteView(ssid.data(), ssidLen); }
+	bool isMldLink() const noexcept { return !mldAddr.isZero(); }
 };
 
 // Field-wise equality; SSIDs compare up to ssidLen.
@@ -167,6 +175,8 @@ inline bool operator!=(const BssInfo &a, const BssInfo &b) noexcept
 }
 // Same ESS: same SSID.
 bool isSameEss(const BssInfo &a, const BssInfo &b) noexcept;
+// Links of one AP MLD: both affiliated, same MLD address.
+bool isSameMld(const BssInfo &a, const BssInfo &b) noexcept;
 
 struct BssLoad {
 	Mac bssid{};

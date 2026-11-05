@@ -19,7 +19,9 @@ constexpr std::size_t MAX_BSS = 8U;
 constexpr std::size_t MAX_MONITORS = 4U;
 constexpr std::size_t MAX_L2_PORTS = 8U;
 constexpr std::size_t MAX_SIM_PEERS = 16U;
-constexpr std::size_t IF_NAME_MAX = 15U;
+// hostapd control socket name: a netdev name (15) or, for an AP MLD link,
+// "<netdev>_link<id>" (up to 22).
+constexpr std::size_t IF_NAME_MAX = 22U;
 
 using IfName = FixedString<IF_NAME_MAX>;
 using Path = FixedString<107U>;
