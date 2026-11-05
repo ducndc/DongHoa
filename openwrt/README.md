@@ -125,6 +125,53 @@ router:
 3. Run `service donghoa enable && service donghoa restart`, then check with
    `logread -e donghoa` and `donghoa_cli /var/run/donghoa.sock PEERS`.
 
+**Startup race.** If `donghoa_cli ... STATUS` lists fewer BSSes than the
+router actually has right after a restart, hostapd was still bringing the
+others up when the init script's bounded wait (15 s) gave up; the `bss`
+lines it auto-detected are then frozen into `/var/run/donghoa.conf` until
+the next restart. `service donghoa restart` once more, once all of
+`/var/run/hostapd/*` exist, fixes it.
+
+### Adding another AP to the same ESS
+
+Every AP needs: the install above, the **same `key`** (copy the exact value
+from an AP that is already running, do not generate a new one), a
+**different `name`**, and `iface` on a port that reaches the others at
+Layer 2 (same bridge/VLAN, or a backhaul that forwards bridged frames). FT
+`mobility_domain` must also match across every AP's wifi-ifaces. Once both
+are up, `donghoa_cli /var/run/donghoa.sock PEERS` on either one should list
+the other.
+
+If the router's target is not published on downloads.openwrt.org (a
+vendor-only SDK fork, for example), `build.sh` has no SDK to fetch and the
+package/feed flow above does not apply. Cross-compile the two binaries
+directly with that vendor SDK's toolchain instead, from the top of the
+repo:
+
+```sh
+make CXX=<vendor-sdk>/staging_dir/toolchain-*/bin/*-g++ \
+     LDFLAGS="-nostdlib++ -static-libgcc" donghoa donghoa_cli
+make check-deps   # still libc only
+```
+
+`-nostdlib++` and `-static-libgcc` matter on a 32-bit ARM target: without
+them the binary ends up needing `libstdc++.so.6` (for the ARM EABI's
+`__aeabi_atexit`) and `libgcc_s.so.1`, which `check-deps` correctly rejects
+and which are not on the router. Then copy the pieces by hand (no apk/ipk):
+
+```sh
+scp donghoa donghoa_cli root@<ap-ip>:/usr/sbin/
+scp openwrt/donghoa/files/donghoa.init root@<ap-ip>:/etc/init.d/donghoa
+scp /etc/donghoa.conf root@<ap-ip>:/etc/donghoa.conf   # same key, new name
+ssh root@<ap-ip> 'chmod 0755 /usr/sbin/donghoa /usr/sbin/donghoa_cli /etc/init.d/donghoa
+                   chmod 0600 /etc/donghoa.conf
+                   service donghoa enable && service donghoa start'
+```
+
+Start the second AP's policy observe-only (`rssi_steering 0`,
+`band_steering 0`, `load_balancing 0`) until `PEERS`/`STATUS` look right, the
+same way you would for the first one.
+
 **Air monitor (optional).** To steer STAs that give no 802.11k reports, give
 the APs a monitor interface on each radio and name it in the config:
 

@@ -98,30 +98,37 @@ bool hasAttr(ByteView attrs, std::uint16_t type) noexcept
 	return !findAttr(attrs, type).empty();
 }
 
-void parseSurvey(ByteView msg, SurveySample &out) noexcept
+// Accepts this message only if it is the in-use survey entry for wantFreq.
+// A single-link wiphy has at most one in-use entry, but a multi-link (MLO)
+// wiphy marks every concurrently active link's channel in use in the same
+// dump: without the frequency check, whichever entry a vif's ifindex is not
+// actually on would win, giving every BSS on that wiphy the same reading.
+void parseSurvey(ByteView msg, int wantFreq, SurveySample &out) noexcept
 {
 	const ByteView attrs = msg.sub(NL_HDR + GENL_HDR, msg.size() - (NL_HDR + GENL_HDR));
 	const ByteView si = findAttr(attrs, static_cast<std::uint16_t>(NL80211_ATTR_SURVEY_INFO));
 
-	if (!si.empty() && hasAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_IN_USE))) {
-		out = SurveySample{};
-		out.valid = true;
-		const ByteView f = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_FREQUENCY));
-		if (f.size() >= 4U) {
-			out.freq = static_cast<int>(os::loadNe32(f, 0U));
-		}
-		const ByteView n = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_NOISE));
-		if (n.size() >= 1U) {
-			out.noise = static_cast<std::int8_t>(n[0U]);
-		}
-		const ByteView t = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME));
-		if (t.size() >= 8U) {
-			out.activeMs = os::loadNe64(t, 0U);
-		}
-		const ByteView b = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME_BUSY));
-		if (b.size() >= 8U) {
-			out.busyMs = os::loadNe64(b, 0U);
-		}
+	if (si.empty() || !hasAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_IN_USE))) {
+		return;
+	}
+	const ByteView f = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_FREQUENCY));
+	if ((f.size() < 4U) || (static_cast<int>(os::loadNe32(f, 0U)) != wantFreq)) {
+		return;
+	}
+	out = SurveySample{};
+	out.valid = true;
+	out.freq = wantFreq;
+	const ByteView n = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_NOISE));
+	if (n.size() >= 1U) {
+		out.noise = static_cast<std::int8_t>(n[0U]);
+	}
+	const ByteView t = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME));
+	if (t.size() >= 8U) {
+		out.activeMs = os::loadNe64(t, 0U);
+	}
+	const ByteView b = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_TIME_BUSY));
+	if (b.size() >= 8U) {
+		out.busyMs = os::loadNe64(b, 0U);
 	}
 }
 
@@ -162,7 +169,7 @@ bool Survey::open() noexcept
 	return ok;
 }
 
-bool Survey::get(int ifindex, SurveySample &out) noexcept
+bool Survey::get(int ifindex, int wantFreq, SurveySample &out) noexcept
 {
 	std::array<std::uint8_t, 16384U> buf{};
 	std::array<std::uint8_t, 4U> idx{};
@@ -202,7 +209,7 @@ bool Survey::get(int ifindex, SurveySample &out) noexcept
 					ok = false;
 					done = true;
 				} else {
-					parseSurvey(msg, out);
+					parseSurvey(msg, wantFreq, out);
 				}
 			}
 			off += align4(len);

@@ -20,8 +20,10 @@ struct SurveySample {
 class Survey {
 public:
 	bool open() noexcept;
-	// In-use channel survey of ifindex.
-	bool get(int ifindex, SurveySample &out) noexcept;
+	// Survey of ifindex's wantFreq channel. A multi-link (MLO) wiphy marks
+	// every concurrently active link's channel "in use" in the same dump,
+	// so the frequency, not just the in-use flag, picks the right entry.
+	bool get(int ifindex, int wantFreq, SurveySample &out) noexcept;
 	// Channel utilisation 0..255 from two samples, -1 if not computable.
 	static int util(const SurveySample &prev, const SurveySample &cur) noexcept;
 

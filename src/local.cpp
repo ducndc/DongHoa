@@ -214,7 +214,7 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	b.hapdUtil = st->chanUtil;
 	int util = -1;
 	SurveySample cur;
-	if ((b.ifindex != 0) && mSurvey.get(b.ifindex, cur)) {
+	if ((b.ifindex != 0) && mSurvey.get(b.ifindex, st->freq, cur)) {
 		util = Survey::util(b.surveyPrev, cur);
 		b.surveyPrev = cur;
 		b.load.noise = cur.noise;
