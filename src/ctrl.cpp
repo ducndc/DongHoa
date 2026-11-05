@@ -31,10 +31,45 @@ std::string_view bandClass(std::uint8_t advertised, std::uint8_t usable) noexcep
 	return (advertised == 0U) ? std::string_view("unknown") : NAMES[n];
 }
 
+// arcp::CAP_* mask as a comma-joined capability string, "-" for none.
+void capsName(std::uint16_t caps, FixedString<64U> &out) noexcept
+{
+	struct Bit {
+		std::uint16_t mask;
+		std::string_view name;
+	};
+	constexpr std::array<Bit, 9U> BITS{{
+		{arcp::CAP_FT, "ft"},
+		{arcp::CAP_BTM, "btm"},
+		{arcp::CAP_RRM_NR, "rrm_nr"},
+		{arcp::CAP_RRM_BCN, "rrm_bcn"},
+		{arcp::CAP_HT, "ht"},
+		{arcp::CAP_VHT, "vht"},
+		{arcp::CAP_HE, "he"},
+		{arcp::CAP_EHT, "eht"},
+		{arcp::CAP_FT_OVER_DS, "ft_ds"},
+	}};
+	bool any = false;
+
+	out.clear();
+	for (const Bit &x : BITS) {
+		if ((caps & x.mask) != 0U) {
+			formatTo(out, "{}{}", any ? "," : "", x.name);
+			any = true;
+		}
+	}
+	if (!any) {
+		formatTo(out, "-");
+	}
+}
+
 void putBss(Out &o, const arcp::BssInfo &bi, const arcp::BssLoad *bl) noexcept
 {
+	FixedString<64U> caps;
+
+	capsName(bi.caps, caps);
 	formatTo(o, "  bss {} ssid={} ch={} band={} op_class={} mdid={} caps={}", bi.bssid,
-		  SsidText{bi.ssidView()}, bi.channel, bi.band, bi.opClass, hex(bi.mdid, 4U), hex(bi.caps, 4U));
+		  SsidText{bi.ssidView()}, bi.channel, bi.band, bi.opClass, hex(bi.mdid, 4U), caps.view());
 	if (bl != nullptr) {
 		formatTo(o, " sta={} util={}% noise={} accepting={}", bl->staCount, policy::utilToPct(bl->util),
 			  bl->noise, ((bl->flags & arcp::LOAD_ACCEPTING) != 0U) ? 1 : 0);

@@ -1,0 +1,96 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: MIT
+
+# After netifd has brought up wifi (hostapd), which happens at START=20.
+# donghoa retries hostapd control sockets on its own, so order is not critical.
+START=95
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/sbin/donghoa
+CONF=/etc/donghoa.conf
+RUNCONF=/var/run/donghoa.conf
+
+# Value of <key> for BSS <ifname> in the hostapd configs netifd generated
+# from /etc/config/wireless: effective values, defaults included.
+hostapd_bss_get() { # <ifname> <key>
+	awk -F= -v ifn="$1" -v key="$2" '
+		FNR == 1 { cur = 0 }
+		$1 == "interface" || $1 == "bss" { cur = ($2 == ifn) }
+		cur && $1 == key { print $2; exit }
+	' /var/run/hostapd-*.conf 2>/dev/null
+}
+
+# Runtime names of the AP interfaces of /etc/config/wireless. netifd knows
+# them (phy0-ap0 ...) even when UCI sets no ifname.
+wireless_ap_ifnames() {
+	ubus call network.wireless status 2>/dev/null |
+		jsonfilter -e '@.*.interfaces[@.config.mode="ap"].ifname'
+}
+
+# One "bss" line per AP interface whose hostapd control socket exists.
+wireless_bss_lines() {
+	local ifn md max ds
+
+	for ifn in $(wireless_ap_ifnames); do
+		[ -e "/var/run/hostapd/$ifn" ] || continue
+		md=$(hostapd_bss_get "$ifn" mobility_domain)
+		max=$(hostapd_bss_get "$ifn" max_num_sta)
+		ds=$(hostapd_bss_get "$ifn" ft_over_ds)
+		echo "bss $ifn${md:+ mdid=$md}${max:+ max_sta=$max}$([ "$ds" = 1 ] && echo ' ft_over_ds=1')"
+	done
+}
+
+# True when every AP interface netifd reports has a hostapd socket.
+wireless_aps_up() {
+	local ifn n=0
+
+	for ifn in $(wireless_ap_ifnames); do
+		[ -e "/var/run/hostapd/$ifn" ] || return 1
+		n=$((n + 1))
+	done
+	[ $n -gt 0 ]
+}
+
+start_service() {
+	local conf=$CONF lines i=0
+
+	[ -f "$CONF" ] || return 1
+	# No "bss" line: manage every AP interface from /etc/config/wireless.
+	if ! grep -qE '^[[:space:]]*bss[[:space:]]' "$CONF"; then
+		# At boot, or right after a wifi reload, hostapd may still be
+		# bringing interfaces up: wait for all of them (bounded).
+		while ! wireless_aps_up && [ $i -lt 15 ]; do
+			sleep 1
+			i=$((i + 1))
+		done
+		lines=$(wireless_bss_lines)
+		if [ -z "$lines" ]; then
+			logger -t donghoa -p daemon.err "no AP interface of /etc/config/wireless is up"
+			return 1
+		fi
+		{
+			cat "$CONF"
+			echo "# generated from /etc/config/wireless"
+			echo "$lines"
+		} > "$RUNCONF"
+		conf=$RUNCONF
+	fi
+
+	procd_open_instance
+	# -s: syslog with real priorities (logread -e donghoa). Debug a module
+	# at run time with: donghoa_cli /var/run/donghoa.sock LOG debug steer
+	procd_set_param command "$PROG" -s -c "$conf"
+	procd_set_param stderr 1
+	procd_set_param respawn 3600 5 0
+	# Restart on "service donghoa reload" when a config changed.
+	procd_set_param file "$CONF" "$conf"
+	procd_close_instance
+}
+
+service_triggers() {
+	# Wireless changes through uci/LuCI regenerate the bss lines. Wait for
+	# netifd to restart hostapd first (default delay is 1 s).
+	PROCD_RELOAD_DELAY=5000
+	procd_add_reload_trigger "wireless"
+}
