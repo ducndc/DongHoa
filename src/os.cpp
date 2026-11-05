@@ -121,6 +121,13 @@ Millis nowMs() noexcept
 	return (static_cast<Millis>(ts.tv_sec) * 1000U) + (static_cast<Millis>(ts.tv_nsec) / 1000000U);
 }
 
+std::uint64_t nowUs() noexcept
+{
+	timespec ts{};
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (static_cast<std::uint64_t>(ts.tv_sec) * 1000000U) + (static_cast<std::uint64_t>(ts.tv_nsec) / 1000U);
+}
+
 std::int32_t processId() noexcept
 {
 	return getpid(); // pid_t is int on Linux

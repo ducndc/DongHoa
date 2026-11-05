@@ -43,6 +43,7 @@ struct LocalBss {
 	bool up{false};
 	bool secured{false};
 	int ifindex{0};
+	std::optional<std::uint32_t> wiphy{}; // nl80211 radio, for the survey
 	arcp::BssInfo info{};
 	arcp::BssLoad load{};
 	int hapdUtil{-1}; // chan_util_avg from hostapd STATUS, -1 if absent

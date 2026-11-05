@@ -290,7 +290,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | NFR-PRF-1 | The event loop shall wake at least every 100 ms, so that timer resolution is ≤ 100 ms plus processing time. | I |
 | NFR-PRF-2 | A beacon report covering every candidate shall lead to the BTM Request without waiting for the measurement timeout. | T-O (BTM 0.4 ms after the report) |
 | NFR-PRF-3 | A new peer shall be learned within one `hello_interval_ms` of being reachable, and a lost peer forgotten within `peer_timeout_ms`. | T-I 1, I |
-| NFR-PRF-4 | Every blocking call shall be bounded: hostapd command ≤ 1 s, nl80211 survey ≤ 0.5 s per receive. | I |
+| NFR-PRF-4 | Every blocking call shall be bounded: hostapd command ≤ 1 s. The nl80211 survey shall not wait for its reply (it is read from the main loop) and shall be abandoned after 1 s; it shall run once per radio per poll, whatever the number of BSSes on the radio, and the time spent in the driver per dump shall be measured and reported in `STATUS`. | I, T-O |
 
 Measured, not required (hwsim on QEMU): a local band steer, from trigger to
 association, took 397–407 ms. A cross-AP STEER_REQ → STEER_RESP round trip

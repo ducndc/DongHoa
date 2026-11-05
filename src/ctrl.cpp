@@ -149,6 +149,13 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		for (std::size_t i = 0U; i < mNAmon; i++) {
 			formatTo(o, "air_monitor={}\n", mAmon[i].name);
 		}
+		if (mSurvey.isOpen()) {
+			const SurveyStats &ss = mSurvey.stats();
+			formatTo(o, "survey=nl80211 radios={} dumps={} last_us={} max_us={} timeouts={} errors={}\n",
+				  ss.radios, ss.dumps, ss.lastUs, ss.maxUs, ss.timeouts, ss.errors);
+		} else {
+			formatTo(o, "survey=off (hostapd chan_util_avg only)\n");
+		}
 		for (std::size_t i = 0U; i < mNBss; i++) {
 			formatTo(o, "{} {}\n", mBss[i].cfg->ifname, mBss[i].up ? "up" : "down");
 			if (mBss[i].up) {

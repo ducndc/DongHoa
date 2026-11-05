@@ -30,7 +30,7 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 | `policy` | Pure decision functions: triggers, candidate scoring (linear or expected-throughput model), admission, backoff. |
 | `l2` | Raw `AF_PACKET` ports and UDP "sim" ports for tests. |
 | `hapd` | hostapd control interface (commands, events), with the reply parsers in `hapd_parse`. |
-| `survey` | nl80211 `GET_SURVEY` over raw generic netlink for channel utilisation and noise. |
+| `survey` | nl80211 `GET_SURVEY` over raw generic netlink for channel utilisation and noise: asynchronous (reply read from the main loop), one dump per radio per poll, time spent in the driver measured (`donghoa_cli STATUS`: `survey=nl80211 radios= dumps= last_us= max_us= timeouts= errors=`). |
 | `msg` | Periodic broadcasts, reliable unicast (ACK_REQ, retransmit), RX dispatch, learning the path to each peer. |
 | `peer` | Peer table, replay window, remote BSS and load, remote STA locations, expiry. |
 | `local` | Polls hostapd (`STATUS`, `STA-FIRST/NEXT`, `GET_CONFIG`) and nl80211; keeps the STA table (EWMA of RSSI, throughput); handles hostapd events; installs local sibling and remote BSSes into hostapd's neighbor database (`SET_NEIGHBOR` / `REMOVE_NEIGHBOR`). |
@@ -160,8 +160,11 @@ builds may differ:
   units, e.g. `217 mcs 2 shortGI`), `ext_capab`, and `AKMSuiteSelector`
   printed as `00-0f-ac-4`. Verified.
 - `STA` field `supp_op_classes` (hex of the element body, Current Operating
-  Class first): present in hostapd 2025.03 `ctrl_iface_ap.c`; not yet checked
-  on the OpenWrt build.
+  Class first): present in hostapd 2025.03 `ctrl_iface_ap.c`. Verified on the
+  OpenWrt build: wpa_supplicant's hwsim STA shows `adv=2g,5g,6g`.
+- 11k/v events dumped by `rrm_log`: `BEACON-REQ-TX-STATUS <sta> <token>
+  ack=<0|1>` and `BSS-TM-RESP <sta> status_code=…` (no `dialog_token=` on
+  that build). Verified on the OpenWrt build.
 - `STATUS` field `chan_util_avg`, used only when the nl80211 survey is not
   available. Verified present.
 - The `BEACON-RESP-RX` hex payload starts at the Beacon Report's Operating

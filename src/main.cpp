@@ -13,7 +13,7 @@ constexpr LogModule LOG_MODULE{LogModule::MAIN};
 constexpr int LOOP_TICK_MS = 100;
 
 // Owner of each polled descriptor.
-enum class Src : std::uint8_t { L2, HAPD, CTRL, AMON };
+enum class Src : std::uint8_t { L2, HAPD, CTRL, AMON, SURVEY };
 
 } // namespace
 
@@ -107,6 +107,7 @@ void Daemon::runTimers() noexcept
 	}
 	tickSteer(now);
 	tickAmon(now);
+	mSurvey.tick(now);
 	retransmit(now);
 	expirePeers(now);
 }
@@ -138,6 +139,7 @@ void Daemon::run() noexcept
 		for (std::size_t i = 0U; i < mNAmon; i++) {
 			add(mAmon[i].fd.get(), Src::AMON, i);
 		}
+		add(mSurvey.pollFd(), Src::SURVEY, 0U);
 		if (!os::pollReadable(fds, n, LOOP_TICK_MS, ready)) {
 			logging::err(LOG_MODULE, "poll: {}", os::lastError());
 			break;
@@ -171,6 +173,9 @@ void Daemon::run() noexcept
 				break;
 			case Src::AMON:
 				receiveAmon(idx[k]);
+				break;
+			case Src::SURVEY:
+				mSurvey.onReadable();
 				break;
 			default:
 				break;

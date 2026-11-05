@@ -181,6 +181,15 @@ void Daemon::refreshBss(std::size_t i) noexcept
 		markBssDown(i);
 		return;
 	}
+	if (!wasUp) {
+		// hostapd may have recreated the interface: look it up again
+		b.ifindex = os::ifnameToIndex(b.cfg->ifname.cStr());
+		b.wiphy = mSurvey.findWiphy(b.ifindex);
+		b.surveyPrev = SurveySample{};
+		if (b.wiphy.has_value()) {
+			logging::dbg(LOG_MODULE, "bss {}: ifindex {} on wiphy {}", b.cfg->ifname, b.ifindex, *b.wiphy);
+		}
+	}
 	if (!wasUp && b.hapd.runCommand("GET_CONFIG", reply)) {
 		const std::optional<long> wpa = getKvInt(reply.view(), "wpa");
 		b.secured = wpa.has_value() && (*wpa != 0);
@@ -211,16 +220,28 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	b.info.ssidLen = st->ssidLen;
 	b.info.ssid = st->ssid;
 
+	// Utilisation from the radio's survey (asynchronous: the dump asked on
+	// the previous poll), else from hostapd's chan_util_avg. A survey that
+	// is fresh but has no new dump yet keeps the last value.
 	b.hapdUtil = st->chanUtil;
 	int util = -1;
-	SurveySample cur;
-	if ((b.ifindex != 0) && mSurvey.get(b.ifindex, st->freq, cur)) {
-		util = Survey::util(b.surveyPrev, cur);
-		b.surveyPrev = cur;
-		b.load.noise = cur.noise;
+	const Millis now = os::nowMs();
+	const Millis stale = (3U * static_cast<Millis>(mCfg.staPollMs)) + Survey::DUMP_TIMEOUT_MS;
+	const SurveySample *const cur = b.wiphy.has_value() ? mSurvey.find(*b.wiphy, st->freq) : nullptr;
+	const bool fromSurvey = (cur != nullptr) && ((now - cur->ts) < stale);
+	bool newSample = false;
+	if (fromSurvey && (cur->ts != b.surveyPrev.ts)) {
+		newSample = true;
+		util = Survey::util(b.surveyPrev, *cur);
+		b.surveyPrev = *cur;
+		b.load.noise = cur->noise;
 	}
-	if (util < 0) {
+	// No survey, or counters that do not grow (a driver that clears them on read)
+	if ((util < 0) && (!fromSurvey || newSample)) {
 		util = b.hapdUtil;
+	}
+	if (b.wiphy.has_value()) {
+		mSurvey.request(*b.wiphy, b.ifindex); // one dump per radio per round
 	}
 	if (util > 254) {
 		util = 254; // 255 means "unknown" on the wire

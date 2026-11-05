@@ -21,6 +21,8 @@ namespace os {
 
 // Monotonic clock in milliseconds.
 Millis nowMs() noexcept;
+// Monotonic clock in microseconds (timing of driver calls).
+std::uint64_t nowUs() noexcept;
 std::int32_t processId() noexcept;
 std::optional<std::uint32_t> randomU32() noexcept;
 

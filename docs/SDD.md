@@ -84,7 +84,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `hapd_parse.{hpp,cpp}` | pure | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
 | `l2.{hpp,cpp}` | I/O | `AF_PACKET` ports and UDP sim ports | `L2::addIface`, `addSim`, `send`, `recv` | IR-8, IR-11 |
 | `hapd.{hpp,cpp}` | I/O | hostapd command and event sockets | `hapd::Conn::open`, `runCommand`, `recvEvent` | IR-2 |
-| `survey.{hpp,cpp}` | I/O | Minimal genetlink client for `NL80211_CMD_GET_SURVEY` | `Survey::open`, `get`, `util` | IR-6, FR-MON-4 |
+| `survey.{hpp,cpp}` | I/O | Minimal genetlink client for `NL80211_CMD_GET_SURVEY`, asynchronous, one dump per radio | `Survey::open`, `findWiphy`, `request`, `onReadable`, `tick`, `find`, `util` | IR-6, FR-MON-4, NFR-PRF-4 |
 | `amon.cpp` | I/O + coord. | Air monitor: BPF-filtered radiotap sockets, STA watches on request, STA_MONITOR_REQ/REPORT, monitor results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
 | `ctrl.cpp` | I/O | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
 | `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
@@ -148,7 +148,8 @@ blocking calls are:
 |---|---|---|
 | `hapd::Conn::runCommand` (send + wait for reply) | 1 s (`CMD_TIMEOUT_MS`) | Connection closed; BSS marked down at the next poll; reconnect after 5 s |
 | `hapd::Conn::open` ATTACH reply | 1 s | Open fails; retried after 5 s |
-| `Survey::get` receive | 0.5 s per `poll` | Sample invalid; hostapd utilisation used instead |
+| `Survey::findWiphy` reply (only when a BSS comes up) | 0.5 s | No wiphy: hostapd utilisation used for that BSS |
+| Survey dump in flight (not waited for: read from the main `poll()`) | 1 s (`DUMP_TIMEOUT_MS`), checked by `Survey::tick` | Dump abandoned, socket reopened (ends the kernel's dump, drops late replies); hostapd utilisation used until a fresh sample |
 
 A healthy hostapd answers in well under a millisecond, so one poll costs about
 (1 + STAs) command round trips per BSS. If hostapd hangs, each BSS can stall
@@ -303,6 +304,18 @@ command socket are skipped.
    samples on the same frequency. Without it, hostapd's `chan_util_avg` is
    used. The value is clamped to 254, smoothed with an EWMA of ¾ old value,
    and 255 means unknown [FR-MON-4].
+   The survey is asynchronous and per radio. When a BSS comes up, its
+   ifindex and wiphy are looked up again (`NL80211_CMD_GET_INTERFACE`;
+   hostapd may have recreated the interface). Each poll uses the sample of
+   the dump requested on the previous poll and then calls
+   `Survey::request(wiphy, ifindex)`; BSSes of one wiphy share one dump. The
+   reply is read in the main loop (`Src::SURVEY`). A sample older than
+   3 × `sta_poll_interval_ms` + 1 s counts as no survey. Counters that do not
+   grow (a driver that clears them on read) fall back to hostapd.
+   The kernel runs the driver's `get_survey`, once per channel of the
+   radio, inside the `sendto()`/`recv()` calls, so a slow driver still holds
+   the loop for that time. It is measured per dump and shown in `STATUS`
+   (`survey=nl80211 … last_us= max_us=`); a dump over 20 ms is logged once.
 4. `bss_load`, including `accepting` = `policy::admit(...) == ACCEPT` with the
    current reservations counted [FR-ADM-2].
 5. If the BSS came up or its info changed, clear every remote
