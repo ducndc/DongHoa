@@ -115,6 +115,7 @@ struct Sta {
 	int lpS100{policy::LP_NO_EVIDENCE}; // last behaviour score S x 100
 	std::uint32_t lpSamples{0U}; // evidence behind lpScore (carried across APs)
 	bool lowPower{false};
+	std::uint8_t phyCaps{0U};  // arcp::CAP_VHT/CAP_HE/CAP_EHT it negotiated
 };
 
 // Device class of a STA, kept by every AP so that it follows the STA

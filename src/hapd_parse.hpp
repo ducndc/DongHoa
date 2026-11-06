@@ -57,6 +57,11 @@ struct Sta {
 	bool ft{false};
 	std::uint8_t bands{0U}; // rrm::BANDS_* from supp_op_classes, 0 if absent
 	bool akmNo6g{false};    // its AKM is not allowed on 6 GHz (WPA2-PSK)
+	// From flags=[...]: arcp::CAP_VHT/CAP_HE/CAP_EHT bits it negotiated.
+	// HT is common even on cheap IoT silicon; VHT/HE/EHT need meaningfully
+	// more RF complexity and power, so devclass.cpp treats any of them as
+	// ruling out a low-power classification outright.
+	std::uint8_t phyCaps{0U};
 	// Wi-Fi 7 MLO: an MLD STA (addr is its MLD address) lists its links
 	// as peer_addr[<link id>]=<link address>.
 	bool mld{false};

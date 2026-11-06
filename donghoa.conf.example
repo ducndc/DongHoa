@@ -109,6 +109,9 @@ ctrl_socket /var/run/donghoa.sock
 #lp_hysteresis 10        # back to normal below lp_threshold - this
 #lp_score_max 120        # score bound
 #lp_min_samples 10       # traffic samples before S counts
+#lp_max_mean_bps 20000   # above this mean uplink rate, S is not evidence
+                         # either way (a real transfer looks like a sensor
+                         # burst by shape, but moves far more data); 0 disables
 #lp_alpha_2g 100         # alpha x 100 per band
 #lp_alpha_5g 100
 #lp_alpha_6g 100

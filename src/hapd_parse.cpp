@@ -169,6 +169,15 @@ std::optional<Sta> parseSta(std::string_view buf) noexcept
 		const std::optional<std::string_view> flags = getKv(buf, "flags");
 		if (flags.has_value()) {
 			s.authorized = flags->find("[AUTHORIZED]") != std::string_view::npos;
+			if (flags->find("[VHT]") != std::string_view::npos) {
+				s.phyCaps = static_cast<std::uint8_t>(s.phyCaps | arcp::CAP_VHT);
+			}
+			if (flags->find("[HE]") != std::string_view::npos) {
+				s.phyCaps = static_cast<std::uint8_t>(s.phyCaps | arcp::CAP_HE);
+			}
+			if (flags->find("[EHT]") != std::string_view::npos) {
+				s.phyCaps = static_cast<std::uint8_t>(s.phyCaps | arcp::CAP_EHT);
+			}
 		}
 		const std::optional<long> sig = getKvInt(buf, "signal");
 		if (sig.has_value()) {

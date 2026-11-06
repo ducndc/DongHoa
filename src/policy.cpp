@@ -293,8 +293,13 @@ int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t 
 	const std::uint64_t su = isqrt(t.up.m2);
 	const std::uint64_t sd = isqrt(t.down.m2);
 	const bool enough = (p.lpMinSamples <= 1) || (t.n >= static_cast<std::uint32_t>(p.lpMinSamples));
+	// Asymmetry alone does not tell low-power traffic from a real transfer
+	// (a backup or AirDrop upload is "bursty up, quiet down" too, just at
+	// 1000x the scale): gate on the mean uplink rate actually seen.
+	const std::uint64_t meanUp = (t.up.mean16 <= 0) ? 0U : (static_cast<std::uint64_t>(t.up.mean16) / 16U);
+	const bool small = (p.lpMaxMeanBps <= 0) || (meanUp <= static_cast<std::uint64_t>(p.lpMaxMeanBps));
 
-	if (!enough || ((su == 0U) && (sd == 0U))) {
+	if (!enough || !small || ((su == 0U) && (sd == 0U))) {
 		r = LP_NO_EVIDENCE;
 	} else if (sd == 0U) {
 		r = LP_S_MAX;

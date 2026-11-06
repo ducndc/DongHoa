@@ -76,6 +76,7 @@ BM0, BM1 = "02:00:00:00:01:10", "02:00:00:00:01:11"  # its links: 0 = 5 GHz ch 4
 STA10_MAC = "aa:bb:cc:dd:ee:10"  # MLD STA (MLD address)
 STA11_MAC = "aa:bb:cc:dd:ee:11"  # IoT sensor: bursty uplink, little downlink
 STA12_MAC = "aa:bb:cc:dd:ee:12"  # phone: bursty downlink
+STA13_MAC = "aa:bb:cc:dd:ee:13"  # VHT/HE phone with sensor-shaped traffic: never low-power
 # Extra config lines for every AP, ";"-separated, e.g. "score_model 1".
 EXTRA = os.environ.get("DONGHOA_ITEST_EXTRA", "").replace(";", "\n")
 
@@ -179,9 +180,13 @@ def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
     line = lambda sock, mac: next((l for l in cli(sock, "STAS").splitlines() if l.startswith("sta " + mac)), "")
     sensor = Sta(STA11_MAC, -50, {B2: (124, 149, -55)}, traffic=sensor_traffic)
     phone = Sta(STA12_MAC, -50, {}, traffic=phone_traffic)
+    # Same bursty-up/quiet-down shape as the sensor, but VHT/HE: a real
+    # transfer or background chatter from capable hardware, never low-power.
+    capable = Sta(STA13_MAC, -50, {}, traffic=sensor_traffic, phy_caps=["VHT", "HE"])
     with world.lock:
         ap1.add_sta(sensor)
         ap1.add_sta(phone)
+        ap1.add_sta(capable)
     # lp_min_samples 3 + lp_threshold 8 + 1 polls of 200 ms
     wait_for(lambda: "class=low-power" in line(socks[0], STA11_MAC), 6, "AP1 to classify the sensor")
     wait_for(lambda: STA11_MAC + " class=low-power" in cli(socks[1], "DEVCLASS"), 3,
@@ -189,6 +194,10 @@ def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
     time.sleep(1.0)
     assert "class=normal lp_score=0/8" in line(socks[0], STA12_MAC), line(socks[0], STA12_MAC)
     assert STA12_MAC not in cli(socks[1], "DEVCLASS"), "an unchanged (normal) class is not sent"
+    assert "class=normal" in line(socks[0], STA13_MAC), line(socks[0], STA13_MAC)
+    assert STA13_MAC not in cli(socks[1], "DEVCLASS"), "VHT/HE overrides a sensor-shaped traffic score"
+    with world.lock:
+        ap1.remove_sta(capable)
     # Weak signal, better AP in view: a normal STA would roam; this one is low-power.
     n_btm = len(world.btm_log)
     sensor.signal = -85

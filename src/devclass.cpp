@@ -104,9 +104,42 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 	if (!p.lpClassify || (dtMs == 0U)) {
 		return;
 	}
+	// VHT/HE/EHT need meaningfully more RF complexity and power than a
+	// battery sensor carries: such a STA is never low-power, whatever its
+	// traffic looks like. A STA already (mis)classified before this
+	// capability was known is corrected immediately, not just frozen.
+	if ((s.phyCaps & (arcp::CAP_VHT | arcp::CAP_HE | arcp::CAP_EHT)) != 0U) {
+		if (s.lowPower) {
+			s.lowPower = false;
+			s.lpScore = 0;
+			s.lpS100 = policy::LP_NO_EVIDENCE;
+			// onStaClass only accepts a record with a strictly larger
+			// sample count (that is how it tells a correction from the
+			// same stale record coming back); bump it so the correction
+			// is not silently dropped by a peer holding the old count.
+			s.lpSamples++;
+			logging::info(LOG_MODULE, "sta {} classified normal (VHT/HE/EHT capable, overrides traffic shape)",
+				      s.addr);
+			const DevClassRec &r = storeDevClass(s.addr, false, 0, s.lpSamples, mApId);
+			for (const Peer &peer : mPeers) {
+				if (peer.used) {
+					sendStaClass(peer.id, r);
+				}
+			}
+		}
+		return;
+	}
 	const std::uint8_t band = mBss[s.bss].info.band;
-	policy::addTrafficSample(s.traffic, perSecond(upBytes, dtMs), perSecond(downBytes, dtMs));
+	const std::uint64_t upBps = perSecond(upBytes, dtMs);
+	const std::uint64_t downBps = perSecond(downBytes, dtMs);
+	policy::addTrafficSample(s.traffic, upBps, downBps);
 	s.lpS100 = policy::lpBehaviourScore(p, s.traffic, band);
+	logging::dbg(LOG_MODULE,
+		     "sta {}: up={}Bps down={}Bps meanUp={}Bps meanDown={}Bps sigmaUp={} sigmaDown={} n={} s100={} "
+		     "score={}",
+		     s.addr, upBps, downBps, s.traffic.up.mean16 / 16, s.traffic.down.mean16 / 16,
+		     policy::isqrt(s.traffic.up.m2), policy::isqrt(s.traffic.down.m2), s.traffic.n, s.lpS100,
+		     s.lpScore);
 	if (s.lpS100 == policy::LP_NO_EVIDENCE) {
 		return;
 	}
@@ -204,7 +237,11 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		}
 	}
 	for (const DevClassRec &r : mDevClass) {
-		if (!r.used || !r.lowPower) {
+		// Not just low-power: a peer that rejoins after missing the one-
+		// shot correction (its own restart raced the broadcast) must also
+		// be able to learn "normal now", or it is stuck with a stale flag
+		// forever (no expiry, nothing else triggers a re-send to it).
+		if (!r.used) {
 			continue;
 		}
 		if ((n > 0U) && (m.room() < (arcp::TLV_HDR_LEN + 15U))) {
@@ -216,7 +253,7 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		}
 		arcp::StaClass c;
 		c.sta = r.sta;
-		c.devClass = static_cast<std::uint8_t>(arcp::DevClass::LOW_POWER);
+		c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER : arcp::DevClass::NORMAL);
 		c.score = static_cast<std::int32_t>(r.score);
 		c.samples = r.samples;
 		(void)m.add(c);
@@ -227,7 +264,7 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		(void)unicast(peer, m);
 	}
 	if (total > 0U) {
-		logging::dbg(LOG_MODULE, "sent {} low-power records to AP {}", total, peer);
+		logging::dbg(LOG_MODULE, "sent {} class records to AP {}", total, peer);
 	}
 }
 

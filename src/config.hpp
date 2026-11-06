@@ -93,6 +93,11 @@ struct PolicyConfig {
 	int lpHysteresis{10};    // low-power ends when theta < delta - this
 	int lpScoreMax{120};     // theta is kept in 0..this
 	int lpMinSamples{10};    // traffic samples before S counts
+	// A low-power device's traffic is small in absolute terms, not just
+	// asymmetric: a phone doing a large upload (backup, AirDrop) looks
+	// exactly as "bursty up, quiet down" as a sensor while moving 1000x
+	// the data. Above this mean uplink rate, S is not evidence either way.
+	int lpMaxMeanBps{20000}; // bytes/s; 0 disables the gate
 	int lpAlpha2g{100};      // alpha x 100 on 2.4 GHz
 	int lpAlpha5g{100};      // alpha x 100 on 5 GHz
 	int lpAlpha6g{100};      // alpha x 100 on 6 GHz

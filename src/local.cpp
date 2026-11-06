@@ -233,6 +233,9 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcep
 	if (h.bands != 0U) {
 		s.bandsAdv = h.bands;
 	}
+	if (h.phyCaps != 0U) {
+		s.phyCaps = h.phyCaps;
+	}
 	s.bandsBlocked = h.akmNo6g ? rrm::BANDS_6G : static_cast<std::uint8_t>(0U);
 	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | rrm::bandBit(mBss[bss].info.band));
 	s.flags = 0U;

@@ -51,7 +51,7 @@ constexpr std::array<PolBool, 10U> POL_BOOLS{{
 	{"lp_no_steer", &PolicyConfig::lpNoSteer},
 }};
 
-constexpr std::array<PolInt, 37U> POL_INTS{{
+constexpr std::array<PolInt, 38U> POL_INTS{{
 	{"rssi_low", &PolicyConfig::rssiLow},
 	{"rssi_low_count", &PolicyConfig::rssiLowCount},
 	{"rssi_hysteresis", &PolicyConfig::rssiHysteresis},
@@ -86,6 +86,7 @@ constexpr std::array<PolInt, 37U> POL_INTS{{
 	{"lp_hysteresis", &PolicyConfig::lpHysteresis},
 	{"lp_score_max", &PolicyConfig::lpScoreMax},
 	{"lp_min_samples", &PolicyConfig::lpMinSamples},
+	{"lp_max_mean_bps", &PolicyConfig::lpMaxMeanBps},
 	{"lp_alpha_2g", &PolicyConfig::lpAlpha2g},
 	{"lp_alpha_5g", &PolicyConfig::lpAlpha5g},
 	{"lp_alpha_6g", &PolicyConfig::lpAlpha6g},

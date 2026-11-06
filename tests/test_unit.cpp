@@ -361,9 +361,13 @@ void testHapdParsers()
 		CHECK(s->btmKnown && s->btm && s->ftKnown && s->ft);
 		CHECK(s->bands == (rrm::BANDS_2G | rrm::BANDS_5G));
 		CHECK(s->akmNo6g); // FT-PSK
+		CHECK(s->phyCaps == arcp::CAP_VHT); // [HT][VHT]: HT is not tracked, no [HE]/[EHT]
 	}
 	const std::optional<hapd::Sta> s2 = hapd::parseSta("aa:bb:cc:dd:ee:02\nsignal=-40\n");
-	CHECK(s2.has_value() && (s2->bands == 0U));
+	CHECK(s2.has_value() && (s2->bands == 0U) && (s2->phyCaps == 0U));
+	const std::optional<hapd::Sta> s3 =
+		hapd::parseSta("aa:bb:cc:dd:ee:03\nflags=[AUTH][ASSOC][AUTHORIZED][HE][EHT]\n");
+	CHECK(s3.has_value() && (s3->phyCaps == (arcp::CAP_HE | arcp::CAP_EHT)));
 	CHECK(!hapd::parseSta("FAIL\n").has_value());
 	CHECK(!hapd::parseSta("").has_value());
 
@@ -991,6 +995,21 @@ void testLowPower()
 	}
 	CHECK(lowS && !lowP && (thP == 0));
 	CHECK(when == (p.lpMinSamples - 1) + p.lpThreshold + 1);
+
+	// A big, bursty upload (device backup, AirDrop) has the same shape as
+	// the sensor above (bursty up, quiet down, S > 1 on every burst) but
+	// moves 500x the data: never low-power, because lp_max_mean_bps gates
+	// on the mean uplink rate actually seen, not just its shape.
+	policy::TrafficStats bigUpload;
+	int thU = 0;
+	bool lowU = false;
+	for (int i = 0; i < 300; i++) {
+		const bool burst = (i % 5) == 0;
+		policy::addTrafficSample(bigUpload, burst ? 2000000U : 1000U, burst ? 200U : 20U);
+		thU = policy::updateLpScore(p, thU, policy::lpBehaviourScore(p, bigUpload, arcp::BAND_2G));
+		lowU = policy::isLowPower(p, thU, lowU);
+	}
+	CHECK(!lowU && (thU == 0));
 
 	// STA_CLASS TLV round trip; a longer TLV from a newer peer decodes
 	arcp::StaClass c;
