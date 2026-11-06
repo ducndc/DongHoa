@@ -203,6 +203,10 @@ struct SteerTxn {
 	std::size_t cur{MAX_CAND}; // candidate in negotiation / BTM; MAX_CAND = none
 	bool bcnOutstanding{false}; // 11k request sent, no report or refusal yet
 	bool amonPending{false};    // air monitor reports requested
+	// APs whose STA_MONITOR_STATUS MEASURE still waits for (this AP's own
+	// id for its local watch); MEASURE may end when the list is empty.
+	std::array<Mac, MAX_PEERS + 1U> monWait{};
+	std::size_t nMonWait{0U};
 	bool anyMeasured{false};    // some candidate had a level at evaluate()
 	bool staMld{false};         // MLD STA (kept: its entry may go before the outcome)
 	Mac forcedTarget{};         // manual steer target, zero = any
@@ -251,6 +255,8 @@ struct AmonWatch {
 	std::uint32_t txn{0U};
 	Millis until{0U};
 	std::array<AmonAcc, WATCH_FREQS> acc{};
+	std::uint32_t vendorBss{0U}; // local BSSes measuring with the driver API (bit = index)
+	bool vendorFailed{false};    // the driver API returned an error
 };
 
 std::string_view steerStateName(SteerState s) noexcept;
@@ -327,10 +333,14 @@ public:
 	void initAmon() noexcept;
 	void receiveAmon(std::size_t port) noexcept;
 	void tickAmon(Millis now) noexcept;
-	bool startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn,
-			      int durationMs) noexcept;
+	// MEASURED: the watch started; otherwise why this AP cannot measure.
+	arcp::MonitorStatus startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn, int durationMs,
+					   std::uint8_t opClass, std::uint8_t channel) noexcept;
+	// Monitor interface or driver RSSI API present (AP_FLAG_AIR_MONITOR).
+	bool canMeasureStas() const noexcept;
 	void onAmonReq(const Peer &from, const arcp::StaMonitorReq &r) noexcept;
 	void onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noexcept;
+	void onAmonStatus(const Mac &from, const arcp::StaMonitorStatus &r) noexcept;
 
 	// ---- devclass.cpp ----
 	// One poll's traffic of a local STA: up/down bytes over dtMs.
@@ -383,7 +393,7 @@ private:
 	void evaluate(SteerTxn &t) noexcept;
 	void buildPool(SteerTxn &t) noexcept;
 	bool requestBeacons(SteerTxn &t, Sta &s) noexcept;
-	std::size_t requestMonitors(const SteerTxn &t, const Sta &s) noexcept;
+	std::size_t requestMonitors(SteerTxn &t, const Sta &s) noexcept;
 	bool isMeasureComplete(const SteerTxn &t, const Sta &s) const noexcept;
 	SteerTxn *findTxnById(std::uint32_t id) noexcept;
 	// amon.cpp helpers

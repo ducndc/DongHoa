@@ -31,7 +31,7 @@ make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa dongho
 
 The unit tests form one binary with no filter. To focus on one area,
 comment out calls in `main()` of `tests/test_unit.cpp`. Run `make itest`
-after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 10`.
+after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 11`.
 
 ## Architecture essentials
 
@@ -50,8 +50,10 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 10`.
   logic in `policy.cpp` and new 802.11 byte layouts in `rrm.cpp`.
 - **I/O layer:** `l2.cpp` (raw sockets), `hapd.cpp` (hostapd control socket),
   `survey.cpp` (nl80211 via raw genetlink; deliberately no libnl dependency),
-  `amon.cpp` (radiotap air monitors; the frame parser itself is pure, in
-  `rrm.cpp`) and `ctrl.cpp`.
+  `amon.cpp` (radiotap air monitors and the driver per-STA RSSI API; the
+  frame parser itself is pure, in `rrm.cpp`), `vendor_rssi.cpp` (that driver
+  API: vendor placeholder marked TODO(vendor), plus the `sta_rssi_sim` file
+  simulation the itest uses) and `ctrl.cpp`.
 - **Steering transaction:** `steer.cpp` runs MEASURE → NEGOTIATE → BTM → ROAM.
   NEGOTIATE (STEER_REQ/RESP with the target AP) is skipped for this AP's own
   sibling BSSes. Success means a `STA_EVENT` assoc arrives from the target. On

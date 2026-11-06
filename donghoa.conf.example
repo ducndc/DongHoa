@@ -97,6 +97,11 @@ ctrl_socket /var/run/donghoa.sock
 #amon_request 1          # ask peers' monitors when steering (in parallel with 11k)
 #amon_duration_ms 1000   # watch time per request
 #amon_rssi_offset 0      # dB added to monitor (uplink) RSSI
+# The driver's per-STA RSSI API: the STA's MAC address is passed to the
+# Wi-Fi driver, which measures that STA's frames on each BSS's radio. The
+# vendor implementation (src/vendor_rssi.cpp) is a placeholder until the
+# chipset API is documented: until then this AP answers "unsupported".
+#sta_rssi_api 0
 
 # ---- low-power (IoT) device classification ----
 # Per STA poll: S = alpha(band) x sigma_up / sigma_down of its traffic.

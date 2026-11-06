@@ -285,6 +285,17 @@ bool Message::add(const StaMonitorResult &v) noexcept
 	return putTlv(Tlv::STA_MONITOR_RESULT, viewOf(b));
 }
 
+bool Message::add(const StaMonitorStatus &v) noexcept
+{
+	std::array<std::uint8_t, 11U> b{};
+	const ByteSpan s = spanOf(b);
+
+	putBe32(s, 0U, v.txn);
+	putMac(s, 4U, v.sta);
+	b[10U] = v.status;
+	return putTlv(Tlv::STA_MONITOR_STATUS, viewOf(b));
+}
+
 bool Message::add(const StaClass &v) noexcept
 {
 	std::array<std::uint8_t, 15U> b{};
@@ -562,6 +573,31 @@ bool decode(ByteView v, StaMonitorResult &o) noexcept
 	return ok;
 }
 
+bool decode(ByteView v, StaMonitorStatus &o) noexcept
+{
+	bool ok = v.size() >= 11U;
+	if (ok) {
+		o.txn = getBe32(v, 0U);
+		o.sta = getMac(v, 4U);
+		o.status = v[10U];
+	}
+	return ok;
+}
+
+std::string_view monitorStatusName(std::uint8_t status) noexcept
+{
+	std::string_view n = "?";
+	switch (status) {
+	case static_cast<std::uint8_t>(MonitorStatus::MEASURED): n = "measured"; break;
+	case static_cast<std::uint8_t>(MonitorStatus::NOT_HEARD): n = "not heard"; break;
+	case static_cast<std::uint8_t>(MonitorStatus::UNSUPPORTED): n = "unsupported"; break;
+	case static_cast<std::uint8_t>(MonitorStatus::BUSY): n = "busy"; break;
+	case static_cast<std::uint8_t>(MonitorStatus::FAILED): n = "failed"; break;
+	default: break;
+	}
+	return n;
+}
+
 bool decode(ByteView v, StaClass &o) noexcept
 {
 	bool ok = v.size() >= 15U;
@@ -622,6 +658,7 @@ std::string_view tlvName(std::uint8_t type) noexcept
 	case raw(Tlv::ACK): n = "ACK"; break;
 	case raw(Tlv::STA_MONITOR_REQ): n = "STA_MONITOR_REQ"; break;
 	case raw(Tlv::STA_MONITOR_RESULT): n = "STA_MONITOR_RESULT"; break;
+	case raw(Tlv::STA_MONITOR_STATUS): n = "STA_MONITOR_STATUS"; break;
 	case raw(Tlv::AUTH): n = "AUTH"; break;
 	default: break;
 	}

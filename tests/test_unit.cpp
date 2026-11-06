@@ -647,8 +647,12 @@ void testAirMonitor()
 	rs.ageMs = 120U;
 	rs.sta = ta;
 	rs.bssid = origin;
+	arcp::StaMonitorStatus st;
+	st.txn = 9U;
+	st.sta = ta;
+	st.status = static_cast<std::uint8_t>(arcp::MonitorStatus::UNSUPPORTED);
 	m.begin(arcp::MsgType::STA_MONITOR_REPORT, 0U, origin, 1U, 1U);
-	CHECK(m.add(rq) && m.add(rs));
+	CHECK(m.add(rq) && m.add(rs) && m.add(st));
 	CHECK(m.finish(ByteView()));
 	const std::optional<arcp::Header> h = arcp::parseHeader(m.bytes());
 	CHECK(h.has_value());
@@ -663,7 +667,24 @@ void testAirMonitor()
 		CHECK(rd.next(t, v) && t == arcp::raw(arcp::Tlv::STA_MONITOR_RESULT) && arcp::decode(v, rso));
 		CHECK(rso.rssi == -61 && rso.samples == 42U && rso.ageMs == 120U && rso.bssid == origin);
 		CHECK(!arcp::decode(v.first(20U), rso));
+		arcp::StaMonitorStatus sto;
+		CHECK(rd.next(t, v) && t == arcp::raw(arcp::Tlv::STA_MONITOR_STATUS) && arcp::decode(v, sto));
+		CHECK(sto.txn == 9U && sto.sta == ta &&
+		      sto.status == static_cast<std::uint8_t>(arcp::MonitorStatus::UNSUPPORTED));
+		CHECK(!arcp::decode(v.first(10U), sto));
 	}
+	// a longer STA_MONITOR_STATUS from a newer peer still decodes
+	{
+		std::array<std::uint8_t, 14U> longer{};
+		longer[3U] = 7U; // txn 7
+		longer[10U] = static_cast<std::uint8_t>(arcp::MonitorStatus::BUSY);
+		arcp::StaMonitorStatus sto;
+		CHECK(arcp::decode(viewOf(longer), sto) && sto.txn == 7U &&
+		      sto.status == static_cast<std::uint8_t>(arcp::MonitorStatus::BUSY));
+	}
+	CHECK(arcp::monitorStatusName(static_cast<std::uint8_t>(arcp::MonitorStatus::NOT_HEARD)) == "not heard");
+	CHECK(arcp::monitorStatusName(99U) == "?");
+	CHECK(arcp::tlvName(arcp::raw(arcp::Tlv::STA_MONITOR_STATUS)) == "STA_MONITOR_STATUS");
 	CHECK(arcp::msgName(arcp::raw(arcp::MsgType::STA_MONITOR_REQ)) == "STA_MONITOR_REQ");
 
 	// config
@@ -672,6 +693,11 @@ void testAirMonitor()
 	CHECK(parseConfigLine(c, "air_monitor mon0") && c.nMonitors == 1U && c.monitors[0].view() == "mon0");
 	CHECK(parseConfigLine(c, "air_monitor_sim 31000") && c.monitorSimPort == 31000U);
 	CHECK(parseConfigLine(c, "amon_duration_ms 500") && c.pol.amonDurationMs == 500);
+	CHECK(!c.staRssiApi);
+	CHECK(parseConfigLine(c, "sta_rssi_api 1") && c.staRssiApi);
+	CHECK(!parseConfigLine(c, "sta_rssi_api 2"));
+	Config c2;
+	CHECK(parseConfigLine(c2, "sta_rssi_sim /tmp/rssi") && c2.staRssiApi && c2.staRssiSim.view() == "/tmp/rssi");
 }
 
 // Robustness: checked number parsing, field-wise struct comparison

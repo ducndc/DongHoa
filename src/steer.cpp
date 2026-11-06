@@ -552,56 +552,62 @@ bool Daemon::requestBeacons(SteerTxn &t, Sta &s) noexcept
 }
 
 // Ask every candidate owner that has an air monitor to listen for the STA.
-// Returns the number of requests (local watch included).
-std::size_t Daemon::requestMonitors(const SteerTxn &t, const Sta &s) noexcept
+// Step 1 of an AP-side measurement: multicast STA_MONITOR_REQ to every
+// peer, and start this AP's own watch when one of its BSSes is a candidate.
+// MEASURE then waits for a STA_MONITOR_STATUS from this AP and from each
+// peer that owns a candidate (others may answer too). Returns the number of
+// APs waited for.
+std::size_t Daemon::requestMonitors(SteerTxn &t, const Sta &s) noexcept
 {
 	const PolicyConfig &p = mCfg.pol;
 	const arcp::BssInfo &src = mBss[t.bss].info;
-	std::array<Mac, MAX_CAND> asked{};
-	std::size_t nAsked = 0U;
-	std::size_t sent = 0U;
+	bool anyPeer = false;
 
+	t.nMonWait = 0U;
 	if (!p.amonRequest) {
 		return 0U;
 	}
-	arcp::StaMonitorReq r;
-	r.txn = t.id;
-	r.sta = s.addr;
-	r.durationMs = static_cast<std::uint16_t>(p.amonDurationMs);
-	r.opClass = src.opClass;
-	r.channel = src.channel;
 	for (std::size_t i = 0U; i < t.nCand; i++) {
 		const Candidate &c = t.cand[i];
+		const Mac ap = c.local ? mApId : c.ap;
 		bool dup = false;
-		for (std::size_t k = 0U; k < nAsked; k++) {
-			dup = dup || (asked[k] == c.ap);
+		for (std::size_t k = 0U; k < t.nMonWait; k++) {
+			dup = dup || (t.monWait[k] == ap);
 		}
 		if (dup) {
 			continue;
 		}
-		asked[nAsked] = c.ap;
-		nAsked++;
 		if (c.local) {
-			if (startAmonWatch(s.addr, mApId, t.id, p.amonDurationMs)) {
-				sent++;
+			const arcp::MonitorStatus st =
+				startAmonWatch(s.addr, mApId, t.id, p.amonDurationMs, src.opClass, src.channel);
+			if (st != arcp::MonitorStatus::MEASURED) {
+				continue;
 			}
+		} else if (findPeer(c.ap) == nullptr) {
 			continue;
+		} else {
+			anyPeer = true;
 		}
-		const Peer *const pe = findPeer(c.ap);
-		if ((pe == nullptr) || ((pe->flags & arcp::AP_FLAG_AIR_MONITOR) == 0U)) {
-			continue;
-		}
+		t.monWait[t.nMonWait] = ap;
+		t.nMonWait++;
+	}
+	if (anyPeer) {
+		arcp::StaMonitorReq r;
+		r.txn = t.id;
+		r.sta = s.addr;
+		r.durationMs = static_cast<std::uint16_t>(p.amonDurationMs);
+		r.opClass = src.opClass;
+		r.channel = src.channel;
 		arcp::Message m;
-		beginMsg(m, arcp::MsgType::STA_MONITOR_REQ, arcp::FLAG_ACK_REQ);
+		beginMsg(m, arcp::MsgType::STA_MONITOR_REQ, 0U);
 		(void)m.add(r);
-		if (unicast(c.ap, m)) {
-			sent++;
-		}
+		multicast(m);
 	}
-	if (sent > 0U) {
-		logging::info(LOG_MODULE, "steer #{} {}: {} air monitor request(s)", t.id, s.addr, sent);
+	if (t.nMonWait > 0U) {
+		logging::info(LOG_MODULE, "steer #{} {}: measurement requested, waiting for {} AP(s)", t.id, s.addr,
+			      t.nMonWait);
 	}
-	return sent;
+	return t.nMonWait;
 }
 
 bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noexcept
@@ -941,6 +947,13 @@ void Daemon::tickSteer(Millis now) noexcept
 		}
 		switch (t.state) {
 		case SteerState::MEASURE:
+			// Step 3 timeout: an AP that has not answered counts as
+			// unable to measure.
+			for (std::size_t i = 0U; i < t.nMonWait; i++) {
+				logging::info(LOG_MODULE, "steer #{}: no measurement answer from AP {}", t.id,
+					      t.monWait[i]);
+			}
+			t.nMonWait = 0U;
 			evaluate(t);
 			break;
 		case SteerState::NEGOTIATE:

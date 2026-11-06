@@ -60,7 +60,7 @@ later versions can add fields there.
 
 | Type | Name | Value layout |
 |---|---|---|
-| 0x01 | AP_INFO | flags u16 (bit0 AIR_MONITOR: answers STA_MONITOR_REQ), hello_ms u16, num_bss u8, name_len u8, name |
+| 0x01 | AP_INFO | flags u16 (bit0 AIR_MONITOR: has a monitor interface or the driver per-STA RSSI API; informational, every AP answers STA_MONITOR_REQ), hello_ms u16, num_bss u8, name_len u8, name |
 | 0x02 | BSS_INFO | bssid 6, freq u16, op_class u8, channel u8, band u8 (2/5/6), bw u8 (0=20..4=320), phy_type u8, caps u16, mdid u16, bssid_info u32, ssid_len u8, ssid, then only for a link of an AP MLD (Wi-Fi 7 MLO): mld_addr 6, link_id u8 (0–14). A receiver that finds no trailer treats the BSS as not affiliated with an AP MLD; an older receiver ignores the trailer. Links of one AP MLD carry the same mld_addr |
 | 0x03 | BSS_LOAD | bssid 6, sta_count u16, max_sta u16, util u8 (0–254, 255 = unknown), noise i8, tx_power i8, flags u8 (bit0 accepting steer-in) |
 | 0x04 | STA_ENTRY | sta 6, bssid 6, rssi i8, flags u8, connected_s u32, inactive_ms u32, tx_rate_mbps u16, rx_rate_mbps u16, tput_kbps u32 |
@@ -73,6 +73,7 @@ later versions can add fields there.
 | 0x13 | ACK | msg_id u32 |
 | 0x14 | STA_MONITOR_REQ | txn u32, sta 6, duration_ms u16, op_class u8, channel u8 (the STA's current channel, a hint) |
 | 0x15 | STA_MONITOR_RESULT | txn u32, sta 6, bssid 6, rssi i8 (dBm), samples u16, age_ms u16 (since the last sample) |
+| 0x16 | STA_MONITOR_STATUS | txn u32, sta 6, status u8: 0 measured (results in the same report), 1 not heard, 2 unsupported (no monitor, no driver API), 3 busy (watch table full), 4 failed (driver API error) |
 | 0xFF | AUTH | 16 bytes: HMAC-SHA256 truncated |
 
 `caps` bits: FT 0x01, BTM 0x02, RRM-NR 0x04, RRM-Beacon 0x08, HT 0x10, VHT
@@ -101,8 +102,8 @@ Report (dBm = RCPI/2 − 110). 255 means it is not available.
 | 0x10 | STEER_REQ | unicast, ACK_REQ | STEER_REQ | source AP asks the target AP to accept a STA |
 | 0x11 | STEER_RESP | unicast, ACK_REQ | STEER_RESP | target AP's admission decision |
 | 0x12 | STEER_RESULT | unicast, ACK_REQ | STEER_RESULT | source AP reports the outcome so the target frees its reservation |
-| 0x13 | STA_MONITOR_REQ | unicast, ACK_REQ | STA_MONITOR_REQ | source AP asks a peer with AIR_MONITOR to measure a STA (§7) |
-| 0x14 | STA_MONITOR_REPORT | unicast, ACK_REQ | STA_MONITOR_RESULT* | after the watch: one result per BSS of the peer on whose frequency the STA was heard; not sent if it was not heard |
+| 0x13 | STA_MONITOR_REQ | multicast | STA_MONITOR_REQ | source AP asks every AP to measure a STA (§7) |
+| 0x14 | STA_MONITOR_REPORT | unicast, ACK_REQ | STA_MONITOR_RESULT*, STA_MONITOR_STATUS | every AP that got the request answers once: at once if it cannot measure, else after the watch with one result per BSS that heard the STA; the status comes last |
 | 0x20 | ACK | unicast | ACK | answers any message that has ACK_REQ set |
 | 0x21 | BYE | multicast | — | graceful shutdown |
 
@@ -166,25 +167,40 @@ The negotiation step is skipped when the candidate is another BSS of the same
 AP, as in band steering between radios. In that case the source AP runs the
 admission check locally.
 
-## 7. Air monitor (STAs without 802.11k measurements)
+## 7. AP-side measurement (STAs without 802.11k measurements)
 
 A STA that does not support 802.11k, or does not answer a Beacon Request
 while it is busy, cannot tell the source AP how well it hears the other
-BSSes. An AP with a radiotap monitor interface can measure the reverse
-direction instead: the RSSI of the STA's own frames.
+BSSes. The APs measure the reverse direction instead: the RSSI of the
+STA's own frames, with a radiotap monitor interface (`air_monitor`) or the
+driver's per-STA RSSI API (`sta_rssi_api`: the STA's MAC address is handed
+to the Wi-Fi driver, which measures it; vendor-specific, see
+`src/vendor_rssi.cpp`).
 
 ```
- STA          Source AP                         Peer AP (AIR_MONITOR)
-  |  trigger -> MEASURE                                 |
-  |<- Beacon Request (if 11k; may be refused/ignored)   |
-  |             |---- STA_MONITOR_REQ (ACK_REQ) ------> |  watch the STA for duration_ms
-  |~~ uplink data / probe requests ~~~~~~~~~~~~~~~~~~~~>|  (heard on the monitor's channel)
-  |             |<--- STA_MONITOR_REPORT: bssid, rssi - |
-  |             |  evaluate: 11k level if any, else the monitor's
+ STA          Source AP                        Every peer AP
+  |  trigger -> MEASURE                                |
+  |<- Beacon Request (if 11k; may be refused/ignored)  |
+  |             |==== STA_MONITOR_REQ (multicast) ===> |  1. request
+  |             |<--- REPORT: STATUS unsupported/busy  |     (at once, if it cannot measure)
+  |~~ uplink data / probe requests ~~~~~~~~~~~~~~~~~~~>|  2. monitor / driver API, duration_ms
+  |             |<--- REPORT: RESULT*, STATUS -------- |  3. measured or not heard
+  |             |  4. evaluate when every AP waited for has answered (or at the timeout):
+  |             |     11k level if any, else the AP-measured one
 ```
 
-- The source asks only peers that set AIR_MONITOR in AP_INFO and own a
-  candidate BSS, so without monitors nothing changes.
+1. The source multicasts STA_MONITOR_REQ to every peer, and starts its own
+   watch when one of its BSSes is a candidate.
+2. Each AP measures the STA on its BSSes for `duration_ms`, with its monitor
+   interfaces and/or the driver API.
+3. Each AP answers exactly once with a STA_MONITOR_REPORT ending in a
+   STA_MONITOR_STATUS: right away when it cannot measure (unsupported, busy,
+   failed), otherwise after the watch (measured, with results; or not heard).
+4. The source waits for the status of every peer that owns a candidate
+   (others may answer; their results are kept). MEASURE ends as soon as all
+   have answered, or at max(`beacon_req_timeout_ms`, `amon_duration_ms` +
+   500 ms); a peer that has not answered by then counts as unable to measure
+   (the request is not acknowledged, so a lost one ends this way).
 - A peer credits samples to its BSSes on the frequency the frame was heard
   on (radiotap channel). A stock radio hears only its own channel: uplink
   data of STAs on that channel, and probe requests of scanning STAs.

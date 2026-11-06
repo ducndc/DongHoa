@@ -3,13 +3,20 @@
 // radiotap monitor interfaces. Used when a STA gives no 802.11k beacon
 // report (no 11k support, or too busy to answer).
 //
-// A source AP asks with STA_MONITOR_REQ; this AP watches the STA for the
-// requested time and answers with one STA_MONITOR_RESULT per local BSS on
-// whose frequency the STA was heard. A stock radio hears only its own
-// channel: uplink data of STAs on that channel, probe requests of scanning
-// STAs.
+// Two ways to measure: radiotap monitor interfaces (the frames' RSSI), and
+// the driver's per-STA RSSI API (vendor_rssi.cpp, sta_rssi_api), which is
+// given the STA's MAC address and measures it on a BSS's radio.
+//
+// A source AP multicasts STA_MONITOR_REQ to every peer. Each AP watches the
+// STA for the requested time and answers (reliable unicast) with one
+// STA_MONITOR_RESULT per local BSS that heard the STA, and always one
+// STA_MONITOR_STATUS: measured, not heard, or why it could not measure
+// (no monitor or API, watch table full, driver error); the last ones at once.
+// A stock radio hears only its own channel: uplink data of STAs on that
+// channel, probe requests of scanning STAs.
 #include "daemon.hpp"
 #include "log.hpp"
+#include "vendor_rssi.hpp"
 
 namespace donghoa {
 
@@ -22,6 +29,10 @@ constexpr int MAX_DURATION_MS = 5000;
 
 void Daemon::initAmon() noexcept
 {
+	vendor::useSimFile(mCfg.staRssiSim.view());
+	if (mCfg.staRssiApi) {
+		logging::info(LOG_MODULE, "driver per-STA RSSI API {}", mCfg.staRssiSim.view().empty() ? "on" : "simulated");
+	}
 	mNAmon = 0U;
 	for (std::size_t i = 0U; i < mCfg.nMonitors; i++) {
 		AmonPort &p = mAmon[mNAmon];
@@ -98,15 +109,20 @@ void Daemon::receiveAmon(std::size_t port) noexcept
 	}
 }
 
-bool Daemon::startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn,
-			      int durationMs) noexcept
+bool Daemon::canMeasureStas() const noexcept
+{
+	return (mNAmon > 0U) || mCfg.staRssiApi;
+}
+
+arcp::MonitorStatus Daemon::startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn,
+					   int durationMs, std::uint8_t opClass, std::uint8_t channel) noexcept
 {
 	AmonWatch *w = nullptr;
 	const int dur = ((durationMs <= 0) || (durationMs > MAX_DURATION_MS)) ? mCfg.pol.amonDurationMs
 									       : durationMs;
 
-	if (mNAmon == 0U) {
-		return false;
+	if (!canMeasureStas()) {
+		return arcp::MonitorStatus::UNSUPPORTED;
 	}
 	for (AmonWatch &x : mWatch) {
 		if ((w == nullptr) && !x.used) {
@@ -115,7 +131,29 @@ bool Daemon::startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t 
 	}
 	if (w == nullptr) {
 		logging::warn(LOG_MODULE, "watch table full, {} not measured", sta);
-		return false;
+		return arcp::MonitorStatus::BUSY;
+	}
+	std::uint32_t vendorBss = 0U;
+	bool vendorFailed = false;
+	if (mCfg.staRssiApi) {
+		for (std::size_t b = 0U; b < mNBss; b++) {
+			const std::string_view ifn = mBss[b].cfg->ifname.view();
+			if (!mBss[b].up || !vendor::isStaRssiSupported(ifn)) {
+				continue;
+			}
+			const vendor::RssiStatus st =
+				vendor::startStaRssi(ifn, sta, opClass, channel, static_cast<std::uint16_t>(dur));
+			if (st == vendor::RssiStatus::OK) {
+				vendorBss |= 1U << b;
+			} else {
+				vendorFailed = vendorFailed || (st == vendor::RssiStatus::FAILED);
+				vendor::stopStaRssi(ifn, sta);
+			}
+		}
+	}
+	if ((mNAmon == 0U) && (vendorBss == 0U)) {
+		logging::dbg(LOG_MODULE, "{}: driver RSSI API {}", sta, vendorFailed ? "failed" : "not available");
+		return vendorFailed ? arcp::MonitorStatus::FAILED : arcp::MonitorStatus::UNSUPPORTED;
 	}
 	*w = AmonWatch{};
 	w->used = true;
@@ -123,59 +161,105 @@ bool Daemon::startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t 
 	w->requester = requester;
 	w->txn = txn;
 	w->until = os::nowMs() + static_cast<Millis>(dur);
-	logging::dbg(LOG_MODULE, "watching {} for {} ms (txn {})", sta, dur, txn);
-	return true;
+	w->vendorBss = vendorBss;
+	w->vendorFailed = vendorFailed;
+	logging::dbg(LOG_MODULE, "watching {} for {} ms (txn {}, {} monitor(s), driver API BSS mask {})", sta,
+		     dur, txn, mNAmon, hex(vendorBss, 2U));
+	return arcp::MonitorStatus::MEASURED;
 }
 
 void Daemon::onAmonReq(const Peer &from, const arcp::StaMonitorReq &r) noexcept
 {
-	if (startAmonWatch(r.sta, from.id, r.txn, static_cast<int>(r.durationMs))) {
+	const arcp::MonitorStatus st = startAmonWatch(r.sta, from.id, r.txn, static_cast<int>(r.durationMs),
+						      r.opClass, r.channel);
+	if (st == arcp::MonitorStatus::MEASURED) {
 		logging::info(LOG_MODULE, "{} asks to measure {} (ch {})", from.id, r.sta, r.channel);
+		return;
 	}
+	// Cannot measure: say so now, so the source does not wait for us.
+	arcp::Message m;
+	arcp::StaMonitorStatus ms;
+	ms.txn = r.txn;
+	ms.sta = r.sta;
+	ms.status = static_cast<std::uint8_t>(st);
+	beginMsg(m, arcp::MsgType::STA_MONITOR_REPORT, arcp::FLAG_ACK_REQ);
+	(void)m.add(ms);
+	(void)unicast(from.id, m);
+	logging::info(LOG_MODULE, "{} asks to measure {}: {}", from.id, r.sta, arcp::monitorStatusName(ms.status));
 }
 
-// Watch over: one result per local BSS on a frequency the STA was heard on.
+// Watch over: one result per local BSS that heard the STA (the driver API's
+// own value for its BSSes, else the monitor's on the BSS's frequency), then
+// the status. Results go first: the source evaluates on the status.
 void Daemon::finishAmonWatch(AmonWatch &w, Millis now) noexcept
 {
 	const bool local = w.requester == mApId;
 	arcp::Message m;
 	std::size_t n = 0U;
+	bool vendorFailed = w.vendorFailed;
 
 	if (!local) {
 		beginMsg(m, arcp::MsgType::STA_MONITOR_REPORT, arcp::FLAG_ACK_REQ);
 	}
-	for (const AmonAcc &a : w.acc) {
-		if (a.n == 0) {
+	for (std::size_t b = 0U; b < mNBss; b++) {
+		if (!mBss[b].up) {
 			continue;
 		}
-		for (std::size_t b = 0U; b < mNBss; b++) {
-			if (!mBss[b].up || (static_cast<int>(mBss[b].info.freq) != a.freq)) {
-				continue;
+		arcp::StaMonitorResult r;
+		bool have = false;
+		const std::string_view ifn = mBss[b].cfg->ifname.view();
+		if ((w.vendorBss & (1U << b)) != 0U) {
+			vendor::RssiSample vs;
+			const vendor::RssiStatus st = vendor::readStaRssi(ifn, w.sta, vs);
+			vendor::stopStaRssi(ifn, w.sta);
+			if ((st == vendor::RssiStatus::OK) && (vs.samples > 0U)) {
+				r.rssi = vs.rssi;
+				r.samples = vs.samples;
+				r.ageMs = vs.ageMs;
+				have = true;
 			}
-			const Millis age = now - a.last;
-			arcp::StaMonitorResult r;
-			r.txn = w.txn;
-			r.sta = w.sta;
-			r.bssid = mBss[b].info.bssid;
-			r.rssi = static_cast<std::int8_t>(a.sum / a.n);
-			r.samples = static_cast<std::uint16_t>((a.n > 65535) ? 65535 : a.n);
-			r.ageMs = static_cast<std::uint16_t>((age > 65535U) ? 65535U : age);
-			if (local) {
-				onAmonResult(mApId, r);
-			} else {
-				(void)m.add(r);
-			}
-			n++;
+			vendorFailed = vendorFailed || (st == vendor::RssiStatus::FAILED);
 		}
+		for (const AmonAcc &a : w.acc) {
+			if (!have && (a.n != 0) && (static_cast<int>(mBss[b].info.freq) == a.freq)) {
+				const Millis age = now - a.last;
+				r.rssi = static_cast<std::int8_t>(a.sum / a.n);
+				r.samples = static_cast<std::uint16_t>((a.n > 65535) ? 65535 : a.n);
+				r.ageMs = static_cast<std::uint16_t>((age > 65535U) ? 65535U : age);
+				have = true;
+			}
+		}
+		if (!have) {
+			continue;
+		}
+		r.txn = w.txn;
+		r.sta = w.sta;
+		r.bssid = mBss[b].info.bssid;
+		if (local) {
+			onAmonResult(mApId, r);
+		} else {
+			(void)m.add(r);
+		}
+		n++;
 	}
-	if (n == 0U) {
-		logging::dbg(LOG_MODULE, "{} not heard", w.sta);
-	} else if (!local) {
-		(void)unicast(w.requester, m);
+	arcp::StaMonitorStatus ms;
+	ms.txn = w.txn;
+	ms.sta = w.sta;
+	if (n > 0U) {
+		ms.status = static_cast<std::uint8_t>(arcp::MonitorStatus::MEASURED);
+	} else if (vendorFailed && (mNAmon == 0U)) {
+		ms.status = static_cast<std::uint8_t>(arcp::MonitorStatus::FAILED);
 	} else {
-		// local results already stored
+		ms.status = static_cast<std::uint8_t>(arcp::MonitorStatus::NOT_HEARD);
 	}
+	logging::dbg(LOG_MODULE, "{}: {} ({} BSS)", w.sta, arcp::monitorStatusName(ms.status), n);
 	w.used = false;
+	if (local) {
+		onAmonStatus(mApId, ms);
+	} else {
+		(void)m.add(ms);
+		(void)unicast(w.requester, m);
+	}
 }
 
 void Daemon::tickAmon(Millis now) noexcept
@@ -200,6 +284,33 @@ void Daemon::onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noex
 			   rrm::dbmToRcpi(static_cast<int>(r.rssi) + mCfg.pol.amonRssiOffset), bi->opClass,
 			   bi->channel, os::nowMs() - r.ageMs);
 		onMonitorResult(*s);
+	}
+}
+
+void Daemon::onAmonStatus(const Mac &from, const arcp::StaMonitorStatus &r) noexcept
+{
+	SteerTxn *const t = findTxnBySta(r.sta);
+	if ((t == nullptr) || (t->id != r.txn) || (t->state != SteerState::MEASURE)) {
+		return;
+	}
+	bool found = false;
+	for (std::size_t i = 0U; (i < t->nMonWait) && !found; i++) {
+		if (t->monWait[i] == from) {
+			t->nMonWait--;
+			t->monWait[i] = t->monWait[t->nMonWait];
+			found = true;
+		}
+	}
+	if (from != mApId) {
+		logging::info(LOG_MODULE, "{}: AP {} {}", r.sta, from, arcp::monitorStatusName(r.status));
+	}
+	if (found && (t->nMonWait == 0U)) {
+		t->amonPending = false;
+		Sta *const s = findSta(r.sta);
+		logging::dbg(LOG_MODULE, "steer #{} {}: every AP asked has answered", t->id, r.sta);
+		if (!t->bcnOutstanding || ((s != nullptr) && isMeasureComplete(*t, *s))) {
+			evaluate(*t);
+		}
 	}
 }
 

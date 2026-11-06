@@ -281,12 +281,15 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 						     : std::optional<long>(static_cast<long>(mCfg.pol.amonDurationMs));
 		if (!sta.has_value() || !ms.has_value()) {
 			formatTo(o, "FAIL usage: MONITOR <sta> [<ms 1..5000>]\n");
-		} else if (mNAmon == 0U) {
-			formatTo(o, "FAIL no air_monitor configured\n");
+		} else if (!canMeasureStas()) {
+			formatTo(o, "FAIL no air_monitor or sta_rssi_api configured\n");
 		} else {
-			formatTo(o, startAmonWatch(*sta, mApId, 0U, static_cast<int>(*ms))
-					     ? "OK result in the log after the watch (logread -e donghoa)\n"
-					     : "FAIL\n");
+			const arcp::MonitorStatus st = startAmonWatch(*sta, mApId, 0U, static_cast<int>(*ms), 0U, 0U);
+			if (st == arcp::MonitorStatus::MEASURED) {
+				formatTo(o, "OK result in the log after the watch (logread -e donghoa)\n");
+			} else {
+				formatTo(o, "FAIL {}\n", arcp::monitorStatusName(static_cast<std::uint8_t>(st)));
+			}
 		}
 	} else if (req == "LOG") {
 		cmdLog(o, std::string_view());

@@ -165,7 +165,7 @@ void Daemon::sendHello() noexcept
 
 	ai.helloMs = static_cast<std::uint16_t>(mCfg.helloMs);
 	(void)ai.name.assign(mCfg.name.view());
-	if (mNAmon > 0U) {
+	if (canMeasureStas()) {
 		ai.flags = static_cast<std::uint16_t>(ai.flags | arcp::AP_FLAG_AIR_MONITOR);
 	}
 	for (std::size_t i = 0U; i < mNBss; i++) {
@@ -380,6 +380,13 @@ void Daemon::handleTlvs(Peer &p, ByteView frame, const arcp::Header &h) noexcept
 			arcp::StaMonitorResult r;
 			if (arcp::decode(v, r)) {
 				onAmonResult(p.id, r);
+			}
+			break;
+		}
+		case arcp::Tlv::STA_MONITOR_STATUS: {
+			arcp::StaMonitorStatus r;
+			if (arcp::decode(v, r)) {
+				onAmonStatus(p.id, r);
 			}
 			break;
 		}

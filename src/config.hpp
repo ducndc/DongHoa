@@ -133,6 +133,8 @@ struct Config {
 	std::array<IfName, MAX_MONITORS> monitors{}; // radiotap monitor interfaces
 	std::size_t nMonitors{0U};
 	std::uint16_t monitorSimPort{0U};          // test input: radiotap over UDP
+	bool staRssiApi{false}; // measure STAs with the driver's per-STA RSSI API
+	Path staRssiSim{};      // test: simulated driver (implies staRssiApi)
 
 	std::array<std::uint8_t, 64U> key{};
 	std::size_t keyLen{0U};

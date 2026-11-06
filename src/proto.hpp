@@ -63,6 +63,7 @@ enum class Tlv : std::uint8_t {
 	ACK = 0x13U,
 	STA_MONITOR_REQ = 0x14U,
 	STA_MONITOR_RESULT = 0x15U,
+	STA_MONITOR_STATUS = 0x16U,
 	AUTH = 0xFFU,
 };
 
@@ -274,6 +275,22 @@ struct StaMonitorResult {
 	std::uint16_t ageMs{0U}; // since the last sample
 };
 
+// Outcome of one STA_MONITOR_REQ at one AP. Every AP that receives the
+// request answers with exactly one, so the source knows who has answered.
+enum class MonitorStatus : std::uint8_t {
+	MEASURED = 0U,    // STA_MONITOR_RESULTs follow in the same report
+	NOT_HEARD = 1U,   // measured for duration_ms, no frame of the STA
+	UNSUPPORTED = 2U, // no monitor interface and no driver RSSI API
+	BUSY = 3U,        // watch table full
+	FAILED = 4U,      // the driver API returned an error
+};
+
+struct StaMonitorStatus {
+	std::uint32_t txn{0U};
+	Mac sta{};
+	std::uint8_t status{0U}; // MonitorStatus
+};
+
 // ---- encoding ----
 
 class Message {
@@ -297,6 +314,7 @@ public:
 	bool add(const SteerResult &v) noexcept;
 	bool add(const StaMonitorReq &v) noexcept;
 	bool add(const StaMonitorResult &v) noexcept;
+	bool add(const StaMonitorStatus &v) noexcept;
 	bool addAck(std::uint32_t msgId) noexcept;
 
 	// Sets the length and, with a non-empty key, appends the HMAC.
@@ -357,6 +375,8 @@ bool decode(ByteView v, SteerResp &o) noexcept;
 bool decode(ByteView v, SteerResult &o) noexcept;
 bool decode(ByteView v, StaMonitorReq &o) noexcept;
 bool decode(ByteView v, StaMonitorResult &o) noexcept;
+bool decode(ByteView v, StaMonitorStatus &o) noexcept;
+std::string_view monitorStatusName(std::uint8_t status) noexcept;
 bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept;
 
 std::string_view msgName(std::uint8_t type) noexcept;

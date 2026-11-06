@@ -15,9 +15,12 @@ information, and they coordinate:
   it.
 - **802.11k neighbor reports:** the hostapd neighbor database fills itself
   from the BSSes that peers advertise.
-- **Air monitor:** a STA without 802.11k, or too busy to answer a Beacon
-  Request, is measured instead by the radiotap monitor interfaces of the
-  candidate APs (`air_monitor`), from the frames it sends.
+- **AP-side measurement:** a STA without 802.11k, or too busy to answer a
+  Beacon Request, is measured instead by the other APs, from the frames it
+  sends: the source multicasts a request, every AP measures with its
+  radiotap monitor (`air_monitor`) or the driver's per-STA RSSI API
+  (`sta_rssi_api`, vendor placeholder in `src/vendor_rssi.cpp`) and always
+  answers, "cannot measure" included, and the source picks the target.
 - **Low-power device classification:** each AP recognises IoT devices
   (sensors, cameras, smart plugs) from their traffic: bursty uplink, little
   downlink. The class is shared between APs, so it follows the device and

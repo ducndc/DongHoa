@@ -78,6 +78,7 @@ STA11_MAC = "aa:bb:cc:dd:ee:11"  # IoT sensor: bursty uplink, little downlink
 STA12_MAC = "aa:bb:cc:dd:ee:12"  # phone: bursty downlink
 STA13_MAC = "aa:bb:cc:dd:ee:13"  # VHT/HE phone with sensor-shaped traffic: never low-power
 STA14_MAC = "aa:bb:cc:dd:ee:14"  # Wi-Fi 6 (HE only) sensor: HE alone does not rule it out
+STA16_MAC = "aa:bb:cc:dd:ee:16"  # no 802.11k: measured by AP1's driver RSSI API (simulated)
 # Extra config lines for every AP, ";"-separated, e.g. "score_model 1".
 EXTRA = os.environ.get("DONGHOA_ITEST_EXTRA", "").replace(";", "\n")
 
@@ -246,6 +247,42 @@ def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
           "peers, kept across roam and peer restart, corrections synced, not steered")
 
 
+def scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2):
+    """S11: a STA without 802.11k on AP2. AP2 multicasts STA_MONITOR_REQ;
+    AP1 measures with the driver's per-STA RSSI API (simulated through the
+    sta_rssi_sim file) and always answers with a STA_MONITOR_STATUS."""
+    mark(logs, "S11 driver per-STA RSSI API: every AP answers, measured or not")
+    sim = os.path.join(tmp, "rssi_ap1")
+    if os.path.exists(sim):
+        os.remove(sim)  # no file: AP1's driver has no such API
+    sta = Sta(STA16_MAC, -85, {}, rrm=False)
+    with world.lock:
+        ap2.add_sta(sta)
+    # Step 3, cannot measure: AP1 says so at once, and AP2 evaluates
+    # without waiting for the monitor timeout; nothing to steer to.
+    wait_for(lambda: STA16_MAC + ": AP 02:00:00:00:00:01 unsupported" in open(logs[1].name).read(), 8,
+             "AP1 to answer 'unsupported' to AP2's measurement request")
+    assert not any(t[1] == STA16_MAC for t in world.btm_log), "nothing measured, nothing to steer"
+    log2 = open(logs[1].name).read().split("=== S11")[-1]
+    assert "no measurement answer from AP" not in log2, "an answer arrived, no timeout"
+    # Step 2, the driver measures the STA: AP1 reports it, AP2 steers.
+    with open(sim + ".tmp", "w") as f:
+        f.write("ap1-wl0 %s -50\n" % STA16_MAC)
+    os.replace(sim + ".tmp", sim)
+    wait_for(lambda: any(t[0] == B2 and t[1] == STA16_MAC and t[2] == B1 for t in world.btm_log), 20,
+             "BTM for STA16 towards AP1 after the driver measured it")
+    wait_for(lambda: STA16_MAC in ap1.stas, 3, "STA16 to roam to AP1")
+    for log in logs:
+        log.flush()
+    assert STA16_MAC + " heard by " + B1 + " (AP 02:00:00:00:00:01): -50 dBm" in open(logs[1].name).read()
+    assert STA16_MAC + ": AP 02:00:00:00:00:01 measured" in open(logs[1].name).read()
+    assert "asks to measure " + STA16_MAC in open(logs[0].name).read()
+    with world.lock:
+        ap1.remove_sta(STA16_MAC)
+    print("PASS 11: driver RSSI API: multicast request, 'unsupported' answered at once, "
+          "measured STA steered to the AP that heard it")
+
+
 def main():
     tmp = os.environ.get("DONGHOA_ITEST_DIR")
     if tmp:
@@ -284,7 +321,8 @@ def main():
             mon = f"air_monitor_sim {mon_port}\n" if i == 1 else ""
             if i == 0:
                 mon = ("bss ap1-wl1 mdid=a1b2\nbss ap1-wl2 mdid=a1b2\n"
-                       "bss ap1-mld_link0 mdid=a1b2\nbss ap1-mld_link1 mdid=a1b2\n")
+                       "bss ap1-mld_link0 mdid=a1b2\nbss ap1-mld_link1 mdid=a1b2\n"
+                       f"sta_rssi_sim {os.path.join(tmp, 'rssi_ap1')}\n")
             write_cfg(cfg, *c, extra=mon + EXTRA)
             path = os.path.join(tmp, f"ap{i + 1}.log")
             open(path, "w").close()
@@ -402,6 +440,7 @@ def main():
             # change is not the required tput_gain_pct gain, so no band steer.
             print("SKIP 7, 8, 9: band steering and MLO scenarios assume score_model 0 (20 MHz mock BSSes)")
             scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
             ok = True
             return 0
         mark(logs, "S7 band steering 2.4 -> 5 GHz checks the STA's operating classes")
@@ -499,6 +538,7 @@ def main():
             4, "MLD STA roam recorded as success")
         print("PASS 9: MLO: one entry per MLD STA, no band steer onto its own link, roam only when all links are weak")
         scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
         ok = True
     finally:
         for p in procs:

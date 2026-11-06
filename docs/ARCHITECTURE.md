@@ -36,7 +36,8 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 | `local` | Polls hostapd (`STATUS`, `STA-FIRST/NEXT`, `GET_CONFIG`) and nl80211; keeps the STA table (EWMA of RSSI, throughput); handles hostapd events; installs local sibling and remote BSSes into hostapd's neighbor database (`SET_NEIGHBOR` / `REMOVE_NEIGHBOR`). |
 | `steer` | Steering state machine on the source AP, and admission/reservations on the target AP. |
 | `devclass` | Low-power (IoT) device classification from each local STA's uplink/downlink traffic variability (arithmetic in `policy`), the device class table shared with peers (STA_CLASS, `PROTOCOL.md` §8), and the restore on (re)association. |
-| `amon` | Air monitor: radiotap monitor sockets (BPF-filtered to uplink data and probe requests), STA watches on request, STA_MONITOR_REQ/REPORT. Lets STAs without 11k measurements be steered. |
+| `amon` | AP-side STA measurement: radiotap monitor sockets (BPF-filtered to uplink data and probe requests) and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ (multicast) / REPORT with a STATUS from every AP. Lets STAs without 11k measurements be steered. |
+| `vendor_rssi` | Driver per-STA RSSI API (STA MAC in, RSSI out) behind four non-blocking calls. Vendor implementation is a placeholder until the chipset API is documented; a file-backed simulation serves the tests. |
 | `ctrl` | Local control socket used by `donghoa_cli` and the tests. |
 | `rrm_log` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, raw and decoded with the pure decoders in `rrm.cpp`. Called from `hapd::Conn`, so every caller is covered. |
 
@@ -220,9 +221,10 @@ A STA busy with its own scan answers report mode `refused`.
 - Channel utilisation comes from the busy time of the radio's in-use channel,
   smoothed with an EWMA. It does not separate the BSS's own airtime from OBSS
   airtime.
-- Unassociated-STA RSSI comes only from air monitors (`air_monitor`), which
-  hear a STA only on their own channel (uplink data, probe requests). No
-  off-channel listening; vendor air-monitor APIs could feed `amon.cpp`.
+- Unassociated-STA RSSI comes from air monitors (`air_monitor`), which hear
+  a STA only on their own channel (uplink data, probe requests), or from the
+  driver per-STA RSSI API (`sta_rssi_api`), whose vendor implementation in
+  `vendor_rssi.cpp` is still a placeholder (it reports unsupported).
 - `boot_id` replay caveat (see PROTOCOL.md §5).
 - The neighbor database holds 20 MHz op classes only. Wide-channel op classes
   are not advertised.

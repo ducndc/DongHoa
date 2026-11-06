@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 1.6, 2026-11-06 (history in Appendix B) |
+| Document version | 1.7, 2026-11-06 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -274,9 +274,11 @@ interface, and it learns about STAs from hostapd's output and events.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| FR-AMN-1 | An AP with at least one usable monitor interface shall advertise the AIR_MONITOR flag in AP_INFO. | T-I 5 |
-| FR-AMN-2 | During MEASURE, when `amon_request` is on (default), the source AP shall send STA_MONITOR_REQ (reliable unicast) to each peer that owns a candidate and advertises AIR_MONITOR, and start a local watch when it has a monitor and a local candidate. This shall happen in parallel with the 802.11k Beacon Request, for STAs with and without 11k. | T-I 5 |
-| FR-AMN-3 | An AP receiving STA_MONITOR_REQ shall watch the STA for the requested duration (`amon_duration_ms`, 1000 ms by default, at most 5 s), averaging the dBm signal of its frames per frequency. It shall then send STA_MONITOR_REPORT with one STA_MONITOR_RESULT per local BSS (up) on a frequency the STA was heard on, and send nothing if it was not heard. At most 16 watches shall run at a time. | T-U, T-I 5, T-O |
+| FR-AMN-1 | An AP with at least one usable monitor interface, or with `sta_rssi_api` on, shall advertise the AIR_MONITOR flag in AP_INFO. | T-I 5 |
+| FR-AMN-2 | During MEASURE, when `amon_request` is on (default), the source AP shall multicast STA_MONITOR_REQ to every peer, and start a local watch when it can measure and has a local candidate. This shall happen in parallel with the 802.11k Beacon Request, for STAs with and without 11k. | T-I 5, 11 |
+| FR-AMN-3 | An AP receiving STA_MONITOR_REQ shall watch the STA for the requested duration (`amon_duration_ms`, 1000 ms by default, at most 5 s), averaging the dBm signal of its frames per frequency on its monitors and starting the driver per-STA RSSI measurement on each BSS that supports it (`sta_rssi_api`). It shall then send STA_MONITOR_REPORT with one STA_MONITOR_RESULT per local BSS (up) that heard the STA (the driver's value for a BSS, else the monitor's on the BSS's frequency) and a STA_MONITOR_STATUS (measured / not heard / failed). An AP that cannot measure (no monitor and no supported driver API: unsupported; 16 watches running: busy; driver error: failed) shall send the report with only the status at once. | T-U, T-I 5, 11, T-O |
+| FR-AMN-7 | The source AP shall end MEASURE as soon as every peer owning a candidate (and its own watch) has sent its STA_MONITOR_STATUS and no 802.11k report is pending; at the MEASURE timeout it shall log each AP that has not answered and treat it as unable to measure. | T-I 11 |
+| FR-AMN-8 | The driver per-STA RSSI API shall sit behind `src/vendor_rssi.hpp` (supported?, start, read, stop; non-blocking). Until the chipset vendor's API is documented, the implementation shall report unsupported; a file-backed simulation (`sta_rssi_sim`) shall stand in for tests. | T-I 11 |
 | FR-AMN-4 | The source AP shall use a monitor result (≤ 10 s old, plus `amon_rssi_offset`) as a candidate's level only when the STA gave no 802.11k report for that candidate. | T-I 5 |
 | FR-AMN-5 | A refused or unanswered Beacon Request shall not end MEASURE while monitor reports are pending. MEASURE shall end early when every candidate has an 11k report, or, once no 11k report is pending, when every candidate has any measurement; otherwise at max(`beacon_req_timeout_ms`, `amon_duration_ms` + 500 ms). | T-I 5 |
 | FR-AMN-6 | Without monitors on any candidate AP, steering behaviour shall be unchanged. | T-I 1–4, 6 |
@@ -421,6 +423,7 @@ measurement timeout.
 | `assume_kvr` | 1 | treat STAs as 11k/v/r capable unless shown otherwise |
 | `air_monitor` / `air_monitor_sim` | — | Monitor interface, repeatable (≤ 4) / UDP test input |
 | `amon_request` / `amon_duration_ms` / `amon_rssi_offset` | 1 / 1000 / 0 | bool / ms / dB |
+| `sta_rssi_api` / `sta_rssi_sim` | 0 / — | measure STAs with the driver's per-STA RSSI API / test: simulated driver file (implies `sta_rssi_api 1`) |
 | `score_model` / `tput_rssi_mid` / `tput_gain_pct` / `sta_nss` | 0 (linear) / −72 / 150 / 2 | 0 linear, 1 expected throughput / dBm / % / streams |
 | `lp_classify` / `lp_no_steer` | 1 / 1 | low-power classification / keep low-power STAs out of automatic steering |
 | `lp_threshold` / `lp_hysteresis` / `lp_score_max` / `lp_min_samples` | 60 / 10 / 120 / 10 | θ (polls) / θ / θ / samples |
@@ -439,3 +442,4 @@ measurement timeout.
 | 1.4 | 2026-11-01 | C-3: implementation language C++17 without exceptions, RTTI or heap, MISRA C++:2023 based convention; C-4: no libstdc++.so at run time; NFR-CAP-2 re-measured (247,720 bytes). No functional requirement changed |
 | 1.5 | 2026-11-06 | New §4.13 (FR-LPC-1..5): low-power (IoT) device classification from traffic behaviour, shared between APs (STA_CLASS); `DEVCLASS` control command (IR-3); configuration keys `lp_*`; NFR-CAP-1/2 updated (315,808 bytes) |
 | 1.6 | 2026-11-06 | FR-LPC-1: recent-uplink-rate gate (`lp_max_mean_bps`); FR-LPC-4: sync also carries corrections back to normal; new FR-LPC-6 (PHY exclusion, `lp_exclude_vht/he/eht`) |
+| 1.7 | 2026-11-06 | AP-side measurement: STA_MONITOR_REQ multicast to every peer (FR-AMN-2), every AP answers with STA_MONITOR_STATUS (FR-AMN-3), MEASURE ends when all have answered (new FR-AMN-7), driver per-STA RSSI API placeholder (new FR-AMN-8); keys `sta_rssi_api`, `sta_rssi_sim` |

@@ -298,6 +298,15 @@ bool parseConfigLine(Config &c, std::string_view line) noexcept
 		}
 	} else if (k == "air_monitor_sim") {
 		ok = parsePort(v, c.monitorSimPort);
+	} else if (k == "sta_rssi_api") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		if (ok) {
+			c.staRssiApi = *n == 1;
+		}
+	} else if (k == "sta_rssi_sim") {
+		ok = !v.empty() && c.staRssiSim.assign(v);
+		c.staRssiApi = c.staRssiApi || ok;
 	} else if (k == "bss") {
 		ok = parseBss(c, v);
 	} else if (k == "key") {

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 1.7, 2026-11-06 (history in §13) |
+| Document version | 1.8, 2026-11-06 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -85,7 +85,8 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `l2.{hpp,cpp}` | I/O | `AF_PACKET` ports and UDP sim ports | `L2::addIface`, `addSim`, `send`, `recv` | IR-8, IR-11 |
 | `hapd.{hpp,cpp}` | I/O | hostapd command and event sockets | `hapd::Conn::open`, `runCommand`, `recvEvent` | IR-2 |
 | `survey.{hpp,cpp}` | I/O | Minimal genetlink client for `NL80211_CMD_GET_SURVEY`, asynchronous, one dump per radio | `Survey::open`, `findWiphy`, `request`, `onReadable`, `tick`, `find`, `util` | IR-6, FR-MON-4, NFR-PRF-4 |
-| `amon.cpp` | I/O + coord. | Air monitor: BPF-filtered radiotap sockets, STA watches on request, STA_MONITOR_REQ/REPORT, monitor results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
+| `amon.cpp` | I/O + coord. | AP-side STA measurement: BPF-filtered radiotap sockets and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ/REPORT/STATUS, results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
+| `vendor_rssi.cpp` | I/O | Driver per-STA RSSI API behind four calls; vendor placeholder (TODO) and a file-backed simulation for tests | `isStaRssiSupported`, `startStaRssi`, `readStaRssi`, `stopStaRssi`, `useSimFile` |
 | `ctrl.cpp` | I/O | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
 | `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
 | `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
@@ -430,9 +431,9 @@ the STA leaving is expected.
    the accepted mode is kept in `sta.bcnMode` for later steers. Only when
    all fail is the STA marked as lacking 11k (`bcn_unsupported`). Table mode
    is not a fallback, because it measures nothing new.
-   **`requestMonitors`** runs in parallel (§6.10): STA_MONITOR_REQ to each
-   candidate owner with AIR_MONITOR, and a local watch for local candidates
-   when this AP has a monitor.
+   **`requestMonitors`** runs in parallel (§6.10): STA_MONITOR_REQ multicast
+   to every peer, and a local watch for local candidates; MEASURE ends early
+   once every AP waited for has sent its STA_MONITOR_STATUS.
 4. **Beacon reports:** stored in the STA's 16-entry cache (the oldest entry
    is replaced), whether or not a transaction is running. In MEASURE,
    evaluation happens as soon as every candidate (and, with `score_model 1`,
@@ -541,15 +542,30 @@ words included), aligns TSFT/Flags/Rate/Channel/FHSS/dBm-signal fields,
 rejects bad-FCS frames and frames without a signal, and returns the TA,
 frequency and dBm.
 
-**Watches.** `startAmonWatch` puts (STA, requester, txn, until) in one of
-16 slots. Every parsed frame whose TA matches an active watch adds its
+**Driver per-STA RSSI API (`vendor_rssi.cpp`).** The second way to measure:
+the STA's MAC address goes to the Wi-Fi driver, which measures the RSSI of
+its frames on a BSS's radio. `vendor::isStaRssiSupported / startStaRssi /
+readStaRssi / stopStaRssi` take the BSS ifname; start returns at once and
+read is called once, at the watch end, so the loop never blocks. The vendor
+bodies are placeholders (TODO(vendor), reporting unsupported) until the
+chipset documentation is reviewed; their system calls will go into
+`os.cpp`. `sta_rssi_sim <file>` selects a simulated driver whose lines
+(`<ifname> <sta> <dBm>`, `unsupported`, `fail`) the itest rewrites while the
+daemon runs.
+
+**Watches.** `startAmonWatch` returns a `MonitorStatus`: UNSUPPORTED when the
+AP has neither monitor nor `sta_rssi_api`, BUSY when the 16 slots are full,
+FAILED / UNSUPPORTED when only the driver API exists and no BSS could start,
+else MEASURED with (STA, requester, txn, until, driver BSS mask) in a slot. Every parsed frame whose TA matches an active watch adds its
 signal to that watch's accumulator for the frame's frequency (up to 4
 frequencies). `tickAmon` ends watches whose time is up. For each
 accumulator it emits one STA_MONITOR_RESULT per local BSS that is up on that
-frequency: average dBm, sample count, age of the last sample. Results go into
-one STA_MONITOR_REPORT, reliable unicast to the requester, or straight to
-`onAmonResult` when the requester is this AP. Nothing is sent if the STA
-was not heard.
+frequency: average dBm, sample count, age of the last sample; for a BSS in
+the driver mask, the driver's value replaces it. Results and then one
+STA_MONITOR_STATUS (measured, not heard, or failed) go into one
+STA_MONITOR_REPORT, reliable unicast to the requester, or straight to
+`onAmonResult` / `onAmonStatus` when the requester is this AP. A request
+that cannot start is answered at once with the status alone (`onAmonReq`).
 
 **Results.** `onAmonResult` logs the result and stores it in the STA's
 measurement cache as `MEAS_AMON`, with level = RSSI + `amon_rssi_offset` and
@@ -557,11 +573,15 @@ op class/channel from the BSS info. It then calls `onMonitorResult`,
 which ends MEASURE early when `isMeasureComplete` allows it. The cache keeps
 11k (`MeasSrc::STA_11K`) and monitor entries side by side; `levelLookup` prefers 11k.
 
-**Requests.** `requestMonitors` (in `startSteer`) sends one request per
-candidate owner that advertises AIR_MONITOR. HELLO sets that flag when
-`n_amon > 0`, and receivers store it in `peer.flags`. It also starts a local
-watch for local candidates when this AP has a monitor. `onAmonReq` answers
-peers. The `MONITOR <sta> [<ms>]` control command starts a local watch with
+**Requests.** `requestMonitors` (in `startSteer`) multicasts one
+STA_MONITOR_REQ (no ACK_REQ) to every peer, starts a local watch for local
+candidates, and fills `SteerTxn::monWait` with this AP (if its watch
+started) and each peer that owns a candidate. `onAmonStatus` removes the
+sender; when the list is empty, `amonPending` clears and MEASURE evaluates
+unless an 11k report is still pending. At the MEASURE deadline
+`tickSteer` logs each AP still in the list ("no measurement answer").
+HELLO sets AIR_MONITOR when `canMeasureStas()` (monitor or `sta_rssi_api`);
+it is informational, as every AP answers. `onAmonReq` answers peers. The `MONITOR <sta> [<ms>]` control command starts a local watch with
 txn 0 for diagnostics.
 
 **Cost.** Without monitors: no sockets, no flag, no requests, so behaviour
@@ -675,18 +695,19 @@ STA that already belongs to the other BSS.
 ### 7.5 Steer of a STA without 802.11k (air monitor)
 
 ```
-STA (no 11k)     AP1 (source)                         AP2 (AIR_MONITOR)
+STA (no 11k)     AP1 (source)                         AP2 (monitor or driver API)
  |  RSSI trigger -> steer_start                            |
  |<- REQ_BEACON: hostapd FAIL (no RRM) -> bcn_unsupported  |
- |              |---- STA_MONITOR_REQ (ACK_REQ) -------->  | amon_watch_start (1000 ms)
- |~~ uplink frames on AP2's channel ~~~~~~~~~~~~~~~~~~~~~> | radiotap -> amon_sample()
- |              |<--- STA_MONITOR_REPORT: B2, -58 dBm ---  | amon_tick -> finish
- |  amon_on_result -> MEAS_AMON -> measure_complete -> evaluate
+ |              |==== STA_MONITOR_REQ (multicast) ======>  | startAmonWatch (1000 ms)
+ |~~ uplink frames on AP2's channel ~~~~~~~~~~~~~~~~~~~~~> | radiotap -> addAmonSample / driver
+ |              |<--- REPORT: RESULT B2 -58, STATUS measured | tickAmon -> finishAmonWatch
+ |  onAmonResult -> AIR_MONITOR level; onAmonStatus: all answered -> evaluate
  |              |---- STEER_REQ / RESP / BTM / ROAM as in 7.2
 ```
 
-itest PASS 5 runs exactly this. The steer took 1187 ms, of which 1000 ms was
-the watch.
+itest PASS 5 runs this with a monitor, PASS 11 with the simulated driver
+API: there an AP without the API answers "unsupported" within 1 ms and the
+source evaluates at once, instead of waiting out the 1.5 s timeout.
 
 ## 8. Error handling and recovery
 
@@ -704,7 +725,9 @@ the watch.
 | Message too large | `overflow` flag | Not sent, error logged (STA_STATUS splits beforehand) | IR-8 |
 | Authentication failure | `arcp::verify` | Dropped, debug log | FR-SEC-1 |
 | Monitor interface missing or not a monitor | `if_nametoindex` / `bind` / filter attach fails | Error logged with the `iw` command to create it; the AP runs without it and does not advertise AIR_MONITOR | IR-13 |
-| Watch table full | No free watch | Warning; that STA is not measured | FR-AMN-3 |
+| Watch table full | No free watch | Warning; STA_MONITOR_STATUS busy to the requester at once | FR-AMN-3 |
+| Driver per-STA RSSI API missing or failing | `isStaRssiSupported` false / start or read FAILED | Status unsupported / failed to the requester; monitors, if any, still measure | FR-AMN-3, FR-AMN-8 |
+| A peer never answers a measurement request (multicast lost, old version) | MEASURE deadline | Logged per AP; evaluated with what arrived | FR-AMN-7 |
 
 ## 9. Deployment design
 
@@ -810,3 +833,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.5 | 2026-11-01 | Identifiers renamed to the naming convention of CODING_CONVENTION §4 (camelCase verb-first functions, `mMember`, `sStatic`, `UPPER_CASE` constants and enumerators); function names updated throughout. Behaviour unchanged |
 | 1.6 | 2026-11-06 | Low-power (IoT) device classification: `devclass.cpp` in the module map, §6.11, D15–D16, R16, traceability (FR-LPC) |
 | 1.7 | 2026-11-06 | §6.11: recent-uplink-rate gate, PHY exclusion (configurable, HE allowed), `corrected` records in the rejoin sync; R16 mitigations |
+| 1.8 | 2026-11-06 | AP-side measurement per the four-step exchange: multicast STA_MONITOR_REQ, STA_MONITOR_STATUS from every AP, early end of MEASURE, `vendor_rssi.cpp` (driver per-STA RSSI API placeholder + simulation); §6.10, §7.5, failure paths |
