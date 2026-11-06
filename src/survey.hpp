@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "nlparse.hpp"
 #include "os.hpp"
 #include "types.hpp"
 
@@ -39,6 +40,9 @@ struct SurveyStats {
 	std::uint32_t lastUs{0U};   // time spent in the kernel/driver (send + recv) for the last dump
 	std::uint32_t maxUs{0U};    // the same, worst dump so far
 	std::size_t radios{0U};     // wiphys surveyed
+	std::uint32_t staDumps{0U}; // completed station dumps
+	std::uint32_t staLastUs{0U};
+	std::uint32_t staMaxUs{0U};
 };
 
 class Survey {
@@ -50,6 +54,10 @@ public:
 	static constexpr Millis DUMP_TIMEOUT_MS = 1000U;
 	// A dump that blocks longer than this is reported once (warn).
 	static constexpr std::uint32_t SLOW_US = 20000U;
+	// Station dumps (NL80211_CMD_GET_STATION): interfaces, and stations
+	// kept from the last completed dump of each (all interfaces together).
+	static constexpr std::size_t MAX_STA_IFS = 8U;
+	static constexpr std::size_t MAX_STATIONS = 256U;
 
 	bool open() noexcept;
 	bool isOpen() const noexcept { return mFd.valid() && (mFamily != 0U); }
@@ -66,6 +74,18 @@ public:
 	void onReadable() noexcept;
 	// Abandons a dump the driver has not finished in DUMP_TIMEOUT_MS.
 	void tick(Millis now) noexcept;
+	// Queues one station dump of interface ifindex (per-STA signal,
+	// inactivity, byte counters, rates), the same way as request().
+	void requestStations(int ifindex) noexcept;
+	// Completed station dumps of ifindex so far (0: none yet); a new value
+	// means stations() holds a new list for it.
+	std::uint32_t stationGen(int ifindex) const noexcept;
+	// True while a station dump of ifindex is queued or in flight.
+	bool isStationDumpPending(int ifindex) const noexcept;
+	std::size_t stationCount() const noexcept { return mNSta; }
+	// i-th kept station and the interface it was listed on.
+	const nl::Station &station(std::size_t i) const noexcept { return mSta[i].st; }
+	int stationIfindex(std::size_t i) const noexcept { return mSta[i].ifindex; }
 	// Latest in-use sample of wiphy on freq, or nullptr.
 	const SurveySample *find(std::uint32_t wiphy, int freq) const noexcept;
 	const SurveyStats &stats() const noexcept { return mStats; }
@@ -84,15 +104,36 @@ private:
 		std::size_t nNext{0U};
 	};
 
+	struct StaIf {
+		bool used{false};
+		int ifindex{0};
+		bool queued{false};
+		std::uint32_t gen{0U};
+	};
+	struct KeptStation {
+		int ifindex{0};
+		nl::Station st{};
+	};
+	enum class Kind : std::uint8_t { SURVEY, STATIONS };
+
 	bool resolveFamily() noexcept;
 	void sendNext() noexcept;
+	bool sendSurvey(std::size_t i) noexcept;
+	bool sendStations(std::size_t i) noexcept;
 	void finish(bool ok) noexcept;
 
 	os::Fd mFd{};
 	std::uint16_t mFamily{0U};
 	std::uint32_t mSeq{0U};
 	std::array<Radio, MAX_WIPHY> mRadio{};
-	std::optional<std::size_t> mInFlight{};
+	std::optional<std::size_t> mInFlight{}; // index into mRadio or mStaIf (mKind)
+	Kind mKind{Kind::SURVEY};
+	std::array<StaIf, MAX_STA_IFS> mStaIf{};
+	std::array<KeptStation, MAX_STATIONS> mSta{}; // last completed dumps
+	std::size_t mNSta{0U};
+	std::array<nl::Station, MAX_STATIONS> mStaNext{}; // dump in progress
+	std::size_t mNStaNext{0U};
+	bool mStaNextFull{false};
 	std::uint64_t mBlockedUs{0U}; // time inside send/recv for the dump in flight
 	Millis mDeadline{0U};
 	bool mWarnedSlow{false};

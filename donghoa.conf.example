@@ -57,6 +57,9 @@ ctrl_socket /var/run/donghoa.sock
 #lb_only_idle 1
 #idle_kbps 50
 #lb_interval_ms 10000
+#lb_min_drop_pct 3       # an offload must lower utilisation by this many points
+#lb_max_futile 2         # moves in a row that did not, before pausing
+#lb_hold_ms 300000       # pause of load balancing on that BSS
 #util_weight 2           # score -= util_weight per 10 % target utilisation
 #band_bonus_5g 5
 #band_bonus_6g 8

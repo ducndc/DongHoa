@@ -14,15 +14,13 @@ namespace donghoa {
 namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::SURVEY};
-constexpr std::size_t NL_HDR = 16U;   // struct nlmsghdr
-constexpr std::size_t GENL_HDR = 4U;  // struct genlmsghdr
-constexpr std::size_t ATTR_HDR = 4U;  // struct nlattr
+using nl::align4;
+using nl::ATTR_HDR;
+using nl::findAttr;
+using nl::GENL_HDR;
+using nl::hasAttr;
+using nl::NL_HDR;
 constexpr int RECV_TIMEOUT_MS = 500;
-
-constexpr std::size_t align4(std::size_t n) noexcept
-{
-	return (n + 3U) & ~static_cast<std::size_t>(3U);
-}
 
 // Netlink request built in host byte order (no struct casts).
 class Request {
@@ -64,39 +62,6 @@ private:
 	std::array<std::uint8_t, 64U> mBuf{};
 	std::size_t mLen{0U};
 };
-
-// Attribute of the given type inside attrs, or an empty view.
-ByteView findAttr(ByteView attrs, std::uint16_t type) noexcept
-{
-	ByteView found;
-	std::size_t off = 0U;
-	bool more = true;
-
-	while (more && ((attrs.size() - off) >= ATTR_HDR)) {
-		const std::size_t len = os::loadNe16(attrs, off);
-		const std::uint16_t t = static_cast<std::uint16_t>(os::loadNe16(attrs, off + 2U) &
-								   static_cast<std::uint16_t>(NLA_TYPE_MASK));
-		if ((len < ATTR_HDR) || (len > (attrs.size() - off))) {
-			more = false;
-		} else if (t == type) {
-			found = attrs.sub(off + ATTR_HDR, len - ATTR_HDR);
-			// An attribute may legitimately be empty (a flag): mark found.
-			if (found.empty()) {
-				found = attrs.sub(off, ATTR_HDR);
-			}
-			more = false;
-		} else {
-			off += align4(len);
-			more = off < attrs.size();
-		}
-	}
-	return found;
-}
-
-bool hasAttr(ByteView attrs, std::uint16_t type) noexcept
-{
-	return !findAttr(attrs, type).empty();
-}
 
 // The in-use survey entry carried by msg, if it is one. A single-link
 // wiphy has at most one in-use entry; a multi-link (MLO) wiphy marks every
@@ -248,34 +213,128 @@ void Survey::request(std::uint32_t wiphy, int ifindex) noexcept
 	}
 }
 
+bool Survey::sendSurvey(std::size_t i) noexcept
+{
+	Radio &r = mRadio[i];
+	std::array<std::uint8_t, 4U> idx{};
+
+	r.queued = false;
+	r.nNext = 0U;
+	mSeq++;
+	os::storeNe32(spanOf(idx), 0U, static_cast<std::uint32_t>(r.ifindex));
+	Request q(mFamily, static_cast<std::uint16_t>(NLM_F_REQUEST | NLM_F_DUMP), mSeq,
+		  static_cast<std::uint8_t>(NL80211_CMD_GET_SURVEY), 0U);
+	q.attr(static_cast<std::uint16_t>(NL80211_ATTR_IFINDEX), viewOf(idx));
+	// The kernel fills the first part of the dump (driver calls
+	// included) inside this sendto().
+	const std::uint64_t t0 = os::nowUs();
+	const bool sent = os::sendNetlink(mFd, q.finish());
+	mBlockedUs = os::nowUs() - t0;
+	if (!sent) {
+		mStats.errors++;
+		logging::dbg(LOG_MODULE, "wiphy {}: survey request not sent: {}", r.wiphy, os::lastError());
+	}
+	return sent;
+}
+
+bool Survey::sendStations(std::size_t i) noexcept
+{
+	StaIf &f = mStaIf[i];
+	std::array<std::uint8_t, 4U> idx{};
+
+	f.queued = false;
+	mNStaNext = 0U;
+	mStaNextFull = false;
+	mSeq++;
+	os::storeNe32(spanOf(idx), 0U, static_cast<std::uint32_t>(f.ifindex));
+	Request q(mFamily, static_cast<std::uint16_t>(NLM_F_REQUEST | NLM_F_DUMP), mSeq,
+		  static_cast<std::uint8_t>(NL80211_CMD_GET_STATION), 0U);
+	q.attr(static_cast<std::uint16_t>(NL80211_ATTR_IFINDEX), viewOf(idx));
+	const std::uint64_t t0 = os::nowUs();
+	const bool sent = os::sendNetlink(mFd, q.finish());
+	mBlockedUs = os::nowUs() - t0;
+	if (!sent) {
+		mStats.errors++;
+		logging::dbg(LOG_MODULE, "ifindex {}: station dump not sent: {}", f.ifindex, os::lastError());
+	}
+	return sent;
+}
+
 void Survey::sendNext() noexcept
 {
+	// Survey dumps first (one per radio), then station dumps.
 	for (std::size_t i = 0U; (i < mRadio.size()) && !mInFlight.has_value(); i++) {
-		Radio &r = mRadio[i];
-		if (!(r.used && r.queued)) {
-			continue;
-		}
-		r.queued = false;
-		r.nNext = 0U;
-		std::array<std::uint8_t, 4U> idx{};
-		mSeq++;
-		os::storeNe32(spanOf(idx), 0U, static_cast<std::uint32_t>(r.ifindex));
-		Request q(mFamily, static_cast<std::uint16_t>(NLM_F_REQUEST | NLM_F_DUMP), mSeq,
-			  static_cast<std::uint8_t>(NL80211_CMD_GET_SURVEY), 0U);
-		q.attr(static_cast<std::uint16_t>(NL80211_ATTR_IFINDEX), viewOf(idx));
-		// The kernel fills the first part of the dump (driver calls
-		// included) inside this sendto().
-		const std::uint64_t t0 = os::nowUs();
-		const bool sent = os::sendNetlink(mFd, q.finish());
-		mBlockedUs = os::nowUs() - t0;
-		if (sent) {
+		if (mRadio[i].used && mRadio[i].queued && sendSurvey(i)) {
 			mInFlight = i;
+			mKind = Kind::SURVEY;
 			mDeadline = os::nowMs() + DUMP_TIMEOUT_MS;
-		} else {
-			mStats.errors++;
-			logging::dbg(LOG_MODULE, "wiphy {}: survey request not sent: {}", r.wiphy, os::lastError());
 		}
 	}
+	for (std::size_t i = 0U; (i < mStaIf.size()) && !mInFlight.has_value(); i++) {
+		if (mStaIf[i].used && mStaIf[i].queued && sendStations(i)) {
+			mInFlight = i;
+			mKind = Kind::STATIONS;
+			mDeadline = os::nowMs() + DUMP_TIMEOUT_MS;
+		}
+	}
+}
+
+void Survey::requestStations(int ifindex) noexcept
+{
+	StaIf *f = nullptr;
+	StaIf *spare = nullptr;
+
+	if (!isOpen() || (ifindex <= 0)) {
+		return;
+	}
+	for (StaIf &x : mStaIf) {
+		if (x.used && (x.ifindex == ifindex)) {
+			f = &x;
+		} else if ((spare == nullptr) && !x.used) {
+			spare = &x;
+		} else {
+			// another interface
+		}
+	}
+	if ((f == nullptr) && (spare != nullptr)) {
+		f = spare;
+		*f = StaIf{};
+		f->used = true;
+		f->ifindex = ifindex;
+	}
+	if (f == nullptr) {
+		return;
+	}
+	const bool inFlight = mInFlight.has_value() && (mKind == Kind::STATIONS) && (&mStaIf[*mInFlight] == f);
+	if (!inFlight) {
+		f->queued = true;
+	}
+	if (!mInFlight.has_value()) {
+		sendNext();
+	}
+}
+
+std::uint32_t Survey::stationGen(int ifindex) const noexcept
+{
+	std::uint32_t g = 0U;
+	for (const StaIf &f : mStaIf) {
+		if (f.used && (f.ifindex == ifindex)) {
+			g = f.gen;
+		}
+	}
+	return g;
+}
+
+bool Survey::isStationDumpPending(int ifindex) const noexcept
+{
+	bool p = false;
+	for (std::size_t i = 0U; i < mStaIf.size(); i++) {
+		const StaIf &f = mStaIf[i];
+		if (f.used && (f.ifindex == ifindex)) {
+			p = f.queued || (mInFlight.has_value() && (mKind == Kind::STATIONS) && (*mInFlight == i));
+		}
+	}
+	return p;
 }
 
 void Survey::finish(bool ok) noexcept
@@ -283,10 +342,45 @@ void Survey::finish(bool ok) noexcept
 	if (!mInFlight.has_value()) {
 		return;
 	}
-	Radio &r = mRadio[*mInFlight];
 	const std::uint64_t us = mBlockedUs;
 	const std::uint32_t us32 = (us > 0xffffffffU) ? 0xffffffffU : static_cast<std::uint32_t>(us);
 
+	if (mKind == Kind::STATIONS) {
+		StaIf &f = mStaIf[*mInFlight];
+		mInFlight.reset();
+		if (ok) {
+			// Replace this interface's stations with the new list.
+			std::size_t w = 0U;
+			for (std::size_t i = 0U; i < mNSta; i++) {
+				if (mSta[i].ifindex != f.ifindex) {
+					mSta[w] = mSta[i];
+					w++;
+				}
+			}
+			for (std::size_t i = 0U; (i < mNStaNext) && (w < mSta.size()); i++) {
+				mSta[w].ifindex = f.ifindex;
+				mSta[w].st = mStaNext[i];
+				w++;
+			}
+			mNSta = w;
+			f.gen++;
+			mStats.staDumps++;
+			mStats.staLastUs = us32;
+			if (us32 > mStats.staMaxUs) {
+				mStats.staMaxUs = us32;
+			}
+			if (mStaNextFull) {
+				logging::warn(LOG_MODULE, "ifindex {}: more than {} stations, list truncated", f.ifindex,
+					      MAX_STATIONS);
+			}
+		} else {
+			mStats.errors++;
+			logging::dbg(LOG_MODULE, "ifindex {}: station dump refused by the kernel", f.ifindex);
+		}
+		sendNext();
+		return;
+	}
+	Radio &r = mRadio[*mInFlight];
 	mInFlight.reset();
 	if (ok) {
 		const Millis now = os::nowMs();
@@ -346,6 +440,16 @@ void Survey::onReadable() noexcept
 				finish(true);
 			} else if (type == static_cast<std::uint16_t>(NLMSG_ERROR)) {
 				finish(os::loadNe32(msg, NL_HDR) == 0U); // error 0 = ACK
+			} else if (mKind == Kind::STATIONS) {
+				const std::optional<nl::Station> st = nl::parseStation(msg);
+				if (st.has_value() && (mNStaNext < mStaNext.size())) {
+					mStaNext[mNStaNext] = *st;
+					mNStaNext++;
+				} else if (st.has_value()) {
+					mStaNextFull = true;
+				} else {
+					// not a station entry
+				}
 			} else {
 				Radio &r = mRadio[*mInFlight];
 				const std::optional<SurveySample> s = parseInUse(msg);
@@ -368,9 +472,14 @@ void Survey::tick(Millis now) noexcept
 	if (!mInFlight.has_value() || (now < mDeadline)) {
 		return;
 	}
-	const Radio &r = mRadio[*mInFlight];
 	mStats.timeouts++;
-	logging::warn(LOG_MODULE, "wiphy {}: no survey reply in {} ms, abandoned", r.wiphy, DUMP_TIMEOUT_MS);
+	if (mKind == Kind::STATIONS) {
+		logging::warn(LOG_MODULE, "ifindex {}: no station dump reply in {} ms, abandoned",
+			      mStaIf[*mInFlight].ifindex, DUMP_TIMEOUT_MS);
+	} else {
+		logging::warn(LOG_MODULE, "wiphy {}: no survey reply in {} ms, abandoned", mRadio[*mInFlight].wiphy,
+			      DUMP_TIMEOUT_MS);
+	}
 	mInFlight.reset();
 	// A new socket ends the kernel's half-done dump (a second dump on the
 	// same socket would get EBUSY) and discards its late messages.

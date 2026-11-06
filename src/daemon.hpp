@@ -54,6 +54,23 @@ struct LocalBss {
 	// mac80211_hwsim), and then hostapd's value is used.
 	enum class UtilSrc : std::uint8_t { NONE, SURVEY, HOSTAPD };
 	UtilSrc utilSrc{UtilSrc::NONE};
+	// Per-STA metrics from nl80211 station dumps (asynchronous) instead of
+	// a blocking hostapd STA-FIRST/NEXT round per poll. hostapd is still
+	// listed in full every STA_RESYNC_MS (capabilities, missed events).
+	Millis nextHapdListMs{0U};
+	std::uint32_t nlGenSeen{0U};  // station dump generation processed
+	std::uint32_t nlGenAsked{0U}; // generation when the last dump was asked
+	bool nlAsked{false};
+	int nlMissed{0};              // polls whose dump did not complete
+	bool nlActive{false};         // last poll used the station dump
+	// Load-balancing feedback (runLbRound): the last offload from here.
+	bool lbCheck{false};      // a move to judge
+	Mac lbSta{};
+	Millis lbStartMs{0U};
+	int lbUtilBefore{-1};     // % when it started
+	bool lbByUtil{false};     // triggered by utilisation (not by STA count)
+	int lbFutile{0};          // moves in a row that did not lower utilisation
+	Millis lbHoldUntil{0U};   // offloading paused until then
 	SurveySample surveyPrev{};
 	Millis nextReconnectMs{0U};
 };
@@ -124,7 +141,8 @@ struct Sta {
 	int lpS100{policy::LP_NO_EVIDENCE}; // last behaviour score S x 100
 	std::uint32_t lpSamples{0U}; // evidence behind lpScore (carried across APs)
 	bool lowPower{false};
-	std::uint8_t phyCaps{0U};  // arcp::CAP_VHT/CAP_HE/CAP_EHT it negotiated
+	std::uint8_t phyCaps{0U}; // arcp::CAP_VHT/CAP_HE/CAP_EHT it negotiated
+	bool capsKnown{false}; // capabilities read from hostapd at least once
 };
 
 // Device class of a STA, kept by every AP so that it follows the STA
@@ -322,6 +340,9 @@ public:
 	Sta *getSta(const Mac &addr, std::size_t bss) noexcept;
 	void pollBss() noexcept;
 	void pollStas() noexcept;
+	// New nl80211 station dumps: apply them (main loop, after the survey
+	// socket was read).
+	void processStationDumps() noexcept;
 	void handleEvent(std::size_t bss, std::string_view ev) noexcept;
 	void syncNeighbors() noexcept;
 	void removeNeighbor(const arcp::BssInfo &bi) noexcept;
@@ -387,6 +408,12 @@ private:
 		   int tries) const noexcept;
 	// local.cpp helpers
 	void applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcept;
+	// One poll's signal / traffic of a non-MLD STA (hostapd or nl80211).
+	void applyStaSignal(Sta &s, int signal, std::uint32_t inactiveMs) noexcept;
+	void applyStaTraffic(Sta &s, std::uint64_t rxBytes, std::uint64_t txBytes, std::uint32_t inactiveMs,
+			     std::uint32_t connectedS, std::uint16_t rxRate, std::uint16_t txRate, Millis now) noexcept;
+	void listStasFromHapd(std::size_t bss, Millis start) noexcept;
+	void pruneUnlisted(std::size_t bss, Millis start) noexcept;
 	void updateStaLink(Sta &s, const hapd::Sta &h, std::size_t bss, Millis now) noexcept;
 	// Drops the links of s on bss not polled since start; false when the
 	// STA has no link left.

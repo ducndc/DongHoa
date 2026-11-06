@@ -156,6 +156,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			const SurveyStats &ss = mSurvey.stats();
 			formatTo(o, "survey=nl80211 radios={} dumps={} last_us={} max_us={} timeouts={} errors={}\n",
 				  ss.radios, ss.dumps, ss.lastUs, ss.maxUs, ss.timeouts, ss.errors);
+			formatTo(o, "station_dump=nl80211 dumps={} last_us={} max_us={}\n", ss.staDumps, ss.staLastUs,
+				  ss.staMaxUs);
 		} else {
 			formatTo(o, "survey=off (hostapd chan_util_avg only)\n");
 		}
@@ -168,6 +170,9 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 					 (us == LocalBss::UtilSrc::SURVEY)
 						 ? "survey (nl80211 busy time)"
 						 : ((us == LocalBss::UtilSrc::HOSTAPD) ? "hostapd (chan_util_avg)" : "none"));
+				formatTo(o, "  sta_src={}\n",
+					 mBss[i].nlActive ? "nl80211 station dump (hostapd resync every 10 s)"
+							  : "hostapd STA-FIRST/NEXT");
 			}
 		}
 	} else if (req == "PEERS") {

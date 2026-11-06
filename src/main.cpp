@@ -176,6 +176,7 @@ void Daemon::run() noexcept
 				break;
 			case Src::SURVEY:
 				mSurvey.onReadable();
+				processStationDumps();
 				break;
 			default:
 				break;

@@ -18,6 +18,7 @@ constexpr Millis MEAS_FRESH_MS = 10000U;
 constexpr Millis POOL_HINT_MS = 120000U; // measurement age that still orders the pool
 constexpr Millis REMOTE_HOLD_SLACK_MS = 1500U; // covers ARCP retransmissions
 constexpr Millis AMON_REPORT_SLACK_MS = 500U;
+constexpr Millis LB_ROAM_MS = 2000U;         // roam time allowed before judging an offload
 constexpr Millis BCN_QUIET_BASE_MS = 200U;   // + 2 channel times: no new beacon report -> 11k over  // monitor report delivery after the watch
 constexpr std::uint8_t NO_STATUS = 0xffU;
 
@@ -757,13 +758,48 @@ void Daemon::runLbRound() noexcept
 {
 	const PolicyConfig &p = mCfg.pol;
 	const Millis now = os::nowMs();
+	// Time for the smoothed utilisation to follow a move (EWMA 1/4 per poll)
+	// plus the roam itself.
+	const Millis settle = (5U * static_cast<Millis>(mCfg.staPollMs)) + LB_ROAM_MS;
 
 	for (std::size_t b = 0U; b < mNBss; b++) {
-		const LocalBss &lb = mBss[b];
+		LocalBss &lb = mBss[b];
 		Sta *pick = nullptr;
+		const int utilPct = policy::utilToPct(lb.load.util);
 
-		if (!lb.up || !policy::isBssOverloaded(p, policy::utilToPct(lb.load.util), lb.load.staCount,
-						       lb.cfg->maxSta)) {
+		if (!lb.up || (now < lb.lbHoldUntil)) {
+			continue;
+		}
+		if (lb.lbCheck) {
+			// Judge the last offload before starting another one.
+			const Sta *const prev = findSta(lb.lbSta);
+			const bool moved = (prev == nullptr) || (prev->bss != b) || prev->away;
+			const bool running = findTxnBySta(lb.lbSta) != nullptr;
+			if (running || (moved && (now < (lb.lbStartMs + settle)))) {
+				continue; // too early to tell
+			}
+			lb.lbCheck = false;
+			if (moved && lb.lbByUtil) {
+				if (policy::isLbMoveEffective(p, lb.lbUtilBefore, utilPct)) {
+					lb.lbFutile = 0;
+				} else {
+					lb.lbFutile++;
+					logging::info(LOG_MODULE, "bss {}: offloading {} did not lower utilisation ({}% -> {}%), {} in a row",
+						      lb.cfg->ifname, lb.lbSta, lb.lbUtilBefore, utilPct, lb.lbFutile);
+					if (lb.lbFutile >= p.lbMaxFutile) {
+						lb.lbFutile = 0;
+						lb.lbHoldUntil = now + static_cast<Millis>(p.lbHoldMs);
+						logging::warn(LOG_MODULE,
+							      "bss {}: load balancing paused for {} s: moving STAs does not lower "
+							      "utilisation (airtime of other networks or interference?)",
+							      lb.cfg->ifname, p.lbHoldMs / 1000);
+						continue;
+					}
+				}
+			}
+		}
+		if (!policy::isBssOverloaded(p, utilPct, lb.load.staCount, lb.cfg->maxSta)) {
+			lb.lbFutile = 0;
 			continue;
 		}
 		// Weakest eligible STA first: it costs the most airtime per bit.
@@ -778,8 +814,15 @@ void Daemon::runLbRound() noexcept
 		}
 		if (pick != nullptr) {
 			logging::info(LOG_MODULE, "bss {} overloaded (util {}%, {} STA): offloading {}", lb.cfg->ifname,
-				      policy::utilToPct(lb.load.util), lb.load.staCount, pick->addr);
-			(void)startSteer(*pick, arcp::SteerReason::LOAD, nullptr);
+				      utilPct, lb.load.staCount, pick->addr);
+			if (startSteer(*pick, arcp::SteerReason::LOAD, nullptr)) {
+				const bool byCount = (lb.cfg->maxSta != 0) && (lb.load.staCount >= lb.cfg->maxSta);
+				lb.lbCheck = true;
+				lb.lbSta = pick->addr;
+				lb.lbStartMs = now;
+				lb.lbUtilBefore = utilPct;
+				lb.lbByUtil = !byCount;
+			}
 		}
 	}
 }

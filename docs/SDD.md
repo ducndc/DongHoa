@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.1, 2026-11-06 (history in §13) |
+| Document version | 2.2, 2026-11-06 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -79,6 +79,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `sha256.{hpp,cpp}` | pure | SHA-256 and HMAC-SHA256 | `Sha256`, `computeHmacSha256` | FR-SEC-1,3 |
 | `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
 | `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
+| `nlparse.{hpp,cpp}` | pure | nl80211 attribute lookup and station-dump entry parsing | `nl::findAttr`, `nl::parseStation` | NFR-PRF-4 |
 | `config.{hpp,cpp}` | pure | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
 | `log.{hpp,cpp}` | pure | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
 | `hapd_parse.{hpp,cpp}` | pure | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
@@ -323,9 +324,22 @@ command socket are skipped.
 5. If the BSS came up or its info changed, clear every remote
    `nrInstalled` flag and run `syncNeighbors`.
 
-**STA poll (`pollStas`):**
-- Walk `STA-FIRST`/`STA-NEXT`, at most 256 per BSS, and keep only
-  `[AUTHORIZED]` STAs.
+**STA poll (`pollStas`):** two sources.
+- *nl80211 station dump* (default when nl80211 is there and the BSS is not
+  an AP MLD link): `pollStas` only queues `NL80211_CMD_GET_STATION` for the
+  BSS's interface (`Survey::requestStations`, the same one-dump-in-flight
+  queue as the survey). When the dump completes, the main loop calls
+  `processStationDumps`: authorised stations (`nl::parseStation`, pure, in
+  `nlparse.cpp`) get `applyStaSignal` (the kernel's `signal avg` when
+  present) and `applyStaTraffic`; a STA seen for the first time on the BSS
+  gets one hostapd `STA <addr>` for its capabilities. Unlisted STAs are
+  pruned and the listed ones go to `onStaPoll` there. Measured on QEMU: 6
+  hostapd STA round trips per 20 s instead of one per STA per BSS per
+  second; a dump holds the loop ≤ 110 µs.
+- *hostapd listing* every `STA_RESYNC_MS` (10 s), on the first poll, for
+  AP MLD links, without nl80211, or after two dumps in a row that did not
+  complete (`nlMissed`): walk `STA-FIRST`/`STA-NEXT`, at most 256 per BSS,
+  and keep only `[AUTHORIZED]` STAs.
 - `applyStaSample` updates RSSI (EWMA ¾, rounded), the low-sample count,
   throughput from Δbytes, rates and inactivity, and derives the capability
   flags [FR-MON-3].
@@ -508,7 +522,15 @@ are released in `onStaEvent` (association at this AP), in
   - otherwise RSSI trigger first, then band trigger.
 - `runLbRound`, every `lb_interval_ms`: for each overloaded BSS, pick
   the eligible STA with the lowest RSSI and start a LOAD steer. One STA per
-  BSS per round limits churn.
+  BSS per round limits churn. Feedback: the BSS remembers the offload
+  (`lbCheck`, STA, start time, utilisation, utilisation- or count-
+  triggered) and starts no other until it can judge it, 5 polls + 2 s after
+  the start with the STA gone. `policy::isLbMoveEffective` asks for a drop
+  of `lb_min_drop_pct`; after `lb_max_futile` futile utilisation-triggered
+  moves, `lbHoldUntil` pauses the BSS for `lb_hold_ms`. Why: with
+  `lb_only_idle`, the STAs moved use little airtime, and busy time of
+  other networks does not move with them; without feedback every idle STA
+  was pushed out every 10 s with no relief (itest PASS 14).
 - Manual (`ctrl.cpp` `STEER`): clears the STA's cooldown and calls
   `startSteer(MANUAL, target)`.
 
@@ -861,3 +883,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.9 | 2026-11-06 | §6.11: idle polls are no evidence (`lastActive`); QEMU system test S14 (measurement exchange) and S15 (low-power on real counters) |
 | 2.0 | 2026-11-06 | §6.6: ranked candidate pool and per-STA peer rotation for networks with more than 16 candidate BSSes; 12-AP itest |
 | 2.1 | 2026-11-06 | §6.6: 11k quiet period ends MEASURE; RSSI samples count only when fresh (`policy::isSignalFresh`, `inactive_msec`); `STATUS` util_src per BSS |
+| 2.2 | 2026-11-06 | §6.4: per-STA metrics from nl80211 station dumps (`nlparse.cpp`, `Survey::requestStations`, `processStationDumps`), hostapd listing every 10 s; §6.6: load-balancing feedback and pause |

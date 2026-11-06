@@ -31,9 +31,10 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 | `l2` | Raw `AF_PACKET` ports and UDP "sim" ports for tests. |
 | `hapd` | hostapd control interface (commands, events), with the reply parsers in `hapd_parse`. |
 | `survey` | nl80211 `GET_SURVEY` over raw generic netlink for channel utilisation and noise: asynchronous (reply read from the main loop), one dump per radio per poll, time spent in the driver measured (`donghoa_cli STATUS`: `survey=nl80211 radios= dumps= last_us= max_us= timeouts= errors=`). |
+| `nlparse` | Pure parsing of nl80211 messages: attribute lookup and station-dump entries (signal, signal average, inactivity, byte counters, rates, authorised flag). Unit-tested on synthetic kernel messages. |
 | `msg` | Periodic broadcasts, reliable unicast (ACK_REQ, retransmit), RX dispatch, learning the path to each peer. |
 | `peer` | Peer table, replay window, remote BSS and load, remote STA locations, expiry. |
-| `local` | Polls hostapd (`STATUS`, `STA-FIRST/NEXT`, `GET_CONFIG`) and nl80211; keeps the STA table (EWMA of RSSI, throughput); handles hostapd events; installs local sibling and remote BSSes into hostapd's neighbor database (`SET_NEIGHBOR` / `REMOVE_NEIGHBOR`). |
+| `local` | Polls hostapd (`STATUS`, `GET_CONFIG`; `STA-FIRST/NEXT` every 10 s and for new STAs) and nl80211 (survey, and a station dump per BSS each poll for per-STA metrics); keeps the STA table (EWMA of RSSI, throughput); handles hostapd events; installs local sibling and remote BSSes into hostapd's neighbor database (`SET_NEIGHBOR` / `REMOVE_NEIGHBOR`). |
 | `steer` | Steering state machine on the source AP, and admission/reservations on the target AP. |
 | `devclass` | Low-power (IoT) device classification from each local STA's uplink/downlink traffic variability (arithmetic in `policy`), the device class table shared with peers (STA_CLASS, `PROTOCOL.md` §8), and the restore on (re)association. |
 | `amon` | AP-side STA measurement: radiotap monitor sockets (BPF-filtered to uplink data and probe requests) and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ (multicast) / REPORT with a STATUS from every AP. Lets STAs without 11k measurements be steered. |

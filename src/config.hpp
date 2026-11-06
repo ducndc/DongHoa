@@ -55,6 +55,13 @@ struct PolicyConfig {
 	bool lbOnlyIdle{true};
 	int idleKbps{50};
 	int lbIntervalMs{10000};
+	// Feedback: after a utilisation-triggered offload, utilisation must
+	// drop by lb_min_drop_pct points; after lb_max_futile moves that did
+	// not, offloading from that BSS pauses for lb_hold_ms (busy time of
+	// other networks or interference does not go away by moving STAs).
+	int lbMinDropPct{3};
+	int lbMaxFutile{2};
+	int lbHoldMs{300000};
 
 	int utilWeight{2};       // score penalty per 10 % target utilisation
 	int bandBonus5g{5};

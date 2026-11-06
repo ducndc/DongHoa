@@ -31,7 +31,7 @@ make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa dongho
 
 The unit tests form one binary with no filter. To focus on one area,
 comment out calls in `main()` of `tests/test_unit.cpp`. Run `make itest`
-after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 13`.
+after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 14`.
 
 ## Architecture essentials
 
@@ -46,10 +46,11 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 13`.
   `os::` functions with `os::Fd` (RAII), `ByteView`/`ByteSpan` and
   `std::string_view`. A new system call goes into `os.cpp`.
 - **Pure, unit-testable layer:** `text`, `proto`, `rrm`, `policy`, `config`,
-  `sha256` and `hapd_parse`. Keep I/O out of these modules. Put new decision
+  `sha256`, `hapd_parse` and `nlparse` (nl80211 message parsing). Keep I/O out of these modules. Put new decision
   logic in `policy.cpp` and new 802.11 byte layouts in `rrm.cpp`.
 - **I/O layer:** `l2.cpp` (raw sockets), `hapd.cpp` (hostapd control socket),
-  `survey.cpp` (nl80211 via raw genetlink; deliberately no libnl dependency),
+  `survey.cpp` (nl80211 via raw genetlink, deliberately no libnl dependency:
+  channel survey and per-BSS station dumps for the per-STA metrics),
   `amon.cpp` (radiotap air monitors and the driver per-STA RSSI API; the
   frame parser itself is pure, in `rrm.cpp`), `vendor_rssi.cpp` (that driver
   API: vendor placeholder marked TODO(vendor), plus the `sta_rssi_sim` file

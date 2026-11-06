@@ -179,6 +179,11 @@ bool isLbStaEligible(const PolicyConfig &p, std::uint32_t tputKbps) noexcept
 	return (!p.lbOnlyIdle) || (tputKbps < static_cast<std::uint32_t>(p.idleKbps));
 }
 
+bool isLbMoveEffective(const PolicyConfig &p, int utilBeforePct, int utilNowPct) noexcept
+{
+	return (utilBeforePct < 0) || (utilNowPct < 0) || (utilNowPct <= (utilBeforePct - p.lbMinDropPct));
+}
+
 arcp::SteerStatus admit(const PolicyConfig &p, int utilPct, int staCount, int reserved,
 			int maxSta) noexcept
 {

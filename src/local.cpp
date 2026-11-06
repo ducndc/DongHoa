@@ -11,6 +11,9 @@ namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::LOCAL};
 constexpr Millis RECONNECT_MS = 5000U;
+// Full hostapd STA listing while the per-poll metrics come from nl80211
+// station dumps: capabilities that change, and STAs whose events were missed.
+constexpr Millis STA_RESYNC_MS = 10000U;
 
 // ifindex of the netdev behind a hostapd control socket name ("<netdev>"
 // or, for an AP MLD link, "<netdev>_link<id>"); 0 if there is none.
@@ -192,6 +195,38 @@ bool Daemon::pruneStaLinks(Sta &s, std::size_t bss, Millis start) noexcept
 	return n > 0U;
 }
 
+void Daemon::applyStaSignal(Sta &s, int signal, std::uint32_t inactiveMs) noexcept
+{
+	if ((signal != 0) && ((s.rssi == 0) || policy::isSignalFresh(inactiveMs, mCfg.staPollMs))) {
+		s.rssi = (s.rssi != 0) ? (((3 * s.rssi) + signal) - 2) / 4 : signal;
+		s.lowCount = (signal < mCfg.pol.rssiLow) ? (s.lowCount + 1) : 0;
+	} else {
+		// No signal, or the same old frame's (idle STA): neither the
+		// average nor the low count moves.
+	}
+}
+
+void Daemon::applyStaTraffic(Sta &s, std::uint64_t rxBytes, std::uint64_t txBytes, std::uint32_t inactiveMs,
+			     std::uint32_t connectedS, std::uint16_t rxRate, std::uint16_t txRate, Millis now) noexcept
+{
+	const std::uint64_t total = rxBytes + txBytes;
+	const std::uint64_t prev = s.rxBytes + s.txBytes;
+	if ((s.bytesTs != 0U) && (now > s.bytesTs) && (total >= prev)) {
+		s.tputKbps = static_cast<std::uint32_t>(((total - prev) * 8U) / (now - s.bytesTs));
+		// counted from the AP: rx = uplink, tx = downlink
+		if ((rxBytes >= s.rxBytes) && (txBytes >= s.txBytes)) {
+			sampleTraffic(s, rxBytes - s.rxBytes, txBytes - s.txBytes, now - s.bytesTs);
+		}
+	}
+	s.rxBytes = rxBytes;
+	s.txBytes = txBytes;
+	s.bytesTs = now;
+	s.inactiveMs = inactiveMs;
+	s.connectedS = connectedS;
+	s.txRate = txRate;
+	s.rxRate = rxRate;
+}
+
 void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcept
 {
 	const PolicyConfig &p = mCfg.pol;
@@ -202,35 +237,15 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcep
 		s.mld = true;
 		s.maxSimulLinks = h.maxSimulLinks;
 		updateStaLink(s, h, bss, now);
-	} else if ((h.signal != 0) && ((s.rssi == 0) || policy::isSignalFresh(h.inactiveMs, mCfg.staPollMs))) {
-		s.rssi = (s.rssi != 0) ? (((3 * s.rssi) + h.signal) - 2) / 4 : h.signal;
-		s.lowCount = (h.signal < p.rssiLow) ? (s.lowCount + 1) : 0;
 	} else {
-		// No signal, or the same old frame's (idle STA): neither the
-		// average nor the low count moves.
+		applyStaSignal(s, h.signal, h.inactiveMs);
 	}
 	// An MLD STA is listed on each link: take traffic counters from one
 	// link only (the first one seen), or the deltas mix two sources.
 	const bool counters = !s.mld || (s.links[0U].used && (s.links[0U].bss == bss));
 	if (counters) {
-		const std::uint64_t total = h.rxBytes + h.txBytes;
-		const std::uint64_t prev = s.rxBytes + s.txBytes;
-		if ((s.bytesTs != 0U) && (now > s.bytesTs) && (total >= prev)) {
-			s.tputKbps = static_cast<std::uint32_t>(((total - prev) * 8U) / (now - s.bytesTs));
-			// hostapd counts from the AP: rx = uplink, tx = downlink
-			if ((h.rxBytes >= s.rxBytes) && (h.txBytes >= s.txBytes)) {
-				sampleTraffic(s, h.rxBytes - s.rxBytes, h.txBytes - s.txBytes, now - s.bytesTs);
-			}
-		}
-		s.rxBytes = h.rxBytes;
-		s.txBytes = h.txBytes;
-		s.bytesTs = now;
-		s.inactiveMs = h.inactiveMs;
-		s.connectedS = h.connectedS;
-		s.txRate = h.txRateMbps;
-		s.rxRate = h.rxRateMbps;
+		applyStaTraffic(s, h.rxBytes, h.txBytes, h.inactiveMs, h.connectedS, h.rxRateMbps, h.txRateMbps, now);
 	}
-
 	if (h.bands != 0U) {
 		s.bandsAdv = h.bands;
 	}
@@ -251,6 +266,7 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcep
 	if (assume && !s.bcnUnsupported) {
 		s.flags = static_cast<std::uint8_t>(s.flags | arcp::STA_F11K);
 	}
+	s.capsKnown = true;
 	s.lastPollMs = now;
 }
 
@@ -415,56 +431,149 @@ void Daemon::pollBss() noexcept
 	}
 }
 
+// Full hostapd listing of one BSS (STA-FIRST / STA-NEXT): capabilities
+// and metrics of every STA, one blocking round trip per STA.
+void Daemon::listStasFromHapd(std::size_t i, Millis start) noexcept
+{
+	LocalBss &b = mBss[i];
+	hapd::Reply reply;
+	FixedString<64U> cmd{"STA-FIRST"};
+
+	for (std::size_t guard = 0U; guard < MAX_STA; guard++) {
+		std::optional<hapd::Sta> h;
+		if (b.hapd.runCommand(cmd.view(), reply) && !reply.empty()) {
+			h = hapd::parseSta(reply.view());
+		}
+		if (!h.has_value()) {
+			break;
+		}
+		cmd.clear();
+		formatTo(cmd, "STA-NEXT {}", h->addr);
+		if (h->authorized) {
+			Sta *const s = getSta(h->addr, i);
+			if (s != nullptr) {
+				applyStaSample(*s, *h, i);
+			}
+		}
+	}
+	if (!b.hapd.isOpen()) {
+		markBssDown(i);
+		return;
+	}
+	pruneUnlisted(i, start);
+}
+
+// Drop STAs of a BSS that the listing since start did not report (missed
+// events); for an MLD STA only the link on this BSS, the STA when no link
+// is left.
+void Daemon::pruneUnlisted(std::size_t i, Millis start) noexcept
+{
+	for (Sta &s : mSta) {
+		if (!s.used) {
+			continue;
+		}
+		const bool gone = s.mld ? !pruneStaLinks(s, i, start)
+					: ((s.bss == i) && (s.lastPollMs < start) && (s.lastPollMs != 0U));
+		if (gone) {
+			onLocalDisassoc(s.addr);
+			saveDevClass(s);
+			s.used = false;
+		}
+	}
+}
+
 void Daemon::pollStas() noexcept
 {
 	const Millis start = os::nowMs();
-	hapd::Reply reply;
 
 	for (std::size_t i = 0U; i < mNBss; i++) {
 		LocalBss &b = mBss[i];
 		if (!b.up) {
 			continue;
 		}
-		FixedString<64U> cmd{"STA-FIRST"};
-		for (std::size_t guard = 0U; guard < MAX_STA; guard++) {
-			std::optional<hapd::Sta> h;
-			if (b.hapd.runCommand(cmd.view(), reply) && !reply.empty()) {
-				h = hapd::parseSta(reply.view());
+		// The previous poll's dump should be done by now; twice not: fall
+		// back to hostapd for this poll.
+		if (b.nlAsked && (mSurvey.stationGen(b.ifindex) == b.nlGenAsked)) {
+			b.nlMissed++;
+		} else {
+			b.nlMissed = 0;
+		}
+		const bool nl = mSurvey.isOpen() && (b.ifindex > 0) && !b.info.isMldLink() &&
+				(start < b.nextHapdListMs) && (b.nlMissed < 2);
+		if (nl) {
+			b.nlGenAsked = mSurvey.stationGen(b.ifindex);
+			b.nlAsked = true;
+			b.nlActive = true;
+			mSurvey.requestStations(b.ifindex); // processStationDumps() applies it
+			continue;
+		}
+		if (b.nlMissed >= 2) {
+			logging::warn(LOG_MODULE, "bss {}: station dumps not completing, polling hostapd", b.cfg->ifname);
+			b.nlMissed = 0;
+		}
+		b.nlAsked = false;
+		b.nlActive = false;
+		listStasFromHapd(i, start);
+		b.nextHapdListMs = start + STA_RESYNC_MS;
+	}
+	for (Sta &s : mSta) {
+		if (s.used && (s.lastPollMs >= start)) {
+			onStaPoll(s);
+		}
+	}
+}
+
+void Daemon::processStationDumps() noexcept
+{
+	for (std::size_t i = 0U; i < mNBss; i++) {
+		LocalBss &b = mBss[i];
+		const std::uint32_t gen = (b.up && (b.ifindex > 0)) ? mSurvey.stationGen(b.ifindex) : 0U;
+		if ((gen == 0U) || (gen == b.nlGenSeen)) {
+			continue;
+		}
+		b.nlGenSeen = gen;
+		if (!b.nlActive) {
+			continue; // this BSS is on the hostapd path now
+		}
+		const Millis start = os::nowMs();
+		for (std::size_t k = 0U; k < mSurvey.stationCount(); k++) {
+			if (mSurvey.stationIfindex(k) != b.ifindex) {
+				continue;
 			}
-			if (!h.has_value()) {
-				break;
+			const nl::Station &n = mSurvey.station(k);
+			if (!n.authorized) {
+				continue;
 			}
-			cmd.clear();
-			formatTo(cmd, "STA-NEXT {}", h->addr);
-			if (h->authorized) {
-				Sta *const s = getSta(h->addr, i);
+			Sta *s = findSta(n.addr);
+			if ((s == nullptr) || (s->bss != i) || !s->capsKnown || s->mld) {
+				// First sight on this BSS: capabilities from hostapd, once.
+				hapd::Reply reply;
+				FixedString<64U> cmd;
+				formatTo(cmd, "STA {}", n.addr);
+				const std::optional<hapd::Sta> h = (b.hapd.runCommand(cmd.view(), reply) && !reply.empty())
+									   ? hapd::parseSta(reply.view())
+									   : std::optional<hapd::Sta>();
+				s = (h.has_value() && h->authorized) ? getSta(h->addr, i) : nullptr;
 				if (s != nullptr) {
 					applyStaSample(*s, *h, i);
 				}
+				continue;
 			}
+			// The kernel's per-frame average where it has one.
+			applyStaSignal(*s, (n.signalAvg != 0) ? n.signalAvg : n.signal, n.inactiveMs);
+			applyStaTraffic(*s, n.rxBytes, n.txBytes, n.inactiveMs, n.connectedS, n.rxRateMbps, n.txRateMbps,
+					start);
+			s->lastPollMs = start;
 		}
 		if (!b.hapd.isOpen()) {
 			markBssDown(i);
 			continue;
 		}
-		// Drop STAs hostapd no longer reports (missed events); for an MLD
-		// STA only the link on this BSS, the STA when no link is left.
+		pruneUnlisted(i, start);
 		for (Sta &s : mSta) {
-			if (!s.used) {
-				continue;
+			if (s.used && (s.bss == i) && (s.lastPollMs >= start)) {
+				onStaPoll(s);
 			}
-			const bool gone = s.mld ? !pruneStaLinks(s, i, start)
-						: ((s.bss == i) && (s.lastPollMs < start) && (s.lastPollMs != 0U));
-			if (gone) {
-				onLocalDisassoc(s.addr);
-				saveDevClass(s);
-				s.used = false;
-			}
-		}
-	}
-	for (Sta &s : mSta) {
-		if (s.used && (s.lastPollMs >= start)) {
-			onStaPoll(s);
 		}
 	}
 }

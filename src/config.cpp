@@ -54,7 +54,7 @@ constexpr std::array<PolBool, 13U> POL_BOOLS{{
 	{"lp_exclude_eht", &PolicyConfig::lpExcludeEht},
 }};
 
-constexpr std::array<PolInt, 38U> POL_INTS{{
+constexpr std::array<PolInt, 41U> POL_INTS{{
 	{"rssi_low", &PolicyConfig::rssiLow},
 	{"rssi_low_count", &PolicyConfig::rssiLowCount},
 	{"rssi_hysteresis", &PolicyConfig::rssiHysteresis},
@@ -67,6 +67,9 @@ constexpr std::array<PolInt, 38U> POL_INTS{{
 	{"lb_rssi_tolerance", &PolicyConfig::lbRssiTolerance},
 	{"idle_kbps", &PolicyConfig::idleKbps},
 	{"lb_interval_ms", &PolicyConfig::lbIntervalMs},
+	{"lb_min_drop_pct", &PolicyConfig::lbMinDropPct},
+	{"lb_max_futile", &PolicyConfig::lbMaxFutile},
+	{"lb_hold_ms", &PolicyConfig::lbHoldMs},
 	{"util_weight", &PolicyConfig::utilWeight},
 	{"band_bonus_5g", &PolicyConfig::bandBonus5g},
 	{"band_bonus_6g", &PolicyConfig::bandBonus6g},

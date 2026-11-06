@@ -292,6 +292,27 @@ kill %1 2>/dev/null; ip addr del 10.99.0.2/24 dev sta0')
 		"$(echo "$out" | grep -E "idle|busy" | tr "\n" " ")ap2: ${peer:-none}"
 }
 
+s16() {
+	# Per-STA metrics from nl80211 station dumps, not a blocking hostapd
+	# STA-FIRST/STA-NEXT round per STA every poll (resync every 10 s).
+	out=$(rv 1 'waitlink; d0=$(donghoa_cli $C STATUS | sed -n "s/^station_dump=nl80211 dumps=\([0-9]*\).*/\1/p")
+donghoa_cli $C LOG debug hapd >/dev/null; m=S16-$$; mark $m; sleep 12; donghoa_cli $C LOG info hapd >/dev/null
+d1=$(donghoa_cli $C STATUS | sed -n "s/^station_dump=nl80211 dumps=\([0-9]*\).*/\1/p")
+echo "dumps=$((d1 - d0)) next=$(since $m | grep -c "> STA-NEXT") src=$(donghoa_cli $C STATUS | grep -c "sta_src=nl80211")"
+b=$(link); dev=$(iw dev ap-2g station dump | grep -q Station && echo ap-2g || echo ap-5g)
+echo "rssi=$(donghoa_cli $C STAS | grep "^sta '"$STA"'" | sed -n "s/.* rssi=\(-[0-9]*\) .*/\1/p")"
+echo "kernel=$(iw dev $dev station dump | awk "/signal avg:/{print \$3; exit}")"')
+	dumps=$(echo "$out" | sed -n 's/.*dumps=\([0-9]*\).*/\1/p')
+	next=$(echo "$out" | sed -n 's/.*next=\([0-9]*\).*/\1/p')
+	src=$(echo "$out" | sed -n 's/.*src=\([0-9]*\).*/\1/p')
+	rssi=$(echo "$out" | sed -n 's/^rssi=//p')
+	kern=$(echo "$out" | sed -n 's/^kernel=//p')
+	[ "${dumps:-0}" -ge 10 ] && [ "${next:-99}" -le 2 ] && [ "${src:-0}" -ge 2 ] && [ -n "$rssi" ] && [ -n "$kern" ] &&
+		[ $((rssi - kern)) -le 3 ] && [ $((kern - rssi)) -le 3 ]
+	result "S16 STA metrics from nl80211 station dumps" $? \
+		"${dumps:-?} dumps / ${next:-?} STA-NEXT in 12 s; rssi ${rssi:-?} vs kernel avg ${kern:-?} dBm"
+}
+
 # ---- main ----
 
 SELECT="$*"
@@ -299,7 +320,7 @@ trap cleanup EXIT INT TERM
 echo "--- preparing (cooldown 3 s while testing)"
 setup || { echo "setup failed: are ap1 and ap2 running and provisioned?"; exit 2; }
 STA=""
-for s in s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15; do
+for s in s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16; do
 	id=$(echo "$s" | tr s S)
 	if [ "$s" = s3 ] || want "$id" || { [ "$s" = s4 ] && want S5; }; then
 		$s

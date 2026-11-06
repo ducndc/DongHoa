@@ -60,6 +60,10 @@ bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept;
 bool isBandTriggered(const PolicyConfig &p, std::uint8_t band, int rssi) noexcept;
 bool isBssOverloaded(const PolicyConfig &p, int utilPct, int staCount, int maxSta) noexcept;
 bool isLbStaEligible(const PolicyConfig &p, std::uint32_t tputKbps) noexcept;
+// Did offloading a STA lower the source BSS's utilisation enough (by
+// lb_min_drop_pct points)? Unknown utilisation (-1) on either side: no
+// judgement, true.
+bool isLbMoveEffective(const PolicyConfig &p, int utilBeforePct, int utilNowPct) noexcept;
 // Target-side admission control for STEER_REQ.
 arcp::SteerStatus admit(const PolicyConfig &p, int utilPct, int staCount, int reserved,
 			int maxSta) noexcept;

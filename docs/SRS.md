@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.0, 2026-11-06 (history in Appendix B) |
+| Document version | 2.1, 2026-11-06 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -215,7 +215,7 @@ interface, and it learns about STAs from hostapd's output and events.
 |---|---|---|
 | FR-TRG-1 | **RSSI.** With `rssi_steering` on, a STA whose smoothed RSSI is below `rssi_low` (−75 dBm), after `rssi_low_count` (3) consecutive low samples, shall trigger a steer with reason RSSI. A sample counts (for the low count and the smoothed RSSI) only when the STA sent a frame within the last poll interval (hostapd `inactive_msec`); an idle STA's signal is its last frame's and shall not count again on every poll. | T-U `test_policy`, T-I 3 |
 | FR-TRG-2 | **Band.** With `band_steering` on, a STA on 2.4 GHz whose RSSI is at least `band_steer_rssi` (−55 dBm) shall trigger a steer with reason BAND, towards higher bands only, when it can use a higher band (FR-TRG-6). With `band_steer_6g` also on, a STA on 5 GHz whose RSSI is at least `band_steer_6g_rssi` (−55 dBm) shall trigger a BAND steer towards 6 GHz, only when 6 GHz is advertised or seen for it and not blocked. After a band steer in which no candidate was measured, the next band steer of that STA shall wait `steer_cooldown_ms` × 2^n (n = such steers in a row, capped at `steer_backoff_max_ms`); a 5/6 GHz level of the STA resets n. | T-U, T-I 7, 8, T-O |
-| FR-TRG-3 | **Load.** Every `lb_interval_ms` (10000), with `load_balancing` on, each BSS whose utilisation is at least `util_high` (70 %) or whose STA count has reached `max_sta` shall offload one STA: the weakest STA that is eligible. With `lb_only_idle`, only STAs below `idle_kbps` qualify. | T-U, T-I 4 |
+| FR-TRG-3 | **Load.** Every `lb_interval_ms` (10000), with `load_balancing` on, each BSS whose utilisation is at least `util_high` (70 %) or whose STA count has reached `max_sta` shall offload one STA: the weakest STA that is eligible. With `lb_only_idle`, only STAs below `idle_kbps` qualify. After a utilisation-triggered offload has moved its STA, the next offload from that BSS shall wait until the move can be judged (5 polls + 2 s); a move that did not lower the BSS's utilisation by `lb_min_drop_pct` (3) points counts as futile, and after `lb_max_futile` (2) futile moves in a row the BSS shall stop offloading for `lb_hold_ms` (300 s), with a warning naming the likely cause (airtime of other networks or interference). | T-U, T-I 4, 14 |
 | FR-TRG-4 | **Manual.** `STEER <sta> [<bssid>]` shall start a steer with reason MANUAL. It ignores the STA's cooldown and, when a BSSID is given, considers only that BSS. | T-O |
 | FR-TRG-6 | **STA bands.** The daemon shall take the bands a STA advertises from hostapd's `supp_op_classes` (Supported Operating Classes: 81–84 = 2.4 GHz, 115–129 = 5 GHz, 131–137 = 6 GHz, up to the 130 or 0 delimiter), and add every band the STA was associated or measured on. A STA whose association AKM is PSK, FT-PSK or PSK-SHA256 (not allowed on 6 GHz) shall have 6 GHz blocked. Automatic steers shall consider only candidates on usable bands. A STA that advertises no classes counts as able to use every band that is not blocked. | T-U `test_rrm`, `test_policy`, `test_hapd_parsers`, T-I 7, 8 |
 | FR-TRG-5 | Automatic triggers shall skip a STA that lacks 11v, is "away", is in cooldown or backoff, or already has a transaction. | I |
@@ -315,7 +315,7 @@ The method is defined in `docs/PROTOCOL.md` §8.
 | NFR-PRF-1 | The event loop shall wake at least every 100 ms, so that timer resolution is ≤ 100 ms plus processing time. | I |
 | NFR-PRF-2 | A beacon report covering every candidate shall lead to the BTM Request without waiting for the measurement timeout. | T-O (BTM 0.4 ms after the report) |
 | NFR-PRF-3 | A new peer shall be learned within one `hello_interval_ms` of being reachable, and a lost peer forgotten within `peer_timeout_ms`. | T-I 1, I |
-| NFR-PRF-4 | Every blocking call shall be bounded: hostapd command ≤ 1 s. The nl80211 survey shall not wait for its reply (it is read from the main loop) and shall be abandoned after 1 s; it shall run once per radio per poll, whatever the number of BSSes on the radio, and the time spent in the driver per dump shall be measured and reported in `STATUS`. | I, T-O |
+| NFR-PRF-4 | Every blocking call shall be bounded: hostapd command ≤ 1 s. Per-STA metrics (signal, signal average, inactivity, byte counters, rates) shall come from an nl80211 station dump per BSS, read from the main loop without waiting, with a full hostapd `STA-FIRST`/`STA-NEXT` listing only every 10 s (capabilities, missed events), for a STA seen for the first time (`STA <addr>`), for AP MLD links, and as fallback when nl80211 is unavailable or two dumps in a row do not complete; `STATUS` shall show the source per BSS (`sta_src`). The nl80211 survey shall not wait for its reply (it is read from the main loop) and shall be abandoned after 1 s; it shall run once per radio per poll, whatever the number of BSSes on the radio, and the time spent in the driver per dump shall be measured and reported in `STATUS`. | I, T-O |
 
 Measured, not required (hwsim on QEMU): a local band steer, from trigger to
 association, took 397–407 ms. A cross-AP STEER_REQ → STEER_RESP round trip
@@ -415,6 +415,7 @@ measurement timeout.
 | `band_steer_6g_rssi` | −55 | dBm |
 | `util_high` / `util_admit_max` / `lb_margin` | 70 / 80 / 15 | % |
 | `lb_rssi_tolerance` / `lb_only_idle` / `idle_kbps` / `lb_interval_ms` | 5 / 1 / 50 / 10000 | dB / bool / kbit/s / ms |
+| `lb_min_drop_pct` / `lb_max_futile` / `lb_hold_ms` | 3 / 2 / 300000 | % points / moves / ms |
 | `util_weight` / `band_bonus_5g` / `band_bonus_6g` | 2 / 5 / 8 | score points |
 | `steer_cooldown_ms` / `steer_backoff_max_ms` | 30000 / 600000 | ms |
 | `beacon_req_timeout_ms` / `steer_resp_timeout_ms` / `btm_timeout_ms` / `roam_timeout_ms` / `reserve_hold_ms` | 1500 / 1000 / 2000 / 5000 / 8000 | ms |
@@ -446,3 +447,4 @@ measurement timeout.
 | 1.8 | 2026-11-06 | FR-LPC-1: an idle poll (no data either way) is no evidence (an idle STA was classified low-power on the QEMU testbed) |
 | 1.9 | 2026-11-06 | FR-STR-2: ranked candidate pool when more than 16 BSSes qualify (measured first, then own, then rotating peer order); verified with 12 APs (itest PASS 12) |
 | 2.0 | 2026-11-06 | FR-TRG-1: only fresh signal samples count (idle STA); FR-STR-3: MEASURE's 11k part ends after a quiet period following the last report; STATUS shows each BSS's utilisation source (`util_src`) |
+| 2.1 | 2026-11-06 | FR-TRG-3: load-balancing feedback and pause (`lb_min_drop_pct`, `lb_max_futile`, `lb_hold_ms`); NFR-PRF-4: per-STA metrics from nl80211 station dumps, hostapd listing every 10 s |

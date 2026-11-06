@@ -307,6 +307,39 @@ def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
     print("PASS 13: idle STA's stale weak signal ignored; steered once it sends again")
 
 
+LB_STAS = ["aa:bb:cc:dd:ee:%02x" % (0x19 + i) for i in range(3)]  # S14: idle STAs on a busy AP2
+
+
+def scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2):
+    """S14: AP2 is 90 % busy and moving its idle STAs does not lower that
+    (the mock's utilisation is fixed, like interference). After
+    lb_max_futile (2) such moves, AP2 pauses load balancing instead of
+    pushing out every idle STA."""
+    mark(logs, "S14 load balancing stops when offloading does not help")
+    stas = [Sta(m, -58, {B1: (115, 36, -60)}, rrm={0}) for m in LB_STAS]
+    with world.lock:
+        ap1.util = 30
+        for s in stas:
+            ap2.add_sta(s)
+        ap2.util = 230  # ~90 %, and it stays there
+    wait_for(lambda: "load balancing paused" in open(logs[1].name).read().split("=== S14")[-1], 30,
+             "AP2 to pause load balancing")
+    log2 = open(logs[1].name).read().split("=== S14")[-1]
+    moved = [m for m in LB_STAS if m in ap1.stas]
+    assert log2.count("did not lower utilisation") == 2, log2.count("did not lower utilisation")
+    assert len(moved) == 2, moved
+    time.sleep(4.0)  # paused: the last idle STA stays
+    assert sum(1 for m in LB_STAS if m in ap1.stas) == 2, "offloading continued after the pause"
+    with world.lock:
+        ap2.util = 25
+        for m in LB_STAS:
+            for b in (ap1, ap2):
+                if m in b.stas:
+                    b.remove_sta(m)
+    print("PASS 14: load balancing paused after 2 offloads that did not lower utilisation "
+          "(last idle STA kept)")
+
+
 SCALE_APS = 12
 STA17_MAC = "aa:bb:cc:dd:ee:17"  # S12: hears only the BSS of the last peer in the pool order
 
@@ -522,6 +555,7 @@ def main():
             scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_scale(world, procs, logs, tmp, base)
             ok = True
             return 0
@@ -622,6 +656,7 @@ def main():
         scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_scale(world, procs, logs, tmp, base)
         ok = True
     finally:

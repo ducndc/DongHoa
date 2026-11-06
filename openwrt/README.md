@@ -50,7 +50,7 @@ the BTM with status 7.
 ### System test
 
 ```sh
-openwrt/qemu/systest.sh          # all 15 scenarios, about 6 minutes
+openwrt/qemu/systest.sh          # all 16 scenarios, about 7 minutes
 openwrt/qemu/systest.sh S4 S9    # selected ones (S3 always runs; S5 also runs S4)
 ```
 
@@ -60,7 +60,9 @@ restarts, bss lines from UCI, strict config parsing, BYE / wrong-key
 handling, the AP-side measurement exchange (S14: "unsupported" answered at
 once, then a level from the simulated driver RSSI API) and low-power
 classification on real hostapd counters (S15: the idle STA stays normal,
-uplink-only ARP traffic makes it low-power, the class reaches the peer). It
+uplink-only ARP traffic makes it low-power, the class reaches the peer) and
+the per-STA metrics path (S16: nl80211 station dumps, hostapd only for the
+10 s resync, signal matching the kernel's average). It
 shortens the steering cooldown and turns on `log_debug steer,amon` while it
 runs (a failed S5 prints the candidate scores), and restores
 `/etc/donghoa.conf` and `/etc/config/wireless` afterwards.

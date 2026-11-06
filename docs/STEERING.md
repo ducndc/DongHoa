@@ -96,7 +96,11 @@ sequenceDiagram
      [−55 dBm].
    - *Load* (`runLbRound`, every `lb_interval_ms` [10 s]): a BSS at or above
      `util_high` [70%] or at `max_sta` offloads one STA per round, the weakest
-     one (only idle STAs with `lb_only_idle`).
+     one (only idle STAs with `lb_only_idle`). It waits to see whether each
+     move lowered utilisation by `lb_min_drop_pct` [3] points; after
+     `lb_max_futile` [2] moves that did not, the BSS pauses for `lb_hold_ms`
+     [300 s] (busy time from other networks or interference does not leave
+     with the STAs).
    - *Manual*: `donghoa_cli … STEER`, optionally naming the target.
 2. **Pool** (`buildPool`). Every other BSS of the same ESS, on this AP or a
    peer. Band steering keeps only higher bands. An empty pool means a
