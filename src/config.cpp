@@ -38,7 +38,7 @@ constexpr std::array<CfgInt, 6U> CFG_INTS{{
 	{"peer_timeout_ms", &Config::peerTimeoutMs},
 }};
 
-constexpr std::array<PolBool, 8U> POL_BOOLS{{
+constexpr std::array<PolBool, 10U> POL_BOOLS{{
 	{"rssi_steering", &PolicyConfig::rssiSteering},
 	{"load_balancing", &PolicyConfig::loadBalancing},
 	{"band_steering", &PolicyConfig::bandSteering},
@@ -47,9 +47,11 @@ constexpr std::array<PolBool, 8U> POL_BOOLS{{
 	{"disassoc_imminent", &PolicyConfig::disassocImminent},
 	{"assume_kvr", &PolicyConfig::assumeKvr},
 	{"amon_request", &PolicyConfig::amonRequest},
+	{"lp_classify", &PolicyConfig::lpClassify},
+	{"lp_no_steer", &PolicyConfig::lpNoSteer},
 }};
 
-constexpr std::array<PolInt, 30U> POL_INTS{{
+constexpr std::array<PolInt, 37U> POL_INTS{{
 	{"rssi_low", &PolicyConfig::rssiLow},
 	{"rssi_low_count", &PolicyConfig::rssiLowCount},
 	{"rssi_hysteresis", &PolicyConfig::rssiHysteresis},
@@ -80,6 +82,13 @@ constexpr std::array<PolInt, 30U> POL_INTS{{
 	{"sta_nss", &PolicyConfig::staNss},
 	{"amon_duration_ms", &PolicyConfig::amonDurationMs},
 	{"amon_rssi_offset", &PolicyConfig::amonRssiOffset},
+	{"lp_threshold", &PolicyConfig::lpThreshold},
+	{"lp_hysteresis", &PolicyConfig::lpHysteresis},
+	{"lp_score_max", &PolicyConfig::lpScoreMax},
+	{"lp_min_samples", &PolicyConfig::lpMinSamples},
+	{"lp_alpha_2g", &PolicyConfig::lpAlpha2g},
+	{"lp_alpha_5g", &PolicyConfig::lpAlpha5g},
+	{"lp_alpha_6g", &PolicyConfig::lpAlpha6g},
 }};
 
 std::optional<int> parseInt(std::string_view v) noexcept

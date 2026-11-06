@@ -18,6 +18,11 @@ information, and they coordinate:
 - **Air monitor:** a STA without 802.11k, or too busy to answer a Beacon
   Request, is measured instead by the radiotap monitor interfaces of the
   candidate APs (`air_monitor`), from the frames it sends.
+- **Low-power device classification:** each AP recognises IoT devices
+  (sensors, cameras, smart plugs) from their traffic: bursty uplink, little
+  downlink. The class is shared between APs, so it follows the device and
+  survives an AP restart, and keeps such devices out of automatic steering
+  (`lp_*` keys; `donghoa_cli DEVCLASS`).
 
 ARCP runs over any interface that carries Ethernet frames, such as wired LAN,
 bridges, 4-address/WDS or 802.11s Wi-Fi backhaul. Messages are authenticated
@@ -42,7 +47,7 @@ package, an SDK build script and QEMU test APs; see `openwrt/README.md`.
 ```sh
 cp donghoa.conf.example /etc/donghoa.conf  # edit iface, key, bss lines
 donghoa -c /etc/donghoa.conf               # needs CAP_NET_RAW; -d all debug, -s syslog
-donghoa_cli /var/run/donghoa.sock PEERS    # STATUS | PEERS | STAS | STEERS | PING
+donghoa_cli /var/run/donghoa.sock PEERS    # STATUS | PEERS | STAS | STEERS | DEVCLASS | PING
 donghoa_cli /var/run/donghoa.sock LOG debug steer msg   # debug two modules, no restart
 donghoa_cli /var/run/donghoa.sock STEER aa:bb:cc:dd:ee:ff [target-bssid]
 ```

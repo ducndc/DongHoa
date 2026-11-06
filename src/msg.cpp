@@ -333,10 +333,18 @@ void Daemon::handleTlvs(Peer &p, ByteView frame, const arcp::Header &h) noexcept
 					se.sta = e.sta;
 					se.bssid = e.bssid;
 					updateRemoteSta(p.id, se);
+					onPeerStaAssoc(p.id, e.sta);
 				} else {
 					forgetRemoteSta(e.sta);
 				}
 				onStaEvent(p.id, e);
+			}
+			break;
+		}
+		case arcp::Tlv::STA_CLASS: {
+			arcp::StaClass c;
+			if (arcp::decode(v, c)) {
+				onStaClass(p, c);
 			}
 			break;
 		}
@@ -425,6 +433,7 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		if (p == nullptr) {
 			continue;
 		}
+		const bool restarted = (p->bootId != 0U) && (p->bootId != h->bootId);
 		if (!acceptPeerSeq(*p, h->bootId, h->msgId)) {
 			// Duplicate (other path or retransmission): ACK again.
 			if ((h->flags & arcp::FLAG_ACK_REQ) != 0U) {
@@ -445,6 +454,9 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		if (isNewPeer) {
 			mNextHello = 0U; // introduce ourselves
 			mNextBssStatus = 0U;
+		}
+		if (isNewPeer || restarted) {
+			syncDevClass(p->id); // it may have lost the device classes
 		}
 	}
 }

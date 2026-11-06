@@ -228,5 +228,97 @@ int backoffMs(const PolicyConfig &p, int failures) noexcept
 	return static_cast<int>(ms);
 }
 
+namespace {
+
+void addRate(RateStats &r, std::uint32_t n, std::uint64_t bps) noexcept
+{
+	const std::int64_t x16 = static_cast<std::int64_t>(((bps < TRAFFIC_RATE_MAX) ? bps : TRAFFIC_RATE_MAX) * 16U);
+	const std::int64_t delta = x16 - r.mean16;
+	r.mean16 += delta / static_cast<std::int64_t>(n);
+	// delta and (x - new mean) have the same sign: the product is >= 0.
+	const std::int64_t prod = (delta * (x16 - r.mean16)) / 256;
+	r.m2 += (prod > 0) ? static_cast<std::uint64_t>(prod) : 0U;
+}
+
+int lpAlpha(const PolicyConfig &p, std::uint8_t band) noexcept
+{
+	int a = p.lpAlpha2g;
+	if (band == arcp::BAND_5G) {
+		a = p.lpAlpha5g;
+	} else if (band == arcp::BAND_6G) {
+		a = p.lpAlpha6g;
+	} else {
+		// 2.4 GHz
+	}
+	return (a < 0) ? 0 : ((a > 10000) ? 10000 : a);
+}
+
+} // namespace
+
+std::uint32_t isqrt(std::uint64_t v) noexcept
+{
+	std::uint64_t r = 0U;
+	std::uint64_t bit = static_cast<std::uint64_t>(1U) << 62U;
+	while (bit > v) {
+		bit >>= 2U;
+	}
+	while (bit != 0U) {
+		if (v >= (r + bit)) {
+			v -= r + bit;
+			r = (r >> 1U) + bit;
+		} else {
+			r >>= 1U;
+		}
+		bit >>= 2U;
+	}
+	return static_cast<std::uint32_t>(r);
+}
+
+void addTrafficSample(TrafficStats &t, std::uint64_t upBps, std::uint64_t downBps) noexcept
+{
+	if (t.n >= TRAFFIC_WINDOW) {
+		t.n /= 2U;
+		t.up.m2 /= 2U;
+		t.down.m2 /= 2U;
+	}
+	t.n++;
+	addRate(t.up, t.n, upBps);
+	addRate(t.down, t.n, downBps);
+}
+
+int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t band) noexcept
+{
+	int r = LP_NO_EVIDENCE;
+	// n cancels in sigma_up / sigma_down: compare the square roots of m2.
+	const std::uint64_t su = isqrt(t.up.m2);
+	const std::uint64_t sd = isqrt(t.down.m2);
+	const bool enough = (p.lpMinSamples <= 1) || (t.n >= static_cast<std::uint32_t>(p.lpMinSamples));
+
+	if (!enough || ((su == 0U) && (sd == 0U))) {
+		r = LP_NO_EVIDENCE;
+	} else if (sd == 0U) {
+		r = LP_S_MAX;
+	} else {
+		const std::uint64_t s100 = (static_cast<std::uint64_t>(lpAlpha(p, band)) * su) / sd;
+		r = (s100 > static_cast<std::uint64_t>(LP_S_MAX)) ? LP_S_MAX : static_cast<int>(s100);
+	}
+	return r;
+}
+
+int updateLpScore(const PolicyConfig &p, int theta, int s100) noexcept
+{
+	int r = theta;
+	if (s100 != LP_NO_EVIDENCE) {
+		r = (s100 > 100) ? (theta + 1) : (theta - 1);
+	}
+	const int hi = (p.lpScoreMax > 0) ? p.lpScoreMax : 0;
+	return (r < 0) ? 0 : ((r > hi) ? hi : r);
+}
+
+bool isLowPower(const PolicyConfig &p, int theta, bool wasLowPower) noexcept
+{
+	return wasLowPower ? (theta >= (p.lpThreshold - p.lpHysteresis)) : (theta > p.lpThreshold);
+}
+
 } // namespace policy
 } // namespace donghoa

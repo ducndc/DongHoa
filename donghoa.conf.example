@@ -97,3 +97,18 @@ ctrl_socket /var/run/donghoa.sock
 #amon_request 1          # ask peers' monitors when steering (in parallel with 11k)
 #amon_duration_ms 1000   # watch time per request
 #amon_rssi_offset 0      # dB added to monitor (uplink) RSSI
+
+# ---- low-power (IoT) device classification ----
+# Per STA poll: S = alpha(band) x sigma_up / sigma_down of its traffic.
+# S > 1 adds one to the STA's score, S <= 1 takes one away; the STA is
+# low-power while the score is above lp_threshold. The class is shared
+# with the peers (donghoa_cli DEVCLASS).
+#lp_classify 1           # classify local STAs
+#lp_no_steer 1           # no automatic RSSI/band/load steering of low-power STAs
+#lp_threshold 60         # score (polls of evidence) to become low-power
+#lp_hysteresis 10        # back to normal below lp_threshold - this
+#lp_score_max 120        # score bound
+#lp_min_samples 10       # traffic samples before S counts
+#lp_alpha_2g 100         # alpha x 100 per band
+#lp_alpha_5g 100
+#lp_alpha_6g 100

@@ -39,6 +39,7 @@ enum class MsgType : std::uint8_t {
 	STA_STATUS = 0x03U,
 	RF_STATUS = 0x04U,
 	STA_EVENT = 0x05U,
+	STA_CLASS = 0x06U,
 	STEER_REQ = 0x10U,
 	STEER_RESP = 0x11U,
 	STEER_RESULT = 0x12U,
@@ -55,6 +56,7 @@ enum class Tlv : std::uint8_t {
 	STA_ENTRY = 0x04U,
 	RF_INFO = 0x05U,
 	STA_EVENT = 0x06U,
+	STA_CLASS = 0x07U,
 	STEER_REQ = 0x10U,
 	STEER_RESP = 0x11U,
 	STEER_RESULT = 0x12U,
@@ -106,6 +108,7 @@ constexpr std::uint8_t STA_F11V = 0x02U;
 constexpr std::uint8_t STA_F11R = 0x04U;
 constexpr std::uint8_t STA_F_IDLE = 0x08U;
 constexpr std::uint8_t STA_F_STEERING = 0x10U;
+constexpr std::uint8_t STA_F_LOW_POWER = 0x20U; // classified low-power (IoT) device
 
 // BssLoad::flags
 constexpr std::uint8_t LOAD_ACCEPTING = 0x01U;
@@ -218,6 +221,16 @@ struct StaEvent {
 	std::uint16_t reason{0U};
 };
 
+// Device class of a STA (behaviour-based low-power classification).
+enum class DevClass : std::uint8_t { NORMAL = 0U, LOW_POWER = 1U };
+
+struct StaClass {
+	Mac sta{};
+	std::uint8_t devClass{0U}; // DevClass
+	std::int32_t score{0};      // classification score (theta)
+	std::uint32_t samples{0U};  // traffic samples behind the score
+};
+
 struct SteerReq {
 	std::uint32_t txn{0U};
 	Mac sta{};
@@ -278,6 +291,7 @@ public:
 	bool add(const StaEntry &v) noexcept;
 	bool add(const RfInfo &v) noexcept;
 	bool add(const StaEvent &v) noexcept;
+	bool add(const StaClass &v) noexcept;
 	bool add(const SteerReq &v) noexcept;
 	bool add(const SteerResp &v) noexcept;
 	bool add(const SteerResult &v) noexcept;
@@ -337,6 +351,7 @@ bool decode(ByteView v, BssLoad &o) noexcept;
 bool decode(ByteView v, StaEntry &o) noexcept;
 bool decode(ByteView v, RfInfo &o) noexcept;
 bool decode(ByteView v, StaEvent &o) noexcept;
+bool decode(ByteView v, StaClass &o) noexcept;
 bool decode(ByteView v, SteerReq &o) noexcept;
 bool decode(ByteView v, SteerResp &o) noexcept;
 bool decode(ByteView v, SteerResult &o) noexcept;

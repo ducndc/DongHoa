@@ -285,6 +285,18 @@ bool Message::add(const StaMonitorResult &v) noexcept
 	return putTlv(Tlv::STA_MONITOR_RESULT, viewOf(b));
 }
 
+bool Message::add(const StaClass &v) noexcept
+{
+	std::array<std::uint8_t, 15U> b{};
+	const ByteSpan s = spanOf(b);
+
+	putMac(s, 0U, v.sta);
+	b[6U] = v.devClass;
+	putBe32(s, 7U, static_cast<std::uint32_t>(v.score));
+	putBe32(s, 11U, v.samples);
+	return putTlv(Tlv::STA_CLASS, viewOf(b));
+}
+
 bool Message::addAck(std::uint32_t msgId) noexcept
 {
 	std::array<std::uint8_t, 4U> b{};
@@ -550,6 +562,18 @@ bool decode(ByteView v, StaMonitorResult &o) noexcept
 	return ok;
 }
 
+bool decode(ByteView v, StaClass &o) noexcept
+{
+	bool ok = v.size() >= 15U;
+	if (ok) {
+		o.sta = getMac(v, 0U);
+		o.devClass = v[6U];
+		o.score = static_cast<std::int32_t>(getBe32(v, 7U));
+		o.samples = getBe32(v, 11U);
+	}
+	return ok;
+}
+
 bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept
 {
 	bool ok = v.size() >= 4U;
@@ -568,6 +592,7 @@ std::string_view msgName(std::uint8_t type) noexcept
 	case raw(MsgType::STA_STATUS): n = "STA_STATUS"; break;
 	case raw(MsgType::RF_STATUS): n = "RF_STATUS"; break;
 	case raw(MsgType::STA_EVENT): n = "STA_EVENT"; break;
+	case raw(MsgType::STA_CLASS): n = "STA_CLASS"; break;
 	case raw(MsgType::STEER_REQ): n = "STEER_REQ"; break;
 	case raw(MsgType::STEER_RESP): n = "STEER_RESP"; break;
 	case raw(MsgType::STEER_RESULT): n = "STEER_RESULT"; break;
@@ -590,6 +615,7 @@ std::string_view tlvName(std::uint8_t type) noexcept
 	case raw(Tlv::STA_ENTRY): n = "STA_ENTRY"; break;
 	case raw(Tlv::RF_INFO): n = "RF_INFO"; break;
 	case raw(Tlv::STA_EVENT): n = "STA_EVENT"; break;
+	case raw(Tlv::STA_CLASS): n = "STA_CLASS"; break;
 	case raw(Tlv::STEER_REQ): n = "STEER_REQ"; break;
 	case raw(Tlv::STEER_RESP): n = "STEER_RESP"; break;
 	case raw(Tlv::STEER_RESULT): n = "STEER_RESULT"; break;

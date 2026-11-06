@@ -74,6 +74,8 @@ TRI = "5151737c83"  # current 81; 81, 115, 124, 131
 BMLD = "02:00:00:00:01:1f"  # AP1's AP MLD address
 BM0, BM1 = "02:00:00:00:01:10", "02:00:00:00:01:11"  # its links: 0 = 5 GHz ch 44, 1 = 2.4 GHz ch 11
 STA10_MAC = "aa:bb:cc:dd:ee:10"  # MLD STA (MLD address)
+STA11_MAC = "aa:bb:cc:dd:ee:11"  # IoT sensor: bursty uplink, little downlink
+STA12_MAC = "aa:bb:cc:dd:ee:12"  # phone: bursty downlink
 # Extra config lines for every AP, ";"-separated, e.g. "score_model 1".
 EXTRA = os.environ.get("DONGHOA_ITEST_EXTRA", "").replace(";", "\n")
 
@@ -110,6 +112,9 @@ peer_timeout_ms 2000
 steer_cooldown_ms 1500
 beacon_req_timeout_ms 800
 lb_interval_ms 1000
+lp_min_samples 3
+lp_threshold 8
+lp_hysteresis 2
 {extra}""")
 
 
@@ -153,6 +158,66 @@ def radiotap_data(ta, bssid, freq, signal):
     rt += struct.pack("<BxHHb", 0, freq, 0x0100, signal)
     mac = lambda m: bytes.fromhex(m.replace(":", ""))
     return rt + bytes([0x08, 0x01, 0, 0]) + mac(bssid) + mac(ta) + mac(bssid) + bytes(2)
+
+
+def sensor_traffic(n):
+    return (4000, 200) if n % 5 == 0 else (40, 20)
+
+
+def phone_traffic(n):
+    return (3000, 900000) if n % 5 == 0 else (200, 4000)
+
+
+def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
+    """S10: low-power (IoT) classification from traffic behaviour; the class
+    goes to the peers, follows the STA to another AP, survives a peer
+    restart, and keeps automatic steering off the device."""
+    mark(logs, "S10 low-power device classification, shared between APs")
+    ap2_cfg = os.path.join(tmp, "ap2.conf")
+    procs[1] = subprocess.Popen(DONGHOA + ["-c", ap2_cfg, "-d"], stderr=logs[1])  # AP2 left in S6
+    wait_for(lambda: "02:00:00:00:00:02" in cli(socks[0], "PEERS"), 5, "AP2 to rejoin")
+    line = lambda sock, mac: next((l for l in cli(sock, "STAS").splitlines() if l.startswith("sta " + mac)), "")
+    sensor = Sta(STA11_MAC, -50, {B2: (124, 149, -55)}, traffic=sensor_traffic)
+    phone = Sta(STA12_MAC, -50, {}, traffic=phone_traffic)
+    with world.lock:
+        ap1.add_sta(sensor)
+        ap1.add_sta(phone)
+    # lp_min_samples 3 + lp_threshold 8 + 1 polls of 200 ms
+    wait_for(lambda: "class=low-power" in line(socks[0], STA11_MAC), 6, "AP1 to classify the sensor")
+    wait_for(lambda: STA11_MAC + " class=low-power" in cli(socks[1], "DEVCLASS"), 3,
+             "AP2 to receive the sensor's class")
+    time.sleep(1.0)
+    assert "class=normal lp_score=0/8" in line(socks[0], STA12_MAC), line(socks[0], STA12_MAC)
+    assert STA12_MAC not in cli(socks[1], "DEVCLASS"), "an unchanged (normal) class is not sent"
+    # Weak signal, better AP in view: a normal STA would roam; this one is low-power.
+    n_btm = len(world.btm_log)
+    sensor.signal = -85
+    time.sleep(3.0)
+    assert not any(t[1] == STA11_MAC for t in world.btm_log[n_btm:]), "low-power STA must not be steered"
+    # AP2 restarts without BYE: AP1 sends it the low-power records again.
+    procs[1].kill()
+    procs[1].wait(timeout=3)
+    procs[1] = subprocess.Popen(DONGHOA + ["-c", ap2_cfg, "-d"], stderr=logs[1])
+    wait_for(lambda: STA11_MAC + " class=low-power" in cli(socks[1], "DEVCLASS"), 6,
+             "restarted AP2 to get the class back from AP1")
+    dev = next(l for l in cli(socks[1], "DEVCLASS").splitlines() if STA11_MAC in l)
+    assert "from=02:00:00:00:00:01" in dev, dev
+    # The sensor roams to AP2 and goes quiet: AP2 cannot learn it again, it
+    # knows the class at once.
+    sensor.traffic = None
+    sensor.tput_bytes = 0
+    world.move(STA11_MAC, B1, B2)
+    wait_for(lambda: "class=low-power" in line(socks[1], STA11_MAC), 2, "AP2 to treat the sensor as low-power")
+    wait_for(lambda: any(l.startswith("remote " + STA11_MAC) and "class=low-power" in l
+                         for l in cli(socks[0], "STAS").splitlines()), 3,
+             "AP1 to see the low-power flag in AP2's STA_STATUS")
+    logs[0].flush()
+    assert ("sta " + STA11_MAC + " joined AP 02:00:00:00:00:02: sending its class"
+            in open(logs[0].name).read()), "AP1 answers the new association with the class"
+    with world.lock:
+        ap1.remove_sta(STA12_MAC)
+    print("PASS 10: low-power classification (sensor yes, phone no), shared with peers, "
+          "kept across roam and peer restart, not steered")
 
 
 def main():
@@ -310,6 +375,7 @@ def main():
             # The mock BSSes are 20 MHz: with the throughput model a band
             # change is not the required tput_gain_pct gain, so no band steer.
             print("SKIP 7, 8, 9: band steering and MLO scenarios assume score_model 0 (20 MHz mock BSSes)")
+            scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
             ok = True
             return 0
         mark(logs, "S7 band steering 2.4 -> 5 GHz checks the STA's operating classes")
@@ -406,6 +472,7 @@ def main():
             l for l in open(logs[0].name).read().split("=== S9")[-1].splitlines(True) if STA10_MAC in l),
             4, "MLD STA roam recorded as success")
         print("PASS 9: MLO: one entry per MLD STA, no band steer onto its own link, roam only when all links are weak")
+        scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
         ok = True
     finally:
         for p in procs:

@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 1.4, 2026-11-01 (history in Appendix B) |
+| Document version | 1.5, 2026-11-06 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -142,7 +142,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
-| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
+| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
 | IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
@@ -291,6 +291,18 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-MLO-4 | An MLD STA shall not be band-steered, and no steer shall send it to another link of its own AP MLD. | T-I 9 |
 | FR-MLO-5 | For an MLD STA, association on any link of the target AP MLD shall count as success, and association on a link of the source AP MLD shall not end the transaction. A legacy STA shall be handled as before, also between the affiliated BSSes of one AP MLD. | T-I 9 (local target), I |
 
+### 4.13 Low-power device classification (LPC)
+
+The method is defined in `docs/PROTOCOL.md` §8.
+
+| ID | Requirement | Verif. |
+|---|---|---|
+| FR-LPC-1 | With `lp_classify` on, each STA poll shall add the STA's uplink and downlink rates (bytes/s, from hostapd `rx_bytes`/`tx_bytes`) to running standard deviations σ_u, σ_d and compute S = α(band) × σ_u / σ_d (α = `lp_alpha_2g/5g/6g` / 100). S shall not count before `lp_min_samples` samples or while neither rate varies. | T-U `test_low_power` |
+| FR-LPC-2 | The STA's score θ shall rise by one when S > 1 and fall by one otherwise, within 0..`lp_score_max`. The STA shall become low-power when θ > `lp_threshold` and normal again when θ < `lp_threshold` − `lp_hysteresis`. | T-U, T-I 10 |
+| FR-LPC-3 | A change of class of a local STA shall be sent (STA_CLASS, reliable) to every peer, which shall keep the record (at most 512, the oldest replaced). A record shall replace another only when it carries more samples. | T-I 10 |
+| FR-LPC-4 | When a peer reports a STA associated to it, an AP holding a record for that STA shall send it to that peer; a STA that (re)associates shall start from the record this AP holds. An AP that sees a new or restarted peer shall send it all its low-power records. | T-I 10 |
+| FR-LPC-5 | With `lp_no_steer` on, a low-power STA shall not be steered automatically (RSSI, band, load); manual steering shall still work. STA_ENTRY shall carry the class as flag 0x20. | T-I 10 |
+
 ## 5. Non-functional requirements
 
 ### 5.1 Performance
@@ -313,8 +325,8 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| NFR-CAP-1 | Fixed limits: 8 local BSSes, 256 local STAs, 32 peers with 8 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches. Running out of space in a table shall be logged and handled without crashing. | I |
-| NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 247,720 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
+| NFR-CAP-1 | Fixed limits: 8 local BSSes, 256 local STAs, 32 peers with 8 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class records. Running out of space in a table shall be logged and handled without crashing. | I |
+| NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 315,808 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
 | NFR-CAP-3 | The OpenWrt package file should stay below 64 KiB (measured: `donghoa-1.0-r5.apk`, 40.8 KB, x86-64). | T-O |
 
 ### 5.3 Reliability and availability
@@ -369,6 +381,7 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
 | Reliability (FR-REL) | — | Retransmission, duplicate re-ACK, replay window, path failover: **no automated test** (`peer.cpp` and `msg.cpp` are not linked into the unit tests) |
 | Resilience (FR-MON-6, NFR-REL-1) | — | hostapd restart verified manually on OpenWrt |
 | Air monitor (FR-AMN, IR-13) | `test_air_monitor` (radiotap alignment, extended bitmaps, frame filter, TLV round trip, config); itest PASS 5 (STA without 11k, injected frames, monitor report, steer) in both scoring models | Real monitor path verified on OpenWrt/hwsim (BPF + `AF_PACKET` + parser: −27 dBm, matching the station table); cross-AP over the air not possible with hwsim; BPF program has no unit test |
+| Low-power classification (FR-LPC) | `test_low_power` (integer statistics against known variances, window halving, S per band, θ clamping, hysteresis, a sensor vs a phone trace, STA_CLASS round trip, config keys); itest PASS 10 (sensor classified and phone not, class sent to the peer, kept by a restarted peer, taken over after a roam, no automatic steer) | Real IoT devices: thresholds and α not yet calibrated; STA_CLASS loss beyond the 4 retransmissions is not retried |
 | OpenWrt service and BSSes from UCI (IR-7, IR-12) | — | OpenWrt procedure only: generated `bss` lines (names, `mdid`, `max_sta` from `maxassoc`) verified, and an interface rename via `reload_config` followed within 6 s; no automated test of the init script |
 
 Recommended additions: a unit test for `acceptPeerSeq` (move it into a pure
@@ -408,6 +421,9 @@ measurement timeout.
 | `air_monitor` / `air_monitor_sim` | — | Monitor interface, repeatable (≤ 4) / UDP test input |
 | `amon_request` / `amon_duration_ms` / `amon_rssi_offset` | 1 / 1000 / 0 | bool / ms / dB |
 | `score_model` / `tput_rssi_mid` / `tput_gain_pct` / `sta_nss` | 0 (linear) / −72 / 150 / 2 | 0 linear, 1 expected throughput / dBm / % / streams |
+| `lp_classify` / `lp_no_steer` | 1 / 1 | low-power classification / keep low-power STAs out of automatic steering |
+| `lp_threshold` / `lp_hysteresis` / `lp_score_max` / `lp_min_samples` | 60 / 10 / 120 / 10 | θ (polls) / θ / θ / samples |
+| `lp_alpha_2g` / `lp_alpha_5g` / `lp_alpha_6g` | 100 / 100 / 100 | α × 100 |
 
 ## Appendix B. Revision history
 
@@ -418,3 +434,4 @@ measurement timeout.
 | 1.2 | 2026-10-31 | Air monitor: new §4.11 (FR-AMN-1..6) and IR-13; FR-STR-4 and AS-1 use monitor levels when the STA gives no 802.11k report; `MONITOR` control command; out-of-scope narrowed to off-channel listening; updated capacity figures, verification matrix and configuration appendix |
 | 1.3 | 2026-10-31 | IR-5: per-module log levels, `log_level`/`log_debug` keys, run-time `LOG` command, syslog output (`-s`) with real priorities, ARCP frame trace; IR-3: `LOG` command; FR-STR-3 / FR-MON-3: beacon-report mode fallback (active → passive) |
 | 1.4 | 2026-11-01 | C-3: implementation language C++17 without exceptions, RTTI or heap, MISRA C++:2023 based convention; C-4: no libstdc++.so at run time; NFR-CAP-2 re-measured (247,720 bytes). No functional requirement changed |
+| 1.5 | 2026-11-06 | New §4.13 (FR-LPC-1..5): low-power (IoT) device classification from traffic behaviour, shared between APs (STA_CLASS); `DEVCLASS` control command (IR-3); configuration keys `lp_*`; NFR-CAP-1/2 updated (315,808 bytes) |

@@ -66,6 +66,7 @@ later versions can add fields there.
 | 0x04 | STA_ENTRY | sta 6, bssid 6, rssi i8, flags u8, connected_s u32, inactive_ms u32, tx_rate_mbps u16, rx_rate_mbps u16, tput_kbps u32 |
 | 0x05 | RF_INFO | radio_id u8, freq u16, op_class u8, channel u8, bw u8, util u8, noise i8, tx_power i8 |
 | 0x06 | STA_EVENT | sta 6, bssid 6, event u8 (1 assoc, 2 disassoc), reason u16 |
+| 0x07 | STA_CLASS | sta 6, class u8 (0 normal, 1 low-power), score i32 (θ, 0..`lp_score_max`), samples u32 (traffic samples behind the score; it only grows along a STA's history, so the larger value is the newer record) (§8) |
 | 0x10 | STEER_REQ | txn u32, sta 6, src_bssid 6, tgt_bssid 6, reason u8, rcpi u8, sta_flags u8, cur_rssi i8 |
 | 0x11 | STEER_RESP | txn u32, status u8, hold_ms u16 |
 | 0x12 | STEER_RESULT | txn u32, sta 6, outcome u8, btm_status u8 |
@@ -81,7 +82,8 @@ later versions can add fields there.
 receiving AP sets the Mobility Domain bit itself, and only when its own MDID
 matches the advertised one.
 
-STA `flags`: 11k 0x01, 11v 0x02, 11r 0x04, idle 0x08, being steered 0x10.
+STA `flags`: 11k 0x01, 11v 0x02, 11r 0x04, idle 0x08, being steered 0x10,
+low-power device 0x20 (§8).
 
 `rcpi`: the target's RCPI as the STA measured it, taken from an 11k Beacon
 Report (dBm = RCPI/2 − 110). 255 means it is not available.
@@ -95,6 +97,7 @@ Report (dBm = RCPI/2 − 110). 255 means it is not available.
 | 0x03 | STA_STATUS | multicast | STA_ENTRY* (split over several messages if needed) | `sta_status_interval_ms` |
 | 0x04 | RF_STATUS | multicast | RF_INFO* (one per operating channel) | `rf_status_interval_ms` |
 | 0x05 | STA_EVENT | multicast | STA_EVENT | when a STA associates or disassociates |
+| 0x06 | STA_CLASS | unicast, ACK_REQ | STA_CLASS* | device class of STAs (§8): to every peer when a local STA's class changes; to the AP a STA just associated to (its STA_EVENT) when this AP knows the STA's class; all low-power records to a peer that appeared or restarted (several messages if needed) |
 | 0x10 | STEER_REQ | unicast, ACK_REQ | STEER_REQ | source AP asks the target AP to accept a STA |
 | 0x11 | STEER_RESP | unicast, ACK_REQ | STEER_RESP | target AP's admission decision |
 | 0x12 | STEER_RESULT | unicast, ACK_REQ | STEER_RESULT | source AP reports the outcome so the target frees its reservation |
@@ -190,4 +193,42 @@ direction instead: the RSSI of the STA's own frames.
   configurable offset (`amon_rssi_offset`) can correct for TX-power
   asymmetry.
 - A STA's own 11k report of a BSS always wins over a monitor result.
+
+## 8. Low-power device classification
+
+Every AP classifies its own STAs as low-power (IoT: sensors, cameras, smart
+plugs) or normal from their traffic, and shares the result so the class
+follows a STA from AP to AP instead of being learned again.
+
+**Score.** Once per STA poll (`sta_poll_interval_ms`, 1 s by default) the AP
+takes the STA's uplink rate *u* (hostapd `rx_bytes`) and downlink rate *d*
+(`tx_bytes`) in bytes/s and keeps, over the connection,
+
+    σ_d = sqrt( Σ (d_i − d̄_n)² / n )        (1)
+    σ_u = sqrt( Σ (u_i − ū_n)² / n )        (2)
+    S   = α(band) × σ_u / σ_d                (3)
+
+α is `lp_alpha_2g` / `lp_alpha_5g` / `lp_alpha_6g` (×100). A low-power device
+pushes its data up in bursts and receives little, so S > 1 adds one to the
+STA's score θ and S ≤ 1 takes one away (θ stays in 0..`lp_score_max`). The STA
+becomes low-power when θ > `lp_threshold` (δ) and normal again when θ <
+δ − `lp_hysteresis`. S is not computed before `lp_min_samples` samples, nor
+while neither rate varies (an idle STA says nothing): θ is then unchanged.
+Integer arithmetic: the running mean and variance use Welford's method; past
+1024 samples n and the sum of squares are halved, which keeps the variance.
+
+**Sharing.** There is no master AP; every AP keeps a table of class records
+(STA, class, θ, samples, the AP that classified it).
+
+1. A change of class of a local STA is sent in STA_CLASS to every peer.
+2. When a STA associates to another AP (its STA_EVENT), an AP that has a
+   record for it sends that AP the record. The new AP takes it over when it
+   carries more samples than its own.
+3. An AP that sees a new peer, or a peer with a new `boot_id`, sends it all its
+   low-power records, so a restarted AP gets them back without re-learning.
+4. Each STA_CLASS is acknowledged (ACK_REQ, §4).
+
+**Use.** With `lp_no_steer` (default on), low-power STAs are left out of
+automatic RSSI, band and load-balancing steering; a manual `STEER` still
+works. STA_ENTRY carries the class as flag 0x20.
 

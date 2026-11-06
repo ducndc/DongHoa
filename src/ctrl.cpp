@@ -214,11 +214,25 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 				}
 				formatTo(o, " max_simul_links={}", s.maxSimulLinks);
 			}
+			FixedString<16U> sText;
+			formatScore(sText, s.lpS100);
+			formatTo(o, " class={} lp_score={}/{} s={}", s.lowPower ? "low-power" : "normal", s.lpScore,
+				  mCfg.pol.lpThreshold, sText);
 			formatTo(o, " backoff={}ms\n", backoff);
 		}
 		for (const RemoteSta &r : mRsta) {
 			if (r.used) {
-				formatTo(o, "remote {} ap={} bss={} rssi={}\n", r.sta, r.ap, r.bssid, r.rssi);
+				formatTo(o, "remote {} ap={} bss={} rssi={}{}\n", r.sta, r.ap, r.bssid, r.rssi,
+					  ((r.flags & arcp::STA_F_LOW_POWER) != 0U) ? " class=low-power" : "");
+			}
+		}
+	} else if (req == "DEVCLASS") {
+		// Device class records: learned here or received from peers.
+		for (const DevClassRec &r : mDevClass) {
+			if (r.used) {
+				formatTo(o, "devclass {} class={} score={} samples={} from={} age={}s\n", r.sta,
+					  r.lowPower ? "low-power" : "normal", r.score, r.samples, r.source,
+					  (now - r.ts) / 1000U);
 			}
 		}
 	} else if (req == "STEERS") {

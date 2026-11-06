@@ -17,6 +17,7 @@
 #include "hapd_parse.hpp"
 #include "l2.hpp"
 #include "os.hpp"
+#include "policy.hpp"
 #include "proto.hpp"
 #include "rrm.hpp"
 #include "survey.hpp"
@@ -34,6 +35,7 @@ constexpr std::size_t MAX_RADIO = 4U;
 constexpr std::size_t MAX_CAND = 16U;
 constexpr std::size_t MAX_WATCH = 16U;
 constexpr std::size_t WATCH_FREQS = 4U;
+constexpr std::size_t MAX_DEV_CLASS = 512U;
 
 // ---- local side ----
 
@@ -107,6 +109,24 @@ struct Sta {
 	bool mld{false};
 	int maxSimulLinks{-1};
 	std::array<StaLink, MAX_STA_LINKS> links{};
+	// Low-power (IoT) classification (devclass.cpp)
+	policy::TrafficStats traffic{};
+	int lpScore{0};             // theta
+	int lpS100{policy::LP_NO_EVIDENCE}; // last behaviour score S x 100
+	std::uint32_t lpSamples{0U}; // evidence behind lpScore (carried across APs)
+	bool lowPower{false};
+};
+
+// Device class of a STA, kept by every AP so that it follows the STA
+// between APs and survives an AP restart (peers resend it).
+struct DevClassRec {
+	bool used{false};
+	Mac sta{};
+	bool lowPower{false};
+	int score{0};
+	std::uint32_t samples{0U};
+	Mac source{}; // AP that classified it
+	Millis ts{0U};
 };
 
 // ---- remote side ----
@@ -230,6 +250,8 @@ struct AmonWatch {
 };
 
 std::string_view steerStateName(SteerState s) noexcept;
+// Behaviour score S x 100 as "1.25", "inf" or "-" (no evidence).
+void formatScore(FixedString<16U> &out, int s100) noexcept;
 
 // Replay window: true if (bootId, msgId) is new for p, and records it.
 bool acceptPeerSeq(Peer &p, std::uint32_t bootId, std::uint32_t msgId) noexcept;
@@ -306,6 +328,19 @@ public:
 	void onAmonReq(const Peer &from, const arcp::StaMonitorReq &r) noexcept;
 	void onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noexcept;
 
+	// ---- devclass.cpp ----
+	// One poll's traffic of a local STA: up/down bytes over dtMs.
+	void sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downBytes, Millis dtMs) noexcept;
+	// Local STA entry created / about to be dropped.
+	void restoreDevClass(Sta &s) noexcept;
+	void saveDevClass(const Sta &s) noexcept;
+	const DevClassRec *findDevClass(const Mac &sta) const noexcept;
+	void onStaClass(const Peer &from, const arcp::StaClass &c) noexcept;
+	// A peer reports sta associated to it: hand it what we know.
+	void onPeerStaAssoc(const Mac &ap, const Mac &sta) noexcept;
+	// A peer appeared or restarted: send it every low-power record.
+	void syncDevClass(const Mac &peer) noexcept;
+
 	// ---- ctrl.cpp ----
 	bool openCtrl() noexcept;
 	void handleCtrl() noexcept;
@@ -350,6 +385,10 @@ private:
 	// amon.cpp helpers
 	void addAmonSample(const rrm::AirFrame &f) noexcept;
 	void finishAmonWatch(AmonWatch &w, Millis now) noexcept;
+	// devclass.cpp helpers
+	DevClassRec &storeDevClass(const Mac &sta, bool lowPower, int score, std::uint32_t samples,
+				   const Mac &source) noexcept;
+	void sendStaClass(const Mac &peer, const DevClassRec &r) noexcept;
 	// ctrl.cpp helpers
 	void runCtrlCommand(std::string_view req, FixedString<8192U> &out) noexcept;
 	// main.cpp helpers
@@ -377,6 +416,7 @@ private:
 	std::array<AmonPort, MAX_MONITORS + 1U> mAmon{};
 	std::size_t mNAmon{0U};
 	std::array<AmonWatch, MAX_WATCH> mWatch{};
+	std::array<DevClassRec, MAX_DEV_CLASS> mDevClass{};
 
 	os::Fd mCtrlFd{};
 

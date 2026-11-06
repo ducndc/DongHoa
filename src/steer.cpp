@@ -666,7 +666,7 @@ void Daemon::onStaPoll(Sta &s) noexcept
 	const PolicyConfig &p = mCfg.pol;
 
 	if (s.away || (os::nowMs() < s.nextSteerMs) || ((s.flags & arcp::STA_F11V) == 0U) ||
-	    (findTxnBySta(s.addr) != nullptr)) {
+	    (findTxnBySta(s.addr) != nullptr) || (s.lowPower && p.lpNoSteer)) {
 		return;
 	}
 	const std::uint8_t band = mBss[s.bss].info.band;
@@ -697,7 +697,7 @@ void Daemon::runLbRound() noexcept
 		for (Sta &s : mSta) {
 			const bool eligible = s.used && !s.away && (s.bss == b) && (s.rssi != 0) &&
 					      (now >= s.nextSteerMs) && ((s.flags & arcp::STA_F11V) != 0U) &&
-					      (findTxnBySta(s.addr) == nullptr) &&
+					      (findTxnBySta(s.addr) == nullptr) && !(s.lowPower && p.lpNoSteer) &&
 					      policy::isLbStaEligible(p, s.tputKbps);
 			if (eligible && ((pick == nullptr) || (s.rssi < pick->rssi))) {
 				pick = &s;

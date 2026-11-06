@@ -83,6 +83,19 @@ struct PolicyConfig {
 	bool amonRequest{true};  // ask peers' air monitors during MEASURE
 	int amonDurationMs{1000};
 	int amonRssiOffset{0};  // dB added to monitor (uplink) RSSI
+
+	// Low-power (IoT) device classification from traffic behaviour:
+	// S = alpha(band) x sigma_up / sigma_down over the connection; theta
+	// +1 when S > 1, -1 otherwise; low-power while theta > lp_threshold.
+	bool lpClassify{true};
+	bool lpNoSteer{true};    // no automatic steering of low-power STAs
+	int lpThreshold{60};     // delta: theta above it -> low-power
+	int lpHysteresis{10};    // low-power ends when theta < delta - this
+	int lpScoreMax{120};     // theta is kept in 0..this
+	int lpMinSamples{10};    // traffic samples before S counts
+	int lpAlpha2g{100};      // alpha x 100 on 2.4 GHz
+	int lpAlpha5g{100};      // alpha x 100 on 5 GHz
+	int lpAlpha6g{100};      // alpha x 100 on 6 GHz
 };
 
 struct Config {

@@ -31,7 +31,7 @@ make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa dongho
 
 The unit tests form one binary with no filter. To focus on one area,
 comment out calls in `main()` of `tests/test_unit.cpp`. Run `make itest`
-after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 9`.
+after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 10`.
 
 ## Architecture essentials
 
@@ -39,7 +39,8 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 9`.
   exceptions, no RTTI** (`-fno-exceptions -fno-rtti`). All state is
   `std::array`s in class `Daemon` (`daemon.hpp`), one static object in
   `main.cpp`. The coordination modules (`msg`, `peer`, `local`, `steer`,
-  `amon`, `ctrl`) are member functions of `Daemon`, split across files.
+  `devclass`, `amon`, `ctrl`) are member functions of `Daemon`, split across
+  files.
 - **`os.cpp` is the only file that touches POSIX:** system calls,
   `reinterpret_cast` to `sockaddr`, `<cstring>`, signals. Other files use
   `os::` functions with `os::Fd` (RAII), `ByteView`/`ByteSpan` and

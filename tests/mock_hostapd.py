@@ -13,8 +13,13 @@ import time
 
 class Sta:
     def __init__(self, mac, signal, view, btm_accept=True, tput_bytes=0, rrm=True,
-                 op_classes=None, akm="00-0f-ac-4", mld_links=None, link_signal=None):
+                 op_classes=None, akm="00-0f-ac-4", mld_links=None, link_signal=None,
+                 traffic=None):
         self.mac = mac
+        # Per-poll traffic: traffic(n) -> (uplink bytes, downlink bytes) for
+        # the n-th listing; None: tput_bytes both ways.
+        self.traffic = traffic
+        self.polls = 0
         # Wi-Fi 7 MLO: link id -> link address (peer_addr[]) for an MLD STA,
         # printed only by AP MLD links; per-link signal by BSSID.
         self.mld_links = dict(mld_links or {})
@@ -94,8 +99,14 @@ class MockBss:
         return "\n".join(lines) + "\n"
 
     def sta_text(self, sta):
-        sta.rx_bytes += sta.tput_bytes
-        sta.tx_bytes += sta.tput_bytes
+        if sta.traffic:
+            up, down = sta.traffic(sta.polls)
+            sta.polls += 1
+            sta.rx_bytes += up    # hostapd counts from the AP: rx = uplink
+            sta.tx_bytes += down
+        else:
+            sta.rx_bytes += sta.tput_bytes
+            sta.tx_bytes += sta.tput_bytes
         text = (
             "%s\nflags=[AUTH][ASSOC][AUTHORIZED][WMM][HT]\nrx_bytes=%d\ntx_bytes=%d\n"
             "inactive_msec=100\nsignal=%d\nrx_rate_info=1200\ntx_rate_info=1200\n"

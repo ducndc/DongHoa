@@ -27,7 +27,7 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 |---|---|
 | `proto` | ARCP encoding/decoding, HMAC (wire format: `PROTOCOL.md`). |
 | `rrm` | 802.11 helpers: channel/op class, BSSID Info, Neighbor Report, Beacon Request/Report encoding, BTM capability. |
-| `policy` | Pure decision functions: triggers, candidate scoring (linear or expected-throughput model), admission, backoff. |
+| `policy` | Pure decision functions: triggers, candidate scoring (linear or expected-throughput model), admission, backoff, low-power classification arithmetic. |
 | `l2` | Raw `AF_PACKET` ports and UDP "sim" ports for tests. |
 | `hapd` | hostapd control interface (commands, events), with the reply parsers in `hapd_parse`. |
 | `survey` | nl80211 `GET_SURVEY` over raw generic netlink for channel utilisation and noise: asynchronous (reply read from the main loop), one dump per radio per poll, time spent in the driver measured (`donghoa_cli STATUS`: `survey=nl80211 radios= dumps= last_us= max_us= timeouts= errors=`). |
@@ -35,6 +35,7 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 | `peer` | Peer table, replay window, remote BSS and load, remote STA locations, expiry. |
 | `local` | Polls hostapd (`STATUS`, `STA-FIRST/NEXT`, `GET_CONFIG`) and nl80211; keeps the STA table (EWMA of RSSI, throughput); handles hostapd events; installs local sibling and remote BSSes into hostapd's neighbor database (`SET_NEIGHBOR` / `REMOVE_NEIGHBOR`). |
 | `steer` | Steering state machine on the source AP, and admission/reservations on the target AP. |
+| `devclass` | Low-power (IoT) device classification from each local STA's uplink/downlink traffic variability (arithmetic in `policy`), the device class table shared with peers (STA_CLASS, `PROTOCOL.md` §8), and the restore on (re)association. |
 | `amon` | Air monitor: radiotap monitor sockets (BPF-filtered to uplink data and probe requests), STA watches on request, STA_MONITOR_REQ/REPORT. Lets STAs without 11k measurements be steered. |
 | `ctrl` | Local control socket used by `donghoa_cli` and the tests. |
 | `rrm_log` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, raw and decoded with the pure decoders in `rrm.cpp`. Called from `hapd::Conn`, so every caller is covered. |
@@ -212,6 +213,9 @@ fallback: it repeats the STA's cached scan results and measures nothing new.
 A STA busy with its own scan answers report mode `refused`.
 
 ## Known limitations / next steps
+
+- Low-power classification thresholds and α are not calibrated on real IoT
+  devices (SDD R16); the class only keeps devices out of automatic steering.
 
 - Channel utilisation comes from the busy time of the radio's in-use channel,
   smoothed with an EWMA. It does not separate the BSS's own airtime from OBSS

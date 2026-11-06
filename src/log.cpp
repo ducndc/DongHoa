@@ -24,7 +24,7 @@ std::array<LogLevel, MODULES> sLevels = makeDefaultLevels();
 
 constexpr std::array<std::string_view, MODULES> MODULE_NAMES{
 	"main", "l2", "msg", "peer", "hapd", "local", "steer", "policy", "amon", "survey", "ctrl",
-	"config", "rrm",
+	"config", "rrm", "class",
 };
 
 constexpr std::array<std::string_view, 4U> LEVEL_NAMES{"err", "warn", "info", "debug"};

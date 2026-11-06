@@ -106,6 +106,7 @@ Sta *Daemon::getSta(const Mac &addr, std::size_t bss) noexcept
 				s.bss = bss;
 				// Do not steer a STA right after it joined.
 				s.nextSteerMs = os::nowMs() + static_cast<Millis>(mCfg.pol.steerCooldownMs);
+				restoreDevClass(s);
 				r = &s;
 			}
 		}
@@ -126,6 +127,9 @@ arcp::StaEntry Daemon::fillEntry(const Sta &s) const noexcept
 	e.flags = s.flags;
 	if (s.tputKbps < static_cast<std::uint32_t>(mCfg.pol.idleKbps)) {
 		e.flags = static_cast<std::uint8_t>(e.flags | arcp::STA_F_IDLE);
+	}
+	if (s.lowPower) {
+		e.flags = static_cast<std::uint8_t>(e.flags | arcp::STA_F_LOW_POWER);
 	}
 	for (const SteerTxn &t : mTxn) {
 		if (t.used && (t.sta == s.addr)) {
@@ -212,6 +216,10 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcep
 		const std::uint64_t prev = s.rxBytes + s.txBytes;
 		if ((s.bytesTs != 0U) && (now > s.bytesTs) && (total >= prev)) {
 			s.tputKbps = static_cast<std::uint32_t>(((total - prev) * 8U) / (now - s.bytesTs));
+			// hostapd counts from the AP: rx = uplink, tx = downlink
+			if ((h.rxBytes >= s.rxBytes) && (h.txBytes >= s.txBytes)) {
+				sampleTraffic(s, h.rxBytes - s.rxBytes, h.txBytes - s.txBytes, now - s.bytesTs);
+			}
 		}
 		s.rxBytes = h.rxBytes;
 		s.txBytes = h.txBytes;
@@ -255,6 +263,7 @@ void Daemon::markBssDown(std::size_t i) noexcept
 	b.nextReconnectMs = os::nowMs() + RECONNECT_MS;
 	for (Sta &s : mSta) {
 		if (s.used && (s.bss == i)) {
+			saveDevClass(s);
 			s.used = false;
 		}
 	}
@@ -440,6 +449,7 @@ void Daemon::pollStas() noexcept
 						: ((s.bss == i) && (s.lastPollMs < start) && (s.lastPollMs != 0U));
 			if (gone) {
 				onLocalDisassoc(s.addr);
+				saveDevClass(s);
 				s.used = false;
 			}
 		}
@@ -482,6 +492,7 @@ void Daemon::onHapdDisconnected(std::size_t bss, const Mac &addr) noexcept
 		sendStaEvent(addr, bss, arcp::StaEventType::DISASSOC, 0U);
 		onLocalDisassoc(addr);
 		if (s != nullptr) {
+			saveDevClass(*s);
 			s->used = false;
 		}
 	}

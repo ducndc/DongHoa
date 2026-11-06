@@ -78,7 +78,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `proto.{hpp,cpp}` | pure | ARCP header and TLV encode/decode, HMAC finish/verify, TLV iterator (namespace `arcp`) | `Message::begin/add/finish`, `parseHeader`, `verify`, `TlvReader`, `decode` | IR-8..10, FR-SEC-1..2,4 |
 | `sha256.{hpp,cpp}` | pure | SHA-256 and HMAC-SHA256 | `Sha256`, `computeHmacSha256` | FR-SEC-1,3 |
 | `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
-| `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9 |
+| `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
 | `config.{hpp,cpp}` | pure | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
 | `log.{hpp,cpp}` | pure | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
 | `hapd_parse.{hpp,cpp}` | pure | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
@@ -91,6 +91,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
 | `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
 | `steer.cpp` | coord. | Source-side state machine, target-side admission and reservations | `startSteer`, `tickSteer`, `on*` handlers, `runLbRound` | FR-TRG, FR-STR, FR-ADM |
+| `devclass.cpp` | coord. | Low-power device classification per local STA, device class table, STA_CLASS exchange | `sampleTraffic`, `restoreDevClass`, `saveDevClass`, `onStaClass`, `onPeerStaAssoc`, `syncDevClass` | FR-LPC |
 | `tools/donghoa_cli.cpp` | tool | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
 
 ## 4. Runtime design
@@ -568,6 +569,46 @@ is unchanged (FR-AMN-6). With one: the BPF filter keeps beacons, ACKs and
 downlink in the kernel; user space sees each STA's uplink frames on that
 channel and does a 16-entry scan per frame.
 
+### 6.11 Low-power device classification (`devclass.cpp`) [FR-LPC]
+
+Purpose: recognise low-power (IoT) devices from their traffic, so that the
+network can treat them differently (now: no automatic steering), and keep
+that knowledge when a device moves between APs or an AP restarts. Method and
+wire format: `docs/PROTOCOL.md` §8.
+
+**Sampling.** `applyStaSample()` already turns hostapd's byte counters into a
+throughput per poll; it hands the uplink (`rx_bytes`) and downlink (`tx_bytes`)
+deltas and the elapsed time to `sampleTraffic()`. An MLD STA is sampled from
+one link only, as for its throughput.
+
+**Arithmetic (`policy.cpp`, pure, integer).** `addTrafficSample()` keeps the
+mean (×16 fixed point, so a sensor's few bytes/s do not truncate to zero) and
+the sum of squared deviations per direction (Welford). Rates are clamped to
+2^25 bytes/s and n is halved with the sum of squares past 1024 samples, so the
+sum fits 64 bits; the variance is kept, and "since the connection began" turns
+into a long memory that also lets a re-purposed device change class.
+`lpBehaviourScore()` returns S × 100 = α × √m2_up / √m2_down (n cancels):
+no floating point, no division by zero (only-uplink-varies is `LP_S_MAX`).
+`updateLpScore()` and `isLowPower()` implement θ ± 1 and the threshold with
+hysteresis.
+
+**Table.** `mDevClass` holds 512 `DevClassRec` (STA, class, θ, samples,
+source AP, time); a full table replaces its oldest record. `samples` is the
+STA's evidence count and travels with θ, so along one STA's history it only
+grows and serves as the record's version: a record replaces another only
+when it has more samples.
+
+**Flows.**
+
+| Event | Action |
+|---|---|
+| Class of a local STA changes | store; STA_CLASS (reliable) to every peer |
+| Local STA entry created (association, daemon start) | `restoreDevClass()`: θ, class and samples from the table |
+| Local STA entry dropped (disassociation, hostapd down, missed events) | `saveDevClass()` into the table |
+| STA_EVENT assoc from a peer | `onPeerStaAssoc()`: the record, if any, to that peer |
+| STA_CLASS received | table; the live local STA takes it over when it has more samples |
+| New peer, or peer with a new `boot_id` | `syncDevClass()`: every low-power record, packed into as few messages as fit |
+
 ## 7. Interaction design (sequences)
 
 ### 7.1 Discovery
@@ -701,6 +742,9 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | D13 | OpenWrt `bss` lines from netifd's runtime view and the generated hostapd config | Read `/etc/config/wireless` only; hard-coded names | UCI often has no `ifname` and may leave `mobility_domain` to a default; netifd and the generated config give the real names and effective values. |
 | D14 | Air monitor on request, per steer, in parallel with 11k; uplink RSSI compared with uplink RSSI | Continuous sniffing and broadcasting of all heard STAs; monitor only when 11k fails | Watching only requested STAs keeps CPU and ARCP traffic low; asking in parallel avoids an extra round when a busy STA ignores the Beacon Request. Monitor and source both measure the STA's transmissions, so the comparison is like for like. A kernel BPF filter drops beacons and downlink before they reach user space. |
 
+| D15 | Low-power class records replicated on every AP, exchanged peer to peer | A master AP that stores the records (as in the classification method's original IEEE 1905.1 design) | ARCP has no master (D2) and 1905 is out of scope (C-1). Replication gives the same result (a roaming or restarted AP gets the class back) without a single point of failure; the table is small (512 × ~40 bytes). |
+| D16 | Departures from the original method: θ bounded to 0..`lp_score_max`, hysteresis on the class, no score change while the STA is idle, long-memory statistics | Unbounded θ, one threshold, idle counting as "not low-power", exact statistics since association | Unbounded θ never lets a device change class again; one threshold flaps (and sends a message each time); an idle sensor is the typical low-power device and must not lose score for sleeping; exact sums overflow 64 bits within days. |
+
 ## 11. Known limitations and risks
 
 | # | Item | Impact | Possible remedy |
@@ -720,6 +764,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | R13 | Air monitors hear a STA only on their own channel (uplink data on that channel, probe requests when it scans) | APs on other channels rarely measure an active STA; in 5 GHz plans with one channel per AP the monitor helps mostly via probes | A dedicated scan radio, or a vendor off-channel air-monitor API feeding `amon.cpp` (`addAmonSample()` is the entry point) |
 | R14 | Uplink RSSI stands in for the STA's downlink level; one global `amon_rssi_offset` | Biased when AP and STA TX power differ widely | Per-band offsets, or learn the offset from STAs that give both 11k and monitor values |
 | R15 | Monitor interfaces are created outside DongHoa and lost on reboot or `wifi` restart; the BPF program has no unit test | Monitor silently missing after a restart (logged) | Create them from the OpenWrt init script, re-open on interface events; test the filter with a BPF interpreter |
+| R16 | Low-power thresholds (`lp_threshold`, α per band) are not calibrated against real devices; S compares the variability of uplink and downlink, so a device that uploads steadily (low σ_u) may not qualify, and a phone uploading photos for a long time may | Misclassification: a device kept out of automatic steering, or steered | Collect traces of real IoT devices and phones; tune α per band; add more features (packet size, inactivity) |
 
 ## 12. Traceability (SRS → design)
 
@@ -738,6 +783,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | FR-REL reliability | 6.2 |
 | FR-SEC, NFR-SEC | 6.2, 6.9 |
 | FR-AMN air monitor, IR-13 monitor interfaces | 6.10, 7.5 |
+| FR-LPC low-power classification | 6.5, 6.11, `docs/PROTOCOL.md` §8 |
 | NFR-PRF, NFR-CAP | 4.2, 4.3, 5.1 |
 | NFR-REL | 8 |
 | NFR-POR, NFR-MNT | 3, 9 |
@@ -752,3 +798,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.3 | 2026-10-31 | Per-module logging (`log.[ch]`), run-time `LOG` command, ARCP frame trace, syslog output (R8 resolved); beacon-report mode fallback in `request_beacons` |
 | 1.4 | 2026-11-01 | C++17 rewrite (MISRA C++:2023 based, no exceptions/RTTI/heap, libc only): layering with `os.cpp` as the single system-interface file, module catalogue, start-up sequence, data sizes (247,720 bytes), file and function names throughout. Behaviour and wire format unchanged |
 | 1.5 | 2026-11-01 | Identifiers renamed to the naming convention of CODING_CONVENTION §4 (camelCase verb-first functions, `mMember`, `sStatic`, `UPPER_CASE` constants and enumerators); function names updated throughout. Behaviour unchanged |
+| 1.6 | 2026-11-06 | Low-power (IoT) device classification: `devclass.cpp` in the module map, §6.11, D15–D16, R16, traceability (FR-LPC) |

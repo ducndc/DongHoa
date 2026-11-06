@@ -76,6 +76,44 @@ bool hasHigherBand(const StaBands &b, std::uint8_t curBand) noexcept;
 // Exponential backoff after failed steering attempts.
 int backoffMs(const PolicyConfig &p, int failures) noexcept;
 
+// ---- low-power (IoT) device classification ----
+//
+// Running mean and variance (Welford, integer) of a STA's uplink and
+// downlink rate in bytes/s. The mean is kept x16 (fixed point) so slow
+// devices (a few bytes/s) do not truncate to zero; m2 is in (bytes/s)^2.
+// Past TRAFFIC_WINDOW samples n and m2 are halved, which keeps the
+// variance and turns "since the connection began" into a long memory that
+// fits 64 bits.
+constexpr std::uint32_t TRAFFIC_WINDOW = 1024U;
+constexpr std::uint64_t TRAFFIC_RATE_MAX = 1U << 25U; // bytes/s (~268 Mbit/s)
+// Behaviour score when the downlink never varies but the uplink does.
+constexpr int LP_S_MAX = 1000000;
+constexpr int LP_NO_EVIDENCE = -1;
+
+struct RateStats {
+	std::int64_t mean16{0}; // mean x 16
+	std::uint64_t m2{0U};   // sum of squared deviations
+};
+
+struct TrafficStats {
+	std::uint32_t n{0U};
+	RateStats up{};   // STA -> AP (hostapd rx_bytes)
+	RateStats down{}; // AP -> STA (hostapd tx_bytes)
+};
+
+void addTrafficSample(TrafficStats &t, std::uint64_t upBps, std::uint64_t downBps) noexcept;
+// S x 100 = alpha(band) x sigma_up / sigma_down x 100; LP_S_MAX when only
+// the uplink varies; LP_NO_EVIDENCE before lp_min_samples or when neither
+// direction varies (an idle STA tells nothing).
+int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t band) noexcept;
+// theta + 1 when S > 1, - 1 otherwise, kept in 0..lp_score_max; unchanged
+// without evidence.
+int updateLpScore(const PolicyConfig &p, int theta, int s100) noexcept;
+// Low-power when theta > lp_threshold; once low-power it stays so until
+// theta < lp_threshold - lp_hysteresis.
+bool isLowPower(const PolicyConfig &p, int theta, bool wasLowPower) noexcept;
+std::uint32_t isqrt(std::uint64_t v) noexcept;
+
 } // namespace policy
 } // namespace donghoa
 
