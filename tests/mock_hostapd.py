@@ -14,8 +14,11 @@ import time
 class Sta:
     def __init__(self, mac, signal, view, btm_accept=True, tput_bytes=0, rrm=True,
                  op_classes=None, akm="00-0f-ac-4", mld_links=None, link_signal=None,
-                 traffic=None, phy_caps=None):
+                 traffic=None, phy_caps=None, inactive_ms=100):
         self.mac = mac
+        # inactive_msec: time since the STA's last frame (its signal is that
+        # frame's); large = an idle STA whose signal value is old.
+        self.inactive_ms = inactive_ms
         # Extra flags=[...] entries, e.g. ["VHT", "HE"]: a STA this capable
         # is never low-power regardless of its traffic shape.
         self.phy_caps = list(phy_caps or [])
@@ -113,9 +116,10 @@ class MockBss:
         flags = "[AUTH][ASSOC][AUTHORIZED][WMM][HT]" + "".join("[%s]" % f for f in sta.phy_caps)
         text = (
             "%s\nflags=%s\nrx_bytes=%d\ntx_bytes=%d\n"
-            "inactive_msec=100\nsignal=%d\nrx_rate_info=1200\ntx_rate_info=1200\n"
+            "inactive_msec=%d\nsignal=%d\nrx_rate_info=1200\ntx_rate_info=1200\n"
             "connected_time=10\next_capab=0000080000000040\nAKMSuiteSelector=%s\n"
-            % (sta.mac, flags, sta.rx_bytes, sta.tx_bytes, sta.link_signal.get(self.bssid, sta.signal), sta.akm)
+            % (sta.mac, flags, sta.rx_bytes, sta.tx_bytes, sta.inactive_ms,
+               sta.link_signal.get(self.bssid, sta.signal), sta.akm)
         )
         if self.mld and sta.mld_links:
             for lid, addr in sorted(sta.mld_links.items()):

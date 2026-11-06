@@ -283,6 +283,30 @@ def scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2):
           "measured STA steered to the AP that heard it")
 
 
+STA18_MAC = "aa:bb:cc:dd:ee:18"  # S13: weak signal, but idle (old frame) until it sends again
+
+
+def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
+    """S13: hostapd's signal is that of the STA's last frame. An idle STA
+    (large inactive_msec) keeps an old weak value: it must not count on
+    every poll and trigger a roam. Once the STA sends again, it does."""
+    mark(logs, "S13 stale signal of an idle STA does not trigger a roam")
+    sta = Sta(STA18_MAC, -85, {B2: (124, 149, -55)}, rrm={0}, inactive_ms=30000)
+    with world.lock:
+        ap1.add_sta(sta)
+    time.sleep(5.0)  # rssi_low_count 3 polls of 200 ms, many times over
+    log1 = open(logs[0].name).read().split("=== S13")[-1]
+    assert STA18_MAC + " start: reason rssi" not in log1, "idle STA steered on a stale sample"
+    assert not any(t[1] == STA18_MAC for t in world.btm_log)
+    sta.inactive_ms = 100  # it sends again, still weak
+    wait_for(lambda: any(t[0] == B1 and t[1] == STA18_MAC and t[2] == B2 for t in world.btm_log), 10,
+             "BTM for STA18 once its signal is fresh")
+    wait_for(lambda: STA18_MAC in ap2.stas, 3, "STA18 to roam to AP2")
+    with world.lock:
+        ap2.remove_sta(STA18_MAC)
+    print("PASS 13: idle STA's stale weak signal ignored; steered once it sends again")
+
+
 SCALE_APS = 12
 STA17_MAC = "aa:bb:cc:dd:ee:17"  # S12: hears only the BSS of the last peer in the pool order
 
@@ -497,6 +521,7 @@ def main():
             print("SKIP 7, 8, 9: band steering and MLO scenarios assume score_model 0 (20 MHz mock BSSes)")
             scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_scale(world, procs, logs, tmp, base)
             ok = True
             return 0
@@ -596,6 +621,7 @@ def main():
         print("PASS 9: MLO: one entry per MLD STA, no band steer onto its own link, roam only when all links are weak")
         scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_scale(world, procs, logs, tmp, base)
         ok = True
     finally:

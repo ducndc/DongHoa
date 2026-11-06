@@ -89,7 +89,9 @@ sequenceDiagram
    transaction and is past its cooldown or backoff time.
    - *RSSI* (`isRssiTriggered`): the smoothed RSSI (EWMA, `(3·old + new)/4`)
      is below `rssi_low` [−75 dBm] and the last `rssi_low_count` [3] polls
-     were below it too.
+     were below it too. Only polls in which the STA sent a frame count
+     (`inactive_msec` below the poll interval): an idle STA's signal is its
+     last frame's, which must not count again every second.
    - *Band* (`isBandTriggered`): a 2.4 GHz STA at or above `band_steer_rssi`
      [−55 dBm].
    - *Load* (`runLbRound`, every `lb_interval_ms` [10 s]): a BSS at or above
@@ -105,7 +107,9 @@ sequenceDiagram
 3. **MEASURE.** One 802.11k beacon request covers all candidate channels;
    air monitors on candidate APs listen in parallel, so STAs without 11k can
    be steered too. The STA's own reports take priority. MEASURE ends when
-   every candidate has a fresh level, or at the deadline.
+   every candidate has a fresh level, when the STA's reports have gone quiet
+   (200 ms + two channel times after the last one; it never reports BSSes it
+   cannot hear) and the APs asked have answered, or at the deadline.
 4. **Score** (`policy::score`). A candidate is out if it is unmeasured
    (except for manual steering), not accepting, full, at or above
    `util_admit_max` [80%], or below `rssi_min_target` [−70 dBm].

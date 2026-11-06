@@ -163,6 +163,11 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			formatTo(o, "{} {}\n", mBss[i].cfg->ifname, mBss[i].up ? "up" : "down");
 			if (mBss[i].up) {
 				putBss(o, mBss[i].info, &mBss[i].load);
+				const LocalBss::UtilSrc us = mBss[i].utilSrc;
+				formatTo(o, "  util_src={}\n",
+					 (us == LocalBss::UtilSrc::SURVEY)
+						 ? "survey (nl80211 busy time)"
+						 : ((us == LocalBss::UtilSrc::HOSTAPD) ? "hostapd (chan_util_avg)" : "none"));
 			}
 		}
 	} else if (req == "PEERS") {

@@ -52,6 +52,11 @@ int computeExpectedKbps(const PolicyConfig &p, int rssi, int peak, int utilPct) 
 int score(const PolicyConfig &p, const SteerCtx &ctx, const CandInput &c) noexcept;
 
 bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount) noexcept;
+// hostapd's signal is the level of the STA's last received frame. A poll
+// sample is fresh only when that frame came within the last poll interval
+// (inactive_msec, 0 when hostapd does not report it): an idle STA's old
+// value must not count again on every poll.
+bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept;
 bool isBandTriggered(const PolicyConfig &p, std::uint8_t band, int rssi) noexcept;
 bool isBssOverloaded(const PolicyConfig &p, int utilPct, int staCount, int maxSta) noexcept;
 bool isLbStaEligible(const PolicyConfig &p, std::uint32_t tputKbps) noexcept;

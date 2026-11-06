@@ -156,6 +156,11 @@ bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount) noexcept
 	return p.rssiSteering && (rssi != 0) && (rssi < p.rssiLow) && (lowCount >= p.rssiLowCount);
 }
 
+bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept
+{
+	return (pollMs <= 0) || (inactiveMs < static_cast<std::uint32_t>(pollMs));
+}
+
 bool isBandTriggered(const PolicyConfig &p, std::uint8_t band, int rssi) noexcept
 {
 	const bool from2g = (band == arcp::BAND_2G) && (rssi >= p.bandSteerRssi);

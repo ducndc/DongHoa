@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.0, 2026-11-06 (history in §13) |
+| Document version | 2.1, 2026-11-06 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -451,7 +451,13 @@ the STA leaving is expected.
    evaluation happens as soon as every candidate (and, with `score_model 1`,
    the serving BSS) has a report newer than the transaction start
    [NFR-PRF-2]. One radio report produces one hostapd event per BSS, so the
-   check runs on each event.
+   check runs on each event. A STA never reports a BSS it does not hear, so
+   "every candidate" rarely happens with candidates on other APs: each
+   report also sets `bcnQuietUntil` = now + `bcnQuietMs` (200 ms + 2 ×
+   measurement duration, set in `requestBeacons`), and `tickSteer` ends the
+   11k part once it passes. Measured on the QEMU testbed: a band steer with
+   an unheard remote candidate went from 1.78 s (waiting out
+   `beacon_req_timeout_ms`) to 0.80 s.
 5. **`evaluate`:** fills the policy inputs:
    - estimated RSSI from a cached 11k report ≤ 10 s old, else from an air
      monitor result ≤ 10 s old (+ `amon_rssi_offset`); for MANUAL without
@@ -854,3 +860,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.8 | 2026-11-06 | AP-side measurement per the four-step exchange: multicast STA_MONITOR_REQ, STA_MONITOR_STATUS from every AP, early end of MEASURE, `vendor_rssi.cpp` (driver per-STA RSSI API placeholder + simulation); §6.10, §7.5, failure paths |
 | 1.9 | 2026-11-06 | §6.11: idle polls are no evidence (`lastActive`); QEMU system test S14 (measurement exchange) and S15 (low-power on real counters) |
 | 2.0 | 2026-11-06 | §6.6: ranked candidate pool and per-STA peer rotation for networks with more than 16 candidate BSSes; 12-AP itest |
+| 2.1 | 2026-11-06 | §6.6: 11k quiet period ends MEASURE; RSSI samples count only when fresh (`policy::isSignalFresh`, `inactive_msec`); `STATUS` util_src per BSS |

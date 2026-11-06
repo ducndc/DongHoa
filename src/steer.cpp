@@ -17,7 +17,8 @@ constexpr LogModule LOG_MODULE{LogModule::STEER};
 constexpr Millis MEAS_FRESH_MS = 10000U;
 constexpr Millis POOL_HINT_MS = 120000U; // measurement age that still orders the pool
 constexpr Millis REMOTE_HOLD_SLACK_MS = 1500U; // covers ARCP retransmissions
-constexpr Millis AMON_REPORT_SLACK_MS = 500U;  // monitor report delivery after the watch
+constexpr Millis AMON_REPORT_SLACK_MS = 500U;
+constexpr Millis BCN_QUIET_BASE_MS = 200U;   // + 2 channel times: no new beacon report -> 11k over  // monitor report delivery after the watch
 constexpr std::uint8_t NO_STATUS = 0xffU;
 
 std::string_view reasonName(arcp::SteerReason r) noexcept
@@ -592,6 +593,8 @@ bool Daemon::requestBeacons(SteerTxn &t, Sta &s) noexcept
 		if ((mode == rrm::BeaconMode::PASSIVE) && (dur < rrm::PASSIVE_MIN_TU)) {
 			dur = rrm::PASSIVE_MIN_TU;
 		}
+		// Reports may come per channel: allow two channel times of silence.
+		t.bcnQuietMs = BCN_QUIET_BASE_MS + ((2U * static_cast<Millis>(dur) * 1024U) / 1000U);
 		if (!rrm::buildBcnReqHex(chans, n, mode, dur, nullptr, src.info.ssidView(), hexreq)) {
 			return false;
 		}
@@ -822,7 +825,8 @@ void Daemon::onBeaconReport(Sta &s, const std::optional<rrm::BeaconReport> &r) n
 	} else if (isMeasureComplete(*t, s)) {
 		evaluate(*t);
 	} else {
-		// wait for more reports
+		// More may come; tickSteer ends the 11k part after a quiet period.
+		t->bcnQuietUntil = os::nowMs() + t->bcnQuietMs;
 	}
 }
 
@@ -1006,6 +1010,18 @@ void Daemon::onSteerResult(const Peer &from, const arcp::SteerResult &r) noexcep
 void Daemon::tickSteer(Millis now) noexcept
 {
 	for (SteerTxn &t : mTxn) {
+		if (t.used && (t.state == SteerState::MEASURE) && t.bcnOutstanding && (t.bcnQuietUntil != 0U) &&
+		    (now >= t.bcnQuietUntil) && (now < t.deadline)) {
+			t.bcnOutstanding = false;
+			t.bcnQuietUntil = 0U;
+			logging::dbg(LOG_MODULE, "steer #{}: no more beacon reports for {} ms, 11k measurement over", t.id,
+				     t.bcnQuietMs);
+			const Sta *const s = findSta(t.sta);
+			if (!t.amonPending || ((s != nullptr) && isMeasureComplete(t, *s))) {
+				evaluate(t);
+				continue;
+			}
+		}
 		if (!t.used || (now < t.deadline)) {
 			continue;
 		}

@@ -169,7 +169,7 @@ void Daemon::updateStaLink(Sta &s, const hapd::Sta &h, std::size_t bss, Millis n
 		return; // more links than MAX_STA_LINKS
 	}
 	l->lastPollMs = now;
-	if (h.signal != 0) {
+	if ((h.signal != 0) && policy::isSignalFresh(h.inactiveMs, mCfg.staPollMs)) {
 		l->rssi = (l->rssi != 0) ? (((3 * l->rssi) + h.signal) - 2) / 4 : h.signal;
 		l->lowCount = (h.signal < mCfg.pol.rssiLow) ? (l->lowCount + 1) : 0;
 	}
@@ -202,11 +202,12 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcep
 		s.mld = true;
 		s.maxSimulLinks = h.maxSimulLinks;
 		updateStaLink(s, h, bss, now);
-	} else if (h.signal != 0) {
+	} else if ((h.signal != 0) && ((s.rssi == 0) || policy::isSignalFresh(h.inactiveMs, mCfg.staPollMs))) {
 		s.rssi = (s.rssi != 0) ? (((3 * s.rssi) + h.signal) - 2) / 4 : h.signal;
 		s.lowCount = (h.signal < p.rssiLow) ? (s.lowCount + 1) : 0;
 	} else {
-		// no signal in this sample
+		// No signal, or the same old frame's (idle STA): neither the
+		// average nor the low count moves.
 	}
 	// An MLD STA is listed on each link: take traffic counters from one
 	// link only (the first one seen), or the deltas mix two sources.
@@ -343,12 +344,16 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	if (fromSurvey && (cur->ts != b.surveyPrev.ts)) {
 		newSample = true;
 		util = Survey::util(b.surveyPrev, *cur);
+		if (util >= 0) {
+			b.utilSrc = LocalBss::UtilSrc::SURVEY;
+		}
 		b.surveyPrev = *cur;
 		b.load.noise = cur->noise;
 	}
 	// No survey, or counters that do not grow (a driver that clears them on read)
 	if ((util < 0) && (!fromSurvey || newSample)) {
 		util = b.hapdUtil;
+		b.utilSrc = (util >= 0) ? LocalBss::UtilSrc::HOSTAPD : LocalBss::UtilSrc::NONE;
 	}
 	if (b.wiphy.has_value()) {
 		mSurvey.request(*b.wiphy, b.ifindex); // one dump per radio per round

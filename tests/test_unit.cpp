@@ -998,6 +998,11 @@ void testLowPower()
 	policy::addTrafficSample(quiet, 40U, 0U); // the next real frame counts again
 	CHECK(policy::lpBehaviourScore(p, quiet, arcp::BAND_2G) == policy::LP_S_MAX);
 
+	// signal freshness: only a frame within the last poll counts
+	CHECK(policy::isSignalFresh(0U, 1000));     // hostapd gave no inactive_msec
+	CHECK(policy::isSignalFresh(999U, 1000));
+	CHECK(!policy::isSignalFresh(1000U, 1000));
+	CHECK(!policy::isSignalFresh(30000U, 1000)); // idle STA: old value
 	// candidate pool order: measured (by level) > own BSS > unknown remote
 	CHECK(policy::candidatePoolRank(false, 150) > policy::candidatePoolRank(false, 100));
 	CHECK(policy::candidatePoolRank(false, 0) > policy::candidatePoolRank(true, policy::NO_HINT));

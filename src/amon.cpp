@@ -289,6 +289,11 @@ void Daemon::onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noex
 
 void Daemon::onAmonStatus(const Mac &from, const arcp::StaMonitorStatus &r) noexcept
 {
+	// Logged in any case: MEASURE may already be over (it ends on the
+	// results that come before this status in the same report).
+	if (from != mApId) {
+		logging::info(LOG_MODULE, "{}: AP {} {}", r.sta, from, arcp::monitorStatusName(r.status));
+	}
 	SteerTxn *const t = findTxnBySta(r.sta);
 	if ((t == nullptr) || (t->id != r.txn) || (t->state != SteerState::MEASURE)) {
 		return;
@@ -300,9 +305,6 @@ void Daemon::onAmonStatus(const Mac &from, const arcp::StaMonitorStatus &r) noex
 			t->monWait[i] = t->monWait[t->nMonWait];
 			found = true;
 		}
-	}
-	if (from != mApId) {
-		logging::info(LOG_MODULE, "{}: AP {} {}", r.sta, from, arcp::monitorStatusName(r.status));
 	}
 	if (found && (t->nMonWait == 0U)) {
 		t->amonPending = false;

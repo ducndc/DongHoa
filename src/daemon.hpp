@@ -49,6 +49,11 @@ struct LocalBss {
 	arcp::BssInfo info{};
 	arcp::BssLoad load{};
 	int hapdUtil{-1}; // chan_util_avg from hostapd STATUS, -1 if absent
+	// Source of the last utilisation sample (STATUS util_src): the nl80211
+	// survey can be open and healthy yet give no in-use channel (e.g.
+	// mac80211_hwsim), and then hostapd's value is used.
+	enum class UtilSrc : std::uint8_t { NONE, SURVEY, HOSTAPD };
+	UtilSrc utilSrc{UtilSrc::NONE};
 	SurveySample surveyPrev{};
 	Millis nextReconnectMs{0U};
 };
@@ -208,6 +213,12 @@ struct SteerTxn {
 	std::size_t nCand{0U};
 	std::size_t cur{MAX_CAND}; // candidate in negotiation / BTM; MAX_CAND = none
 	bool bcnOutstanding{false}; // 11k request sent, no report or refusal yet
+	// The STA sends its reports in a burst once it has measured: when none
+	// came for bcnQuietMs after the last one, the 11k measurement is over
+	// (it never reports a BSS it does not hear, so waiting for every
+	// candidate would always run to beacon_req_timeout_ms).
+	Millis bcnQuietMs{0U};
+	Millis bcnQuietUntil{0U}; // 0: no report yet
 	bool amonPending{false};    // air monitor reports requested
 	// APs whose STA_MONITOR_STATUS MEASURE still waits for (this AP's own
 	// id for its local watch); MEASURE may end when the list is empty.
