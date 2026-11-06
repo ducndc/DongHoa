@@ -998,6 +998,12 @@ void testLowPower()
 	policy::addTrafficSample(quiet, 40U, 0U); // the next real frame counts again
 	CHECK(policy::lpBehaviourScore(p, quiet, arcp::BAND_2G) == policy::LP_S_MAX);
 
+	// candidate pool order: measured (by level) > own BSS > unknown remote
+	CHECK(policy::candidatePoolRank(false, 150) > policy::candidatePoolRank(false, 100));
+	CHECK(policy::candidatePoolRank(false, 0) > policy::candidatePoolRank(true, policy::NO_HINT));
+	CHECK(policy::candidatePoolRank(true, policy::NO_HINT) > policy::candidatePoolRank(false, policy::NO_HINT));
+	CHECK(policy::candidatePoolRank(false, 255) == policy::candidatePoolRank(false, policy::NO_HINT)); // RCPI unknown
+
 	// theta: +1 / -1, clamped to 0..lp_score_max, unchanged without evidence
 	CHECK(policy::updateLpScore(p, 0, 50) == 0);
 	CHECK(policy::updateLpScore(p, 5, 100) == 4); // S = 1 is not > 1

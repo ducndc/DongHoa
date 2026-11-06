@@ -102,6 +102,10 @@ struct Sta {
 	std::uint8_t bandsBlocked{0U}; // rrm::BANDS_* it cannot join (6 GHz: WPA2-PSK AKM)
 	int bandEmpty{0};           // band steers in a row with no candidate measured
 	Millis nextBandMs{0U};      // band steering backoff
+	// First peer slot buildPool visits. When more BSSes qualify than fit
+	// the pool, it moves past the peers that made it in, so the next steer
+	// of this STA measures the others (their levels then rank them).
+	std::size_t poolStart{0U};
 	std::array<Measurement, MAX_MEAS> meas{};
 	std::size_t nMeas{0U};
 	// Wi-Fi 7 MLO: an MLD STA is one entry (addr = MLD address) with one
@@ -187,6 +191,8 @@ struct Candidate {
 	int score{0};
 	std::uint8_t rcpi{255U};
 	arcp::BssInfo info{};
+	int poolRank{0};           // policy::candidatePoolRank
+	std::size_t poolPos{0U};   // peer visit order in buildPool (rotation)
 };
 
 struct SteerTxn {

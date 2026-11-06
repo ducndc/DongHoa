@@ -283,6 +283,62 @@ def scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2):
           "measured STA steered to the AP that heard it")
 
 
+SCALE_APS = 12
+STA17_MAC = "aa:bb:cc:dd:ee:17"  # S12: hears only the BSS of the last peer in the pool order
+
+
+def scenario_scale(world, procs, logs, tmp, base):
+    """S12: 12 APs with 2 BSSes each, a separate ESS and key. More BSSes
+    qualify (23) than one steer measures (16). The STA hears only a BSS of
+    the peer the source visits last, which the first pool cannot hold: its
+    802.11k report of that BSS ranks it into the next pool."""
+    ports = [base + 20 + i for i in range(SCALE_APS)]
+    socks, scale_logs, bss = [], [], []
+    for i in range(SCALE_APS):
+        name, hdir = "sc%d" % i, os.path.join(tmp, "schapd%d" % i)
+        os.makedirs(hdir, exist_ok=True)
+        b5, b2 = "02:00:00:00:%02x:00" % (0x40 + i), "02:00:00:00:%02x:01" % (0x40 + i)
+        world.add_bss(hdir, name + "-wl0", b5, "scale", 5180, 36, util=20)
+        world.add_bss(hdir, name + "-wl1", b2, "scale", 2437, 6, util=20)
+        bss.append((b5, b2))
+        cfg, sock = os.path.join(tmp, name + ".conf"), os.path.join(tmp, "sctrl%d" % i)
+        write_cfg(cfg, "02:00:00:00:00:%02x" % (0x40 + i), name, hdir, sock, ports[i],
+                  [q for q in ports if q != ports[i]], "scale-mesh-key", extra="bss %s-wl1 mdid=a1b2\n" % name)
+        path = os.path.join(tmp, name + ".log")
+        log = open(path, "a")
+        scale_logs.append(log)
+        socks.append(sock)
+        procs.append(subprocess.Popen(DONGHOA + ["-c", cfg, "-d"], stderr=log))
+    mark(logs + scale_logs, "S12 scale: 12 APs, more BSSes than one steer can measure")
+    npeers = lambda sk: sum(1 for l in cli(sk, "PEERS").splitlines() if l.startswith("peer "))
+    wait_for(lambda: all(npeers(sk) == SCALE_APS - 1 for sk in socks), 15, "all 12 APs to see 11 peers")
+    order = [l.split()[1] for l in cli(socks[0], "PEERS").splitlines() if l.startswith("peer ")]
+    last = int(order[-1].split(":")[-1], 16) - 0x40
+    target = bss[last][0]
+    with world.lock:
+        src = world.bss_by_bssid[bss[0][0]]
+        sta = Sta(STA17_MAC, -82, {target: (115, 36, -55)}, rrm={0})
+        src.add_sta(sta)
+    wait_for(lambda: STA17_MAC in world.bss_by_bssid[target].stas, 25,
+             "STA17 to be steered to the last peer's BSS %s" % target)
+    for log in scale_logs:
+        log.flush()
+    log0 = open(scale_logs[0].name).read()
+    assert "more BSSes than the 16 the pool holds" in log0, "the pool overflowed"
+    starts = log0.count(STA17_MAC + " start: reason rssi")
+    btm_to = [t[2] for t in world.btm_log if t[1] == STA17_MAC]
+    assert btm_to and btm_to[-1] == target, btm_to
+    for p in procs[-SCALE_APS:]:
+        p.send_signal(signal.SIGTERM)
+    for p in procs[-SCALE_APS:]:
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    print("PASS 12: 12 APs / 23 candidate BSSes: STA steered to the one BSS it hears, on the last "
+          "peer (steer attempt %d)" % starts)
+
+
 def main():
     tmp = os.environ.get("DONGHOA_ITEST_DIR")
     if tmp:
@@ -441,6 +497,7 @@ def main():
             print("SKIP 7, 8, 9: band steering and MLO scenarios assume score_model 0 (20 MHz mock BSSes)")
             scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_scale(world, procs, logs, tmp, base)
             ok = True
             return 0
         mark(logs, "S7 band steering 2.4 -> 5 GHz checks the STA's operating classes")
@@ -539,6 +596,7 @@ def main():
         print("PASS 9: MLO: one entry per MLD STA, no band steer onto its own link, roam only when all links are weak")
         scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_scale(world, procs, logs, tmp, base)
         ok = True
     finally:
         for p in procs:

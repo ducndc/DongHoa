@@ -15,6 +15,7 @@ namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::STEER};
 constexpr Millis MEAS_FRESH_MS = 10000U;
+constexpr Millis POOL_HINT_MS = 120000U; // measurement age that still orders the pool
 constexpr Millis REMOTE_HOLD_SLACK_MS = 1500U; // covers ARCP retransmissions
 constexpr Millis AMON_REPORT_SLACK_MS = 500U;  // monitor report delivery after the watch
 constexpr std::uint8_t NO_STATUS = 0xffU;
@@ -436,7 +437,8 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 void Daemon::buildPool(SteerTxn &t) noexcept
 {
 	const arcp::BssInfo &cur = mBss[t.bss].info;
-	const Sta *const s = findSta(t.sta);
+	Sta *const s = findSta(t.sta);
+	const Millis now = os::nowMs();
 	// Skip bands the STA does not advertise (unless measured there) and
 	// 6 GHz for a WPA2-PSK STA; a manual steer goes where the operator says.
 	// An MLD STA never goes to another link of its own AP MLD: link
@@ -447,36 +449,98 @@ void Daemon::buildPool(SteerTxn &t) noexcept
 		       ((t.reason == arcp::SteerReason::MANUAL) || (s == nullptr) ||
 			policy::isBandUsable(policy::StaBands{s->bandsAdv, s->bandsSeen, s->bandsBlocked}, bi.band));
 	};
-	const auto add = [&t, &usable](const arcp::BssInfo &bi, const Mac &ap, bool local) {
-		if ((t.nCand < t.cand.size()) && (t.forcedTarget.isZero() || (t.forcedTarget == bi.bssid)) &&
-		    usable(bi)) {
-			Candidate &c = t.cand[t.nCand];
-			c = Candidate{};
-			c.bssid = bi.bssid;
-			c.ap = ap;
-			c.local = local;
-			c.info = bi;
+	// Best level the STA was measured at for bssid in the last
+	// POOL_HINT_MS (11k or AP-side): a hint for the pool order only.
+	const auto hint = [s, now](const Mac &bssid) {
+		int r = policy::NO_HINT;
+		for (std::size_t i = 0U; (s != nullptr) && (i < s->nMeas); i++) {
+			const Measurement &m = s->meas[i];
+			if ((m.bssid == bssid) && (m.rcpi <= 220U) && ((now - m.ts) < POOL_HINT_MS) &&
+			    (static_cast<int>(m.rcpi) > r)) {
+				r = static_cast<int>(m.rcpi);
+			}
+		}
+		return r;
+	};
+	// The pool holds MAX_CAND BSSes. When more qualify, a new one replaces
+	// the lowest-ranked entry if it ranks strictly higher (the last added
+	// of equal rank goes first), so with nothing known the peers visited
+	// first stay. firstDrop: visit position of the first unknown remote
+	// BSS left out, where the next steer of this STA starts.
+	std::size_t firstDrop = MAX_PEERS;
+	const auto add = [&t, &usable, &hint, &firstDrop](const arcp::BssInfo &bi, const Mac &ap, bool local,
+							  std::size_t pos) {
+		if ((!t.forcedTarget.isZero() && (t.forcedTarget != bi.bssid)) || !usable(bi)) {
+			return;
+		}
+		Candidate c;
+		c.bssid = bi.bssid;
+		c.ap = ap;
+		c.local = local;
+		c.info = bi;
+		c.poolRank = policy::candidatePoolRank(local, hint(bi.bssid));
+		c.poolPos = pos;
+		if (t.nCand < t.cand.size()) {
+			t.cand[t.nCand] = c;
 			t.nCand++;
+			return;
+		}
+		std::size_t worst = 0U;
+		for (std::size_t i = 1U; i < t.nCand; i++) {
+			if (t.cand[i].poolRank <= t.cand[worst].poolRank) {
+				worst = i;
+			}
+		}
+		const Candidate *out = &c; // the BSS left out
+		if (c.poolRank > t.cand[worst].poolRank) {
+			const Candidate evicted = t.cand[worst];
+			t.cand[worst] = c;
+			out = &evicted;
+			if (!out->local && (out->poolRank == 0) && (out->poolPos < firstDrop)) {
+				firstDrop = out->poolPos;
+			}
+		} else if (!out->local && (out->poolRank == 0) && (out->poolPos < firstDrop)) {
+			firstDrop = out->poolPos;
+		} else {
+			// a ranked BSS that did not fit
 		}
 	};
 	const bool band = t.reason == arcp::SteerReason::BAND;
+	const std::size_t start = (s != nullptr) ? (s->poolStart % MAX_PEERS) : 0U;
 
 	t.nCand = 0U;
 	for (std::size_t i = 0U; i < mNBss; i++) {
 		if ((i != t.bss) && mBss[i].up && arcp::isSameEss(mBss[i].info, cur) &&
 		    (!band || (mBss[i].info.band > cur.band))) {
-			add(mBss[i].info, mApId, true);
+			add(mBss[i].info, mApId, true, 0U);
 		}
 	}
-	for (const Peer &p : mPeers) {
+	for (std::size_t k = 0U; k < MAX_PEERS; k++) {
+		const Peer &p = mPeers[(start + k) % MAX_PEERS];
 		if (!p.used) {
 			continue;
 		}
 		for (const RemoteBss &rb : p.bss) {
 			if (rb.used && arcp::isSameEss(rb.info, cur) && (!band || (rb.info.band > cur.band))) {
-				add(rb.info, p.id, false);
+				add(rb.info, p.id, false, k);
 			}
 		}
+	}
+	// Measure the most promising first (requestBeacons takes channels in
+	// pool order); evaluate() sorts by score afterwards.
+	for (std::size_t i = 1U; i < t.nCand; i++) {
+		const Candidate c = t.cand[i];
+		std::size_t j = i;
+		while ((j > 0U) && (t.cand[j - 1U].poolRank < c.poolRank)) {
+			t.cand[j] = t.cand[j - 1U];
+			j--;
+		}
+		t.cand[j] = c;
+	}
+	if ((s != nullptr) && (firstDrop < MAX_PEERS)) {
+		s->poolStart = (start + firstDrop) % MAX_PEERS;
+		logging::info(LOG_MODULE, "steer #{} {}: more BSSes than the {} the pool holds, next pool starts at peer slot {}",
+			      t.id, t.sta, MAX_CAND, s->poolStart);
 	}
 }
 

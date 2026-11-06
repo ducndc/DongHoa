@@ -76,6 +76,13 @@ bool hasHigherBand(const StaBands &b, std::uint8_t curBand) noexcept;
 // Exponential backoff after failed steering attempts.
 int backoffMs(const PolicyConfig &p, int failures) noexcept;
 
+// Order of the candidate pool when more BSSes qualify than one steer can
+// measure (MAX_CAND): a BSS the STA was recently measured at comes first,
+// the better the level (hintRcpi, 0..220; NO_HINT when none), then this
+// AP's own BSSes (no negotiation needed), then the others. Higher is better.
+constexpr int NO_HINT = -1;
+int candidatePoolRank(bool local, int hintRcpi) noexcept;
+
 // ---- low-power (IoT) device classification ----
 //
 // Running mean and variance (Welford, integer) of a STA's uplink and

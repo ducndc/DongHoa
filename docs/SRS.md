@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 1.8, 2026-11-06 (history in Appendix B) |
+| Document version | 1.9, 2026-11-06 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -225,7 +225,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | FR-STR-1 | At most one transaction per STA, and at most 16 at a time. | I |
-| FR-STR-2 | Candidates shall be every BSS of the same ESS other than the current one, local or remote (at most 16). Band steering keeps only higher bands. | I |
+| FR-STR-2 | Candidates shall be every BSS of the same ESS other than the current one, local or remote (at most 16). Band steering keeps only higher bands. When more BSSes qualify than the 16 a steer holds (e.g. more than about 8 dual-band APs), the pool keeps the most promising: BSSes the STA was measured at in the last 2 minutes (802.11k or AP-side, best level first), then this AP's own BSSes, then the others in peer order. That peer order starts, for each STA, after the peers the previous pool held, so successive steers cover every AP. | I, T-I 12 |
 | FR-STR-3 | **Measure.** For an 11k STA, the daemon shall send a Beacon Request (mode `beacon_mode`, default active; duration `beacon_duration`, 50 TU; SSID of the ESS) covering every distinct candidate channel (up to 8) in **one** request: Channel 255 with AP Channel Report subelements when there are several, because a STA refuses a second beacon measurement while one is running. With `score_model 1` the serving channel is included. It shall wait until every candidate has been reported or `beacon_req_timeout_ms` (1500) expires. When hostapd refuses the configured mode (the STA did not advertise it in its RM Enabled Capabilities), the daemon shall try active, then passive mode (passive lasting at least 120 TU), remember the first mode accepted for that STA, and mark the STA as lacking 11k only when all fail. | T-I 3, T-O |
 | FR-STR-4 | **Score.** Each candidate shall be scored by the policy (§4.8) from its STA-measured level (reports ≤ 10 s old) or, when there is none, its air-monitor level (FR-AMN-4), and its load. Ineligible candidates shall be dropped and the rest tried best first. | T-U `test_policy`, T-I 3 |
 | FR-STR-5 | **Negotiate.** For a remote candidate, the daemon shall send STEER_REQ to the owning peer and wait for STEER_RESP (`steer_resp_timeout_ms` + 1.5 s). A rejection, a timeout or an unreachable peer shall move on to the next candidate. A local candidate shall be admitted locally, without negotiation. | T-I 3, T-O |
@@ -444,3 +444,4 @@ measurement timeout.
 | 1.6 | 2026-11-06 | FR-LPC-1: recent-uplink-rate gate (`lp_max_mean_bps`); FR-LPC-4: sync also carries corrections back to normal; new FR-LPC-6 (PHY exclusion, `lp_exclude_vht/he/eht`) |
 | 1.7 | 2026-11-06 | AP-side measurement: STA_MONITOR_REQ multicast to every peer (FR-AMN-2), every AP answers with STA_MONITOR_STATUS (FR-AMN-3), MEASURE ends when all have answered (new FR-AMN-7), driver per-STA RSSI API placeholder (new FR-AMN-8); keys `sta_rssi_api`, `sta_rssi_sim` |
 | 1.8 | 2026-11-06 | FR-LPC-1: an idle poll (no data either way) is no evidence (an idle STA was classified low-power on the QEMU testbed) |
+| 1.9 | 2026-11-06 | FR-STR-2: ranked candidate pool when more than 16 BSSes qualify (measured first, then own, then rotating peer order); verified with 12 APs (itest PASS 12) |

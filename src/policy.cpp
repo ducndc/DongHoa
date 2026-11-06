@@ -216,6 +216,19 @@ bool hasHigherBand(const StaBands &b, std::uint8_t curBand) noexcept
 	return r;
 }
 
+int candidatePoolRank(bool local, int hintRcpi) noexcept
+{
+	int r = 0;
+	if ((hintRcpi >= 0) && (hintRcpi <= 220)) {
+		r = 2000 + hintRcpi;
+	} else if (local) {
+		r = 1000;
+	} else {
+		// unknown, remote
+	}
+	return r;
+}
+
 int backoffMs(const PolicyConfig &p, int failures) noexcept
 {
 	std::int64_t ms = p.steerCooldownMs;

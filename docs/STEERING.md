@@ -98,7 +98,10 @@ sequenceDiagram
    - *Manual*: `donghoa_cli … STEER`, optionally naming the target.
 2. **Pool** (`buildPool`). Every other BSS of the same ESS, on this AP or a
    peer. Band steering keeps only higher bands. An empty pool means a
-   cooldown, not a failure.
+   cooldown, not a failure. A steer holds 16 BSSes; in a bigger network the
+   pool keeps BSSes the STA was recently measured at (best first), then this
+   AP's own, then the others, starting each STA's next steer after the peers
+   the previous one covered.
 3. **MEASURE.** One 802.11k beacon request covers all candidate channels;
    air monitors on candidate APs listen in parallel, so STAs without 11k can
    be steered too. The STA's own reports take priority. MEASURE ends when

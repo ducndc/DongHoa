@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 1.9, 2026-11-06 (history in §13) |
+| Document version | 2.0, 2026-11-06 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -416,6 +416,18 @@ the STA leaving is expected.
    target, only that BSSID. Except for MANUAL, only bands the STA can use
    (`policy::isBandUsable`: not blocked — 6 GHz for a WPA2-PSK AKM — and
    advertised in `supp_op_classes`, seen in use, or nothing advertised). At most 16. An empty pool applies the cooldown.
+   When more qualify, each BSS gets `policy::candidatePoolRank`: a level
+   measured for it in the last 2 min (`POOL_HINT_MS`, 11k or AP-side) ranks
+   by that level above all others, then local BSSes, then unknown remote
+   ones. A new BSS replaces the lowest-ranked entry only if it ranks
+   strictly higher, so unknown remote BSSes keep the peer visit order. That
+   order starts at `Sta::poolStart`, which moves to the first peer whose
+   unknown BSS was left out; the next steer of the STA covers the next
+   peers. The pool is then sorted by rank, so `requestBeacons` takes the
+   channels of the most promising candidates when there are more than 8.
+   Why: with a pool filled in plain peer-table order, a STA next to the
+   peers beyond the first 16 BSSes was never steered (itest PASS 12 fails
+   with the old code).
 3. **`requestBeacons`:** collect the distinct (op class, channel) pairs of
    the candidates (with `score_model 1`, the serving channel first), up to 8,
    and send **one** `REQ_BEACON <sta> <hex>`. The hex comes from
@@ -841,3 +853,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.7 | 2026-11-06 | §6.11: recent-uplink-rate gate, PHY exclusion (configurable, HE allowed), `corrected` records in the rejoin sync; R16 mitigations |
 | 1.8 | 2026-11-06 | AP-side measurement per the four-step exchange: multicast STA_MONITOR_REQ, STA_MONITOR_STATUS from every AP, early end of MEASURE, `vendor_rssi.cpp` (driver per-STA RSSI API placeholder + simulation); §6.10, §7.5, failure paths |
 | 1.9 | 2026-11-06 | §6.11: idle polls are no evidence (`lastActive`); QEMU system test S14 (measurement exchange) and S15 (low-power on real counters) |
+| 2.0 | 2026-11-06 | §6.6: ranked candidate pool and per-STA peer rotation for networks with more than 16 candidate BSSes; 12-AP itest |
