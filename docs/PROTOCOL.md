@@ -229,7 +229,10 @@ pushes its data up in bursts and receives little, so S > 1 adds one to the
 STA's score θ and S ≤ 1 takes one away (θ stays in 0..`lp_score_max`). The STA
 becomes low-power when θ > `lp_threshold` (δ) and normal again when θ <
 δ − `lp_hysteresis`. S is not computed before `lp_min_samples` samples, nor
-while neither rate varies (an idle STA says nothing): θ is then unchanged.
+while neither rate varies, nor on a poll in which the STA moved no data (an
+idle STA says nothing): θ is then unchanged. The idle poll still enters the
+statistics; without this rule one old uplink burst (σ_u > 0) and no
+downlink (σ_d = 0) would score S = ∞ on every idle poll.
 Nor does S count while the STA's recent uplink rate (a moving average over
 about 8 polls) is above `lp_max_mean_bps`: a large upload has the shape of a
 sensor burst at a thousand times the volume. A STA that negotiated a PHY

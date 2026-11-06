@@ -299,6 +299,7 @@ void addTrafficSample(TrafficStats &t, std::uint64_t upBps, std::uint64_t downBp
 	t.n++;
 	addRate(t.up, t.n, upBps);
 	addRate(t.down, t.n, downBps);
+	t.lastActive = (upBps > 0U) || (downBps > 0U);
 	const std::int64_t up16 =
 		static_cast<std::int64_t>(((upBps > TRAFFIC_RATE_MAX) ? TRAFFIC_RATE_MAX : upBps) * 16U);
 	t.upRecent16 = (t.n == 1U) ? up16 : (t.upRecent16 + ((up16 - t.upRecent16) / TRAFFIC_RECENT_DIV));
@@ -317,7 +318,7 @@ int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t 
 	const std::uint64_t meanUp = (t.upRecent16 <= 0) ? 0U : (static_cast<std::uint64_t>(t.upRecent16) / 16U);
 	const bool small = (p.lpMaxMeanBps <= 0) || (meanUp <= static_cast<std::uint64_t>(p.lpMaxMeanBps));
 
-	if (!enough || !small || ((su == 0U) && (sd == 0U))) {
+	if (!enough || !small || !t.lastActive || ((su == 0U) && (sd == 0U))) {
 		r = LP_NO_EVIDENCE;
 	} else if (sd == 0U) {
 		r = LP_S_MAX;

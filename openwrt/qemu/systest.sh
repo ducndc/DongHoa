@@ -5,11 +5,14 @@
 # mac80211_hwsim, ARCP over the backhaul between the VMs.
 #
 #   systest.sh              run every scenario
-#   systest.sh S4 S9        run selected scenarios (S3 always runs: it sets up the STA)
+#   systest.sh S4 S9        run selected scenarios (S3 always runs: it sets up the
+#                           STA; S5 also runs S4, which puts the STA on 2.4 GHz)
 #
 # Needs ap1 and ap2 started and provisioned (vm.sh, provision.sh). ap1's spare
-# radio becomes the test STA. While running, the steering cooldown is 3 s;
-# /etc/donghoa.conf and /etc/config/wireless are restored at the end.
+# radio becomes the test STA. While running, the steering cooldown is 3 s and
+# steer/amon debug logging is on (logread keeps the candidate scores of a
+# failed steer); /etc/donghoa.conf and /etc/config/wireless are restored at
+# the end.
 
 VM="$(dirname "$0")/vm.sh"
 PASS=0
@@ -66,7 +69,7 @@ setup() {
 	for n in 1 2; do
 		rv $n 'cp /etc/donghoa.conf /tmp/donghoa.conf.systest
 cp /etc/config/wireless /tmp/wireless.systest
-echo "steer_cooldown_ms 3000" >> /etc/donghoa.conf
+printf "steer_cooldown_ms 3000\nlog_debug steer,amon\n" >> /etc/donghoa.conf
 restart' || return 1
 	done
 }
@@ -130,9 +133,12 @@ since $m | grep -o "auth_alg=ft" | head -1')
 s5() {
 	out=$(rv 1 'm=S5-$$; mark $m
 waitlog $m "reason band" 20 && waitlog $m "\(band\) finished|band\): no suitable" 15
-since $m | grep -E "\(band\)" | tail -1; echo "link=$(link)"')
+since $m | grep -E "\(band\)" | tail -1; echo "link=$(link)"
+since $m | grep -E "cand |unsupported|no suitable" | sed "s/.*\] /  /"')
 	echo "$out" | grep -q "(band) finished: success" && echo "$out" | grep -q "link=$B1_5G"
-	result "S5  automatic band steering 2.4->5 GHz" $? "$(echo "$out" | grep -o 'success after [0-9]* ms')"
+	r=$?
+	result "S5  automatic band steering 2.4->5 GHz" $r "$(echo "$out" | grep -o 'success after [0-9]* ms')"
+	[ $r -eq 0 ] || echo "$out" | grep "^  "
 }
 
 s6() {
@@ -226,11 +232,64 @@ s13() {
 	rv 2 'sed -i "s/^key .*/key hex:ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100/" /etc/donghoa.conf; restart' >/dev/null
 	sleep 10
 	mid=$(rv 1 'echo "lost=$(since '"$m13"' | grep -c "lost") peers=$(donghoa_cli $C PEERS | grep -c "^peer") nr=$(nrcount ap-2g)"')
-	rv 2 'cp /tmp/donghoa.conf.systest /etc/donghoa.conf; echo "steer_cooldown_ms 3000" >> /etc/donghoa.conf; restart' >/dev/null
+	rv 2 'cp /tmp/donghoa.conf.systest /etc/donghoa.conf; printf "steer_cooldown_ms 3000\nlog_debug steer,amon\n" >> /etc/donghoa.conf; restart' >/dev/null
 	end=$(rv 1 'i=0; until donghoa_cli $C PEERS | grep -q "^peer"; do i=$((i+1)); [ $i -ge 20 ] && break; sleep 1; done
 sleep 3; echo "peers=$(donghoa_cli $C PEERS | grep -c "^peer") nr=$(nrcount ap-2g)"')
 	echo "$mid" | grep -q "lost=1 peers=0 nr=1" && echo "$end" | grep -q "peers=1 nr=3"
 	result "S13 BYE + wrong key rejected, recovery" $? "wrong key: $mid; restored: $end"
+}
+
+s14() {
+	# AP-side measurement (PROTOCOL.md §7), towards AP2's 5 GHz BSS, which
+	# the STA cannot hear (another VM): only AP2 can measure it.
+	# a) AP2 has no monitor and no driver RSSI API: it answers "unsupported"
+	#    at once, and AP1 does not wait out the measurement time for it.
+	a=$(rv 1 'cool; m=S14a-$$; mark $m
+donghoa_cli $C STEER '"$STA $B2_5G"' >/dev/null
+waitlog $m "finished|no suitable" 20
+since $m | grep -E "measurement requested|AP [0-9a-f:]* (unsupported|measured|not heard)" |
+	awk "{for (i=1;i<=NF;i++) if (\$i ~ /^[0-9]+\.[0-9]+\$/) {print \$i, \$0; break}}" |
+	awk "/requested/{t=\$1} /unsupported/ && t {printf \"answer_ms=%d\\n\", (\$1-t)*1000; exit}"')
+	# b) AP2 measures with its (simulated) driver API: AP1 gets the level.
+	rv 2 'echo "ap-5g '"$STA"' -61" > /tmp/systest_rssi
+echo "sta_rssi_sim /tmp/systest_rssi" >> /etc/donghoa.conf; restart; mark S14b-ap2' >/dev/null
+	b=$(rv 1 'i=0; until donghoa_cli $C PEERS | grep -q "^peer"; do i=$((i+1)); [ $i -ge 20 ] && break; sleep 1; done
+cool; m=S14b-$$; mark $m
+donghoa_cli $C STEER '"$STA $B2_5G"' >/dev/null
+waitlog $m "finished|no suitable" 20
+since $m | grep -oE "heard by '"$B2_5G"' .*: -?[0-9]+ dBm|AP [0-9a-f:]* measured" | head -2')
+	c=$(rv 2 'since S14b-ap2 | grep -c "asks to measure '"$STA"'"
+sed -i "/^sta_rssi_sim /d" /etc/donghoa.conf; rm -f /tmp/systest_rssi; restart')
+	ms=$(echo "$a" | sed -n 's/answer_ms=//p')
+	[ -n "$ms" ] && [ "$ms" -lt 500 ] && echo "$b" | grep -q -- "-61 dBm" && echo "$b" | grep -q "measured" &&
+		[ "$(echo "$c" | head -1)" -ge 1 ]
+	result "S14 AP-side measurement: multicast req, every AP answers" $? \
+		"unsupported answered in ${ms:-?} ms; driver API: $(echo "$b" | grep -o -- '-[0-9]* dBm' | head -1)"
+}
+
+s15() {
+	# Low-power classification on real hostapd counters. The idle STA must
+	# stay normal (an idle poll is no evidence); uplink-only traffic (ARP
+	# requests for an address nobody has, no reply) makes it low-power, and
+	# the class reaches AP2.
+	out=$(rv 1 'printf "lp_threshold 4\nlp_hysteresis 1\nlp_min_samples 3\n" >> /etc/donghoa.conf; restart; waitlink
+m=S15-$$; mark $m; sleep 10
+echo "idle=$(donghoa_cli $C STAS | grep "^sta '"$STA"'" | grep -o "class=[a-z-]*")"
+ip addr add 10.99.0.2/24 dev sta0
+ping -I sta0 -c 30 -i 1 10.99.0.1 >/dev/null 2>&1 &
+waitlog $m "classified low-power" 30
+echo "busy=$(donghoa_cli $C STAS | grep "^sta '"$STA"'" | grep -o "class=[a-z-]*")"
+kill %1 2>/dev/null; ip addr del 10.99.0.2/24 dev sta0')
+	sleep 2
+	peer=$(rv 2 'donghoa_cli $C DEVCLASS | grep "'"$STA"'" | grep -o "class=[a-z-]*"')
+	# Forget the class on both APs (each would hand it back to the other).
+	rv 2 '/etc/init.d/donghoa stop' >/dev/null
+	rv 1 'sed -i "/^lp_threshold 4$/d; /^lp_hysteresis 1$/d; /^lp_min_samples 3$/d" /etc/donghoa.conf; restart' >/dev/null
+	rv 2 'restart' >/dev/null
+	echo "$out" | grep -q "idle=class=normal" && echo "$out" | grep -q "busy=class=low-power" &&
+		[ "$peer" = "class=low-power" ]
+	result "S15 low-power class: idle stays normal, uplink-only -> low" $? \
+		"$(echo "$out" | grep -E "idle|busy" | tr "\n" " ")ap2: ${peer:-none}"
 }
 
 # ---- main ----
@@ -240,9 +299,9 @@ trap cleanup EXIT INT TERM
 echo "--- preparing (cooldown 3 s while testing)"
 setup || { echo "setup failed: are ap1 and ap2 running and provisioned?"; exit 2; }
 STA=""
-for s in s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13; do
+for s in s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15; do
 	id=$(echo "$s" | tr s S)
-	if [ "$s" = s3 ] || want "$id"; then
+	if [ "$s" = s3 ] || want "$id" || { [ "$s" = s4 ] && want S5; }; then
 		$s
 	fi
 done

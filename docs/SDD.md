@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 1.8, 2026-11-06 (history in §13) |
+| Document version | 1.9, 2026-11-06 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -610,7 +610,13 @@ into a long memory that also lets a re-purposed device change class.
 `lpBehaviourScore()` returns S × 100 = α × √m2_up / √m2_down (n cancels):
 no floating point, no division by zero (only-uplink-varies is `LP_S_MAX`).
 `updateLpScore()` and `isLowPower()` implement θ ± 1 and the threshold with
-hysteresis. `TrafficStats::upRecent16` is a moving average of the uplink
+hysteresis. `TrafficStats::lastActive` records whether the latest sample
+moved data; `lpBehaviourScore()` gives no evidence on an idle poll. Found on
+the QEMU testbed: an idle hwsim STA (0 B/s, window mean 3 B/s from rare
+keepalives, σ_d = 0) scored S = ∞ on every poll and turned low-power, which
+`lp_no_steer` then kept out of steering. A class already wrong before this
+rule is not undone by idle polls (they are no evidence either way); it
+clears when the STA moves real traffic, or when every AP restarts. `TrafficStats::upRecent16` is a moving average of the uplink
 rate (weight 1/8); `lpBehaviourScore()` gives no evidence while it is above
 `lp_max_mean_bps`, so a large upload does not count as sensor-like and the
 gate reopens a few polls after the upload ends (a whole-window mean would
@@ -834,3 +840,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.6 | 2026-11-06 | Low-power (IoT) device classification: `devclass.cpp` in the module map, §6.11, D15–D16, R16, traceability (FR-LPC) |
 | 1.7 | 2026-11-06 | §6.11: recent-uplink-rate gate, PHY exclusion (configurable, HE allowed), `corrected` records in the rejoin sync; R16 mitigations |
 | 1.8 | 2026-11-06 | AP-side measurement per the four-step exchange: multicast STA_MONITOR_REQ, STA_MONITOR_STATUS from every AP, early end of MEASURE, `vendor_rssi.cpp` (driver per-STA RSSI API placeholder + simulation); §6.10, §7.5, failure paths |
+| 1.9 | 2026-11-06 | §6.11: idle polls are no evidence (`lastActive`); QEMU system test S14 (measurement exchange) and S15 (low-power on real counters) |

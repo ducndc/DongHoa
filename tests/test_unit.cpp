@@ -983,6 +983,20 @@ void testLowPower()
 		policy::addTrafficSample(uponly, ((i % 2) == 0) ? 0U : 300U, 100U);
 	}
 	CHECK(policy::lpBehaviourScore(p, uponly, arcp::BAND_2G) == policy::LP_S_MAX);
+	// Found on the QEMU testbed: a STA idle after one small uplink burst.
+	// The window still has sigma_up > 0 and sigma_down = 0, but an idle
+	// poll is no evidence, so theta does not climb while nothing is sent.
+	policy::TrafficStats quiet;
+	int thQ = 0;
+	policy::addTrafficSample(quiet, 4000U, 0U);
+	for (int i = 0; i < 300; i++) {
+		policy::addTrafficSample(quiet, 0U, 0U);
+		thQ = policy::updateLpScore(p, thQ, policy::lpBehaviourScore(p, quiet, arcp::BAND_2G));
+	}
+	CHECK((quiet.up.m2 > 0U) && (quiet.down.m2 == 0U) && !quiet.lastActive);
+	CHECK(thQ == 0);
+	policy::addTrafficSample(quiet, 40U, 0U); // the next real frame counts again
+	CHECK(policy::lpBehaviourScore(p, quiet, arcp::BAND_2G) == policy::LP_S_MAX);
 
 	// theta: +1 / -1, clamped to 0..lp_score_max, unchanged without evidence
 	CHECK(policy::updateLpScore(p, 0, 50) == 0);

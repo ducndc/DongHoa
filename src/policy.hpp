@@ -106,12 +106,19 @@ struct TrafficStats {
 	// lp_max_mean_bps gate follows what the STA does now, not a mean over
 	// the whole window (which would keep one big upload for minutes).
 	std::int64_t upRecent16{0};
+	// The latest sample moved data (either way). An idle poll still goes
+	// into the statistics but is no evidence: otherwise one old uplink
+	// burst (sigma_up > 0) and no downlink at all (sigma_down = 0) would
+	// score S = inf on every idle poll, and any quiet STA would end up
+	// low-power a minute later.
+	bool lastActive{false};
 };
 
 void addTrafficSample(TrafficStats &t, std::uint64_t upBps, std::uint64_t downBps) noexcept;
 // S x 100 = alpha(band) x sigma_up / sigma_down x 100; LP_S_MAX when only
-// the uplink varies; LP_NO_EVIDENCE before lp_min_samples or when neither
-// direction varies (an idle STA tells nothing).
+// the uplink varies; LP_NO_EVIDENCE before lp_min_samples, when neither
+// direction varies, or when the latest sample moved no data (an idle STA
+// tells nothing).
 int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t band) noexcept;
 // theta + 1 when S > 1, - 1 otherwise, kept in 0..lp_score_max; unchanged
 // without evidence.

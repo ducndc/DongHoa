@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 1.7, 2026-11-06 (history in Appendix B) |
+| Document version | 1.8, 2026-11-06 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -299,7 +299,7 @@ The method is defined in `docs/PROTOCOL.md` §8.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| FR-LPC-1 | With `lp_classify` on, each STA poll shall add the STA's uplink and downlink rates (bytes/s, from hostapd `rx_bytes`/`tx_bytes`) to running standard deviations σ_u, σ_d and compute S = α(band) × σ_u / σ_d (α = `lp_alpha_2g/5g/6g` / 100). S shall not count before `lp_min_samples` samples, while neither rate varies, or while the recent uplink rate (moving average, weight 1/8) exceeds `lp_max_mean_bps` (0 disables). | T-U `test_low_power` |
+| FR-LPC-1 | With `lp_classify` on, each STA poll shall add the STA's uplink and downlink rates (bytes/s, from hostapd `rx_bytes`/`tx_bytes`) to running standard deviations σ_u, σ_d and compute S = α(band) × σ_u / σ_d (α = `lp_alpha_2g/5g/6g` / 100). S shall not count before `lp_min_samples` samples, while neither rate varies, on a poll in which the STA moved no data, or while the recent uplink rate (moving average, weight 1/8) exceeds `lp_max_mean_bps` (0 disables). | T-U `test_low_power` |
 | FR-LPC-2 | The STA's score θ shall rise by one when S > 1 and fall by one otherwise, within 0..`lp_score_max`. The STA shall become low-power when θ > `lp_threshold` and normal again when θ < `lp_threshold` − `lp_hysteresis`. | T-U, T-I 10 |
 | FR-LPC-3 | A change of class of a local STA shall be sent (STA_CLASS, reliable) to every peer, which shall keep the record (at most 512, the oldest replaced). A record shall replace another only when it carries more samples. | T-I 10 |
 | FR-LPC-4 | When a peer reports a STA associated to it, an AP holding a record for that STA shall send it to that peer; a STA that (re)associates shall start from the record this AP holds. An AP that sees a new or restarted peer shall send it all its low-power records and the records corrected from low-power to normal, and no other normal records. | T-I 10 |
@@ -443,3 +443,4 @@ measurement timeout.
 | 1.5 | 2026-11-06 | New §4.13 (FR-LPC-1..5): low-power (IoT) device classification from traffic behaviour, shared between APs (STA_CLASS); `DEVCLASS` control command (IR-3); configuration keys `lp_*`; NFR-CAP-1/2 updated (315,808 bytes) |
 | 1.6 | 2026-11-06 | FR-LPC-1: recent-uplink-rate gate (`lp_max_mean_bps`); FR-LPC-4: sync also carries corrections back to normal; new FR-LPC-6 (PHY exclusion, `lp_exclude_vht/he/eht`) |
 | 1.7 | 2026-11-06 | AP-side measurement: STA_MONITOR_REQ multicast to every peer (FR-AMN-2), every AP answers with STA_MONITOR_STATUS (FR-AMN-3), MEASURE ends when all have answered (new FR-AMN-7), driver per-STA RSSI API placeholder (new FR-AMN-8); keys `sta_rssi_api`, `sta_rssi_sim` |
+| 1.8 | 2026-11-06 | FR-LPC-1: an idle poll (no data either way) is no evidence (an idle STA was classified low-power on the QEMU testbed) |

@@ -50,15 +50,24 @@ the BTM with status 7.
 ### System test
 
 ```sh
-openwrt/qemu/systest.sh          # all 13 scenarios, about 5 minutes
-openwrt/qemu/systest.sh S4 S9    # selected ones
+openwrt/qemu/systest.sh          # all 15 scenarios, about 6 minutes
+openwrt/qemu/systest.sh S4 S9    # selected ones (S3 always runs; S5 also runs S4)
 ```
 
 It covers discovery, the neighbor DB, local, band and cross-AP steering with
 real 11k/11v/11r frames, both scoring models, the air monitor, hostapd
-restarts, bss lines from UCI, strict config parsing, and BYE / wrong-key
-handling. It shortens the steering cooldown while it runs and restores
+restarts, bss lines from UCI, strict config parsing, BYE / wrong-key
+handling, the AP-side measurement exchange (S14: "unsupported" answered at
+once, then a level from the simulated driver RSSI API) and low-power
+classification on real hostapd counters (S15: the idle STA stays normal,
+uplink-only ARP traffic makes it low-power, the class reaches the peer). It
+shortens the steering cooldown and turns on `log_debug steer,amon` while it
+runs (a failed S5 prints the candidate scores), and restores
 `/etc/donghoa.conf` and `/etc/config/wireless` afterwards.
+
+The package release (`PKG_RELEASE` in `donghoa/Makefile`) must change with
+every build that is installed over an older one: `apk add` keeps an
+installed package of the same version and does not replace the binary.
 
 ### Check a STA's 802.11k support
 
