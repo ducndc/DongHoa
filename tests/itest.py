@@ -77,6 +77,7 @@ STA10_MAC = "aa:bb:cc:dd:ee:10"  # MLD STA (MLD address)
 STA11_MAC = "aa:bb:cc:dd:ee:11"  # IoT sensor: bursty uplink, little downlink
 STA12_MAC = "aa:bb:cc:dd:ee:12"  # phone: bursty downlink
 STA13_MAC = "aa:bb:cc:dd:ee:13"  # VHT/HE phone with sensor-shaped traffic: never low-power
+STA14_MAC = "aa:bb:cc:dd:ee:14"  # Wi-Fi 6 (HE only) sensor: HE alone does not rule it out
 # Extra config lines for every AP, ";"-separated, e.g. "score_model 1".
 EXTRA = os.environ.get("DONGHOA_ITEST_EXTRA", "").replace(";", "\n")
 
@@ -183,12 +184,15 @@ def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
     # Same bursty-up/quiet-down shape as the sensor, but VHT/HE: a real
     # transfer or background chatter from capable hardware, never low-power.
     capable = Sta(STA13_MAC, -50, {}, traffic=sensor_traffic, phy_caps=["VHT", "HE"])
+    he_sensor = Sta(STA14_MAC, -50, {}, traffic=sensor_traffic, phy_caps=["HE"])
     with world.lock:
         ap1.add_sta(sensor)
         ap1.add_sta(phone)
         ap1.add_sta(capable)
+        ap1.add_sta(he_sensor)
     # lp_min_samples 3 + lp_threshold 8 + 1 polls of 200 ms
     wait_for(lambda: "class=low-power" in line(socks[0], STA11_MAC), 6, "AP1 to classify the sensor")
+    wait_for(lambda: "class=low-power" in line(socks[0], STA14_MAC), 2, "AP1 to classify the HE-only sensor")
     wait_for(lambda: STA11_MAC + " class=low-power" in cli(socks[1], "DEVCLASS"), 3,
              "AP2 to receive the sensor's class")
     time.sleep(1.0)
@@ -204,13 +208,26 @@ def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
     time.sleep(3.0)
     assert not any(t[1] == STA11_MAC for t in world.btm_log[n_btm:]), "low-power STA must not be steered"
     # AP2 restarts without BYE: AP1 sends it the low-power records again.
+    # While AP2 is down the HE sensor turns out VHT-capable: AP1 corrects it
+    # to normal, and the correction must reach AP2 in the rejoin sync.
     procs[1].kill()
     procs[1].wait(timeout=3)
+    # Only after AP1 has dropped AP2: no broadcast or retransmission of the
+    # correction can reach it, only the rejoin sync.
+    wait_for(lambda: "02:00:00:00:00:02" not in cli(socks[0], "PEERS"), 5, "AP1 to drop AP2")
+    he_sensor.phy_caps.append("VHT")
+    wait_for(lambda: "class=normal" in line(socks[0], STA14_MAC), 2, "AP1 to correct the VHT STA")
     procs[1] = subprocess.Popen(DONGHOA + ["-c", ap2_cfg, "-d"], stderr=logs[1])
     wait_for(lambda: STA11_MAC + " class=low-power" in cli(socks[1], "DEVCLASS"), 6,
              "restarted AP2 to get the class back from AP1")
-    dev = next(l for l in cli(socks[1], "DEVCLASS").splitlines() if STA11_MAC in l)
+    wait_for(lambda: STA14_MAC + " class=normal" in cli(socks[1], "DEVCLASS"), 2,
+             "restarted AP2 to get the correction back to normal")
+    devclass = cli(socks[1], "DEVCLASS")
+    dev = next(l for l in devclass.splitlines() if STA11_MAC in l)
     assert "from=02:00:00:00:00:01" in dev, dev
+    assert STA12_MAC not in devclass, "the sync skips plain normal records"
+    with world.lock:
+        ap1.remove_sta(he_sensor)
     # The sensor roams to AP2 and goes quiet: AP2 cannot learn it again, it
     # knows the class at once.
     sensor.traffic = None
@@ -225,8 +242,8 @@ def scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2):
             in open(logs[0].name).read()), "AP1 answers the new association with the class"
     with world.lock:
         ap1.remove_sta(STA12_MAC)
-    print("PASS 10: low-power classification (sensor yes, phone no), shared with peers, "
-          "kept across roam and peer restart, not steered")
+    print("PASS 10: low-power classification (sensor yes, phone no, VHT no, HE-only yes), shared with "
+          "peers, kept across roam and peer restart, corrections synced, not steered")
 
 
 def main():

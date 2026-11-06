@@ -22,7 +22,8 @@ information, and they coordinate:
   (sensors, cameras, smart plugs) from their traffic: bursty uplink, little
   downlink. The class is shared between APs, so it follows the device and
   survives an AP restart, and keeps such devices out of automatic steering
-  (`lp_*` keys; `donghoa_cli DEVCLASS`).
+  (`lp_*` keys; `donghoa_cli DEVCLASS`). Large uploads (`lp_max_mean_bps`)
+  and VHT/EHT-capable STAs (`lp_exclude_*`) are not classified low-power.
 
 ARCP runs over any interface that carries Ethernet frames, such as wired LAN,
 bridges, 4-address/WDS or 802.11s Wi-Fi backhaul. Messages are authenticated

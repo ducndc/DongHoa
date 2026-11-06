@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 1.5, 2026-11-06 (history in Appendix B) |
+| Document version | 1.6, 2026-11-06 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -297,11 +297,12 @@ The method is defined in `docs/PROTOCOL.md` §8.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| FR-LPC-1 | With `lp_classify` on, each STA poll shall add the STA's uplink and downlink rates (bytes/s, from hostapd `rx_bytes`/`tx_bytes`) to running standard deviations σ_u, σ_d and compute S = α(band) × σ_u / σ_d (α = `lp_alpha_2g/5g/6g` / 100). S shall not count before `lp_min_samples` samples or while neither rate varies. | T-U `test_low_power` |
+| FR-LPC-1 | With `lp_classify` on, each STA poll shall add the STA's uplink and downlink rates (bytes/s, from hostapd `rx_bytes`/`tx_bytes`) to running standard deviations σ_u, σ_d and compute S = α(band) × σ_u / σ_d (α = `lp_alpha_2g/5g/6g` / 100). S shall not count before `lp_min_samples` samples, while neither rate varies, or while the recent uplink rate (moving average, weight 1/8) exceeds `lp_max_mean_bps` (0 disables). | T-U `test_low_power` |
 | FR-LPC-2 | The STA's score θ shall rise by one when S > 1 and fall by one otherwise, within 0..`lp_score_max`. The STA shall become low-power when θ > `lp_threshold` and normal again when θ < `lp_threshold` − `lp_hysteresis`. | T-U, T-I 10 |
 | FR-LPC-3 | A change of class of a local STA shall be sent (STA_CLASS, reliable) to every peer, which shall keep the record (at most 512, the oldest replaced). A record shall replace another only when it carries more samples. | T-I 10 |
-| FR-LPC-4 | When a peer reports a STA associated to it, an AP holding a record for that STA shall send it to that peer; a STA that (re)associates shall start from the record this AP holds. An AP that sees a new or restarted peer shall send it all its low-power records. | T-I 10 |
+| FR-LPC-4 | When a peer reports a STA associated to it, an AP holding a record for that STA shall send it to that peer; a STA that (re)associates shall start from the record this AP holds. An AP that sees a new or restarted peer shall send it all its low-power records and the records corrected from low-power to normal, and no other normal records. | T-I 10 |
 | FR-LPC-5 | With `lp_no_steer` on, a low-power STA shall not be steered automatically (RSSI, band, load); manual steering shall still work. STA_ENTRY shall carry the class as flag 0x20. | T-I 10 |
+| FR-LPC-6 | A STA whose hostapd `flags` show a PHY ruled out by `lp_exclude_vht` / `lp_exclude_he` / `lp_exclude_eht` shall never be low-power; a low-power one shall be set to normal at once and the change sent to every peer with its sample count raised by one. | T-U, T-I 10 |
 
 ## 5. Non-functional requirements
 
@@ -424,6 +425,8 @@ measurement timeout.
 | `lp_classify` / `lp_no_steer` | 1 / 1 | low-power classification / keep low-power STAs out of automatic steering |
 | `lp_threshold` / `lp_hysteresis` / `lp_score_max` / `lp_min_samples` | 60 / 10 / 120 / 10 | θ (polls) / θ / θ / samples |
 | `lp_alpha_2g` / `lp_alpha_5g` / `lp_alpha_6g` | 100 / 100 / 100 | α × 100 |
+| `lp_max_mean_bps` | 20000 | bytes/s; recent uplink rate above which S is not evidence (0: off) |
+| `lp_exclude_vht` / `lp_exclude_he` / `lp_exclude_eht` | 1 / 0 / 1 | a STA with this PHY is never low-power |
 
 ## Appendix B. Revision history
 
@@ -435,3 +438,4 @@ measurement timeout.
 | 1.3 | 2026-10-31 | IR-5: per-module log levels, `log_level`/`log_debug` keys, run-time `LOG` command, syslog output (`-s`) with real priorities, ARCP frame trace; IR-3: `LOG` command; FR-STR-3 / FR-MON-3: beacon-report mode fallback (active → passive) |
 | 1.4 | 2026-11-01 | C-3: implementation language C++17 without exceptions, RTTI or heap, MISRA C++:2023 based convention; C-4: no libstdc++.so at run time; NFR-CAP-2 re-measured (247,720 bytes). No functional requirement changed |
 | 1.5 | 2026-11-06 | New §4.13 (FR-LPC-1..5): low-power (IoT) device classification from traffic behaviour, shared between APs (STA_CLASS); `DEVCLASS` control command (IR-3); configuration keys `lp_*`; NFR-CAP-1/2 updated (315,808 bytes) |
+| 1.6 | 2026-11-06 | FR-LPC-1: recent-uplink-rate gate (`lp_max_mean_bps`); FR-LPC-4: sync also carries corrections back to normal; new FR-LPC-6 (PHY exclusion, `lp_exclude_vht/he/eht`) |

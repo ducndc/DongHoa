@@ -1010,6 +1010,28 @@ void testLowPower()
 		lowU = policy::isLowPower(p, thU, lowU);
 	}
 	CHECK(!lowU && (thU == 0));
+	// The gate follows the recent rate: once the upload stops and the STA
+	// is back to sensor-sized traffic, S counts again within a few polls
+	// (a whole-window mean would hold the 2 MB/s bursts for minutes).
+	int firstEvidence = -1;
+	for (int i = 0; (i < 100) && (firstEvidence < 0); i++) {
+		const bool burst = (i % 5) == 0;
+		policy::addTrafficSample(bigUpload, burst ? 4000U : 0U, burst ? 200U : 20U);
+		if (policy::lpBehaviourScore(p, bigUpload, arcp::BAND_2G) != policy::LP_NO_EVIDENCE) {
+			firstEvidence = i;
+		}
+	}
+	CHECK((firstEvidence > 5) && (firstEvidence < 40)); // not at once, not minutes
+
+	// PHY exclusion: VHT and EHT by default, not HE (Wi-Fi 6 IoT uses TWT)
+	CHECK(policy::isLpExcludedPhy(p, arcp::CAP_VHT));
+	CHECK(policy::isLpExcludedPhy(p, arcp::CAP_EHT));
+	CHECK(!policy::isLpExcludedPhy(p, arcp::CAP_HE));
+	CHECK(!policy::isLpExcludedPhy(p, 0U));
+	PolicyConfig pHe = p;
+	pHe.lpExcludeHe = true;
+	pHe.lpExcludeVht = false;
+	CHECK(policy::isLpExcludedPhy(pHe, arcp::CAP_HE) && !policy::isLpExcludedPhy(pHe, arcp::CAP_VHT));
 
 	// STA_CLASS TLV round trip; a longer TLV from a newer peer decodes
 	arcp::StaClass c;

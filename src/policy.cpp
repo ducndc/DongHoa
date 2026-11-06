@@ -255,6 +255,21 @@ int lpAlpha(const PolicyConfig &p, std::uint8_t band) noexcept
 
 } // namespace
 
+bool isLpExcludedPhy(const PolicyConfig &p, std::uint8_t phyCaps) noexcept
+{
+	std::uint8_t mask = 0U;
+	if (p.lpExcludeVht) {
+		mask = static_cast<std::uint8_t>(mask | arcp::CAP_VHT);
+	}
+	if (p.lpExcludeHe) {
+		mask = static_cast<std::uint8_t>(mask | arcp::CAP_HE);
+	}
+	if (p.lpExcludeEht) {
+		mask = static_cast<std::uint8_t>(mask | arcp::CAP_EHT);
+	}
+	return (phyCaps & mask) != 0U;
+}
+
 std::uint32_t isqrt(std::uint64_t v) noexcept
 {
 	std::uint64_t r = 0U;
@@ -284,6 +299,9 @@ void addTrafficSample(TrafficStats &t, std::uint64_t upBps, std::uint64_t downBp
 	t.n++;
 	addRate(t.up, t.n, upBps);
 	addRate(t.down, t.n, downBps);
+	const std::int64_t up16 =
+		static_cast<std::int64_t>(((upBps > TRAFFIC_RATE_MAX) ? TRAFFIC_RATE_MAX : upBps) * 16U);
+	t.upRecent16 = (t.n == 1U) ? up16 : (t.upRecent16 + ((up16 - t.upRecent16) / TRAFFIC_RECENT_DIV));
 }
 
 int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t band) noexcept
@@ -295,8 +313,8 @@ int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t 
 	const bool enough = (p.lpMinSamples <= 1) || (t.n >= static_cast<std::uint32_t>(p.lpMinSamples));
 	// Asymmetry alone does not tell low-power traffic from a real transfer
 	// (a backup or AirDrop upload is "bursty up, quiet down" too, just at
-	// 1000x the scale): gate on the mean uplink rate actually seen.
-	const std::uint64_t meanUp = (t.up.mean16 <= 0) ? 0U : (static_cast<std::uint64_t>(t.up.mean16) / 16U);
+	// 1000x the scale): gate on the recent mean uplink rate.
+	const std::uint64_t meanUp = (t.upRecent16 <= 0) ? 0U : (static_cast<std::uint64_t>(t.upRecent16) / 16U);
 	const bool small = (p.lpMaxMeanBps <= 0) || (meanUp <= static_cast<std::uint64_t>(p.lpMaxMeanBps));
 
 	if (!enough || !small || ((su == 0U) && (sd == 0U))) {

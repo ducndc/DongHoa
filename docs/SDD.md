@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 1.5, 2026-11-01 (history in §13) |
+| Document version | 1.7, 2026-11-06 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -590,13 +590,23 @@ into a long memory that also lets a re-purposed device change class.
 `lpBehaviourScore()` returns S × 100 = α × √m2_up / √m2_down (n cancels):
 no floating point, no division by zero (only-uplink-varies is `LP_S_MAX`).
 `updateLpScore()` and `isLowPower()` implement θ ± 1 and the threshold with
-hysteresis.
+hysteresis. `TrafficStats::upRecent16` is a moving average of the uplink
+rate (weight 1/8); `lpBehaviourScore()` gives no evidence while it is above
+`lp_max_mean_bps`, so a large upload does not count as sensor-like and the
+gate reopens a few polls after the upload ends (a whole-window mean would
+hold it for minutes). `isLpExcludedPhy()` tests the STA's negotiated PHYs
+(`phyCaps`, from hostapd's `flags=[VHT][HE][EHT]`) against
+`lp_exclude_vht/he/eht`; `sampleTraffic()` then skips the statistics and, for
+a STA classified low-power, sets it back to normal and sends the change with
+samples + 1 (records are versioned by samples).
 
 **Table.** `mDevClass` holds 512 `DevClassRec` (STA, class, θ, samples,
 source AP, time); a full table replaces its oldest record. `samples` is the
 STA's evidence count and travels with θ, so along one STA's history it only
 grows and serves as the record's version: a record replaces another only
-when it has more samples.
+when it has more samples. `corrected` marks a record that went from
+low-power to normal; it is set by `storeDevClass()` and travels with later
+normal updates of that record.
 
 **Flows.**
 
@@ -607,7 +617,7 @@ when it has more samples.
 | Local STA entry dropped (disassociation, hostapd down, missed events) | `saveDevClass()` into the table |
 | STA_EVENT assoc from a peer | `onPeerStaAssoc()`: the record, if any, to that peer |
 | STA_CLASS received | table; the live local STA takes it over when it has more samples |
-| New peer, or peer with a new `boot_id` | `syncDevClass()`: every low-power record, packed into as few messages as fit |
+| New peer, or peer with a new `boot_id` | `syncDevClass()`: every low-power or `corrected` record, packed into as few messages as fit (plain normal records are skipped: they tell the peer nothing and would crowd the 32-entry retransmission queue) |
 
 ## 7. Interaction design (sequences)
 
@@ -764,7 +774,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | R13 | Air monitors hear a STA only on their own channel (uplink data on that channel, probe requests when it scans) | APs on other channels rarely measure an active STA; in 5 GHz plans with one channel per AP the monitor helps mostly via probes | A dedicated scan radio, or a vendor off-channel air-monitor API feeding `amon.cpp` (`addAmonSample()` is the entry point) |
 | R14 | Uplink RSSI stands in for the STA's downlink level; one global `amon_rssi_offset` | Biased when AP and STA TX power differ widely | Per-band offsets, or learn the offset from STAs that give both 11k and monitor values |
 | R15 | Monitor interfaces are created outside DongHoa and lost on reboot or `wifi` restart; the BPF program has no unit test | Monitor silently missing after a restart (logged) | Create them from the OpenWrt init script, re-open on interface events; test the filter with a BPF interpreter |
-| R16 | Low-power thresholds (`lp_threshold`, α per band) are not calibrated against real devices; S compares the variability of uplink and downlink, so a device that uploads steadily (low σ_u) may not qualify, and a phone uploading photos for a long time may | Misclassification: a device kept out of automatic steering, or steered | Collect traces of real IoT devices and phones; tune α per band; add more features (packet size, inactivity) |
+| R16 | Low-power thresholds (`lp_threshold`, α per band) are not calibrated against real devices; S compares the variability of uplink and downlink, so a device that uploads steadily (low σ_u) may not qualify, and a phone uploading photos for a long time may | Misclassification: a device kept out of automatic steering, or steered | Collect traces of real IoT devices and phones; tune α per band; add more features (packet size, inactivity). Mitigated in part by `lp_max_mean_bps` (large uploads) and `lp_exclude_vht/eht`; a streaming camera exceeds the default gate and is not classified |
 
 ## 12. Traceability (SRS → design)
 
@@ -799,3 +809,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 1.4 | 2026-11-01 | C++17 rewrite (MISRA C++:2023 based, no exceptions/RTTI/heap, libc only): layering with `os.cpp` as the single system-interface file, module catalogue, start-up sequence, data sizes (247,720 bytes), file and function names throughout. Behaviour and wire format unchanged |
 | 1.5 | 2026-11-01 | Identifiers renamed to the naming convention of CODING_CONVENTION §4 (camelCase verb-first functions, `mMember`, `sStatic`, `UPPER_CASE` constants and enumerators); function names updated throughout. Behaviour unchanged |
 | 1.6 | 2026-11-06 | Low-power (IoT) device classification: `devclass.cpp` in the module map, §6.11, D15–D16, R16, traceability (FR-LPC) |
+| 1.7 | 2026-11-06 | §6.11: recent-uplink-rate gate, PHY exclusion (configurable, HE allowed), `corrected` records in the rejoin sync; R16 mitigations |

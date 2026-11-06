@@ -89,6 +89,12 @@ struct PolicyConfig {
 	// +1 when S > 1, -1 otherwise; low-power while theta > lp_threshold.
 	bool lpClassify{true};
 	bool lpNoSteer{true};    // no automatic steering of low-power STAs
+	// A STA that negotiated one of these PHYs is never low-power. VHT/EHT
+	// radios are rare on battery devices; HE is not (Wi-Fi 6 IoT chips use
+	// it for TWT power saving), so it is off by default.
+	bool lpExcludeVht{true};
+	bool lpExcludeHe{false};
+	bool lpExcludeEht{true};
 	int lpThreshold{60};     // delta: theta above it -> low-power
 	int lpHysteresis{10};    // low-power ends when theta < delta - this
 	int lpScoreMax{120};     // theta is kept in 0..this

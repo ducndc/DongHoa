@@ -70,9 +70,15 @@ DevClassRec &Daemon::storeDevClass(const Mac &sta, bool lowPower, int score, std
 			// an older record is already the spare
 		}
 	}
+	bool corrected = false;
 	if (slot == nullptr) {
 		slot = spare;
+	} else if (!lowPower) {
+		corrected = slot->lowPower || slot->corrected;
+	} else {
+		// low-power again
 	}
+	slot->corrected = corrected;
 	slot->used = true;
 	slot->sta = sta;
 	slot->lowPower = lowPower;
@@ -104,11 +110,11 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 	if (!p.lpClassify || (dtMs == 0U)) {
 		return;
 	}
-	// VHT/HE/EHT need meaningfully more RF complexity and power than a
-	// battery sensor carries: such a STA is never low-power, whatever its
+	// A PHY that lp_exclude_vht/he/eht rules out (by default VHT and EHT,
+	// rare on battery devices): such a STA is never low-power, whatever its
 	// traffic looks like. A STA already (mis)classified before this
 	// capability was known is corrected immediately, not just frozen.
-	if ((s.phyCaps & (arcp::CAP_VHT | arcp::CAP_HE | arcp::CAP_EHT)) != 0U) {
+	if (policy::isLpExcludedPhy(p, s.phyCaps)) {
 		if (s.lowPower) {
 			s.lowPower = false;
 			s.lpScore = 0;
@@ -118,8 +124,7 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 			// same stale record coming back); bump it so the correction
 			// is not silently dropped by a peer holding the old count.
 			s.lpSamples++;
-			logging::info(LOG_MODULE, "sta {} classified normal (VHT/HE/EHT capable, overrides traffic shape)",
-				      s.addr);
+			logging::info(LOG_MODULE, "sta {} classified normal (its PHY overrides the traffic shape)", s.addr);
 			const DevClassRec &r = storeDevClass(s.addr, false, 0, s.lpSamples, mApId);
 			for (const Peer &peer : mPeers) {
 				if (peer.used) {
@@ -237,11 +242,12 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		}
 	}
 	for (const DevClassRec &r : mDevClass) {
-		// Not just low-power: a peer that rejoins after missing the one-
-		// shot correction (its own restart raced the broadcast) must also
-		// be able to learn "normal now", or it is stuck with a stale flag
-		// forever (no expiry, nothing else triggers a re-send to it).
-		if (!r.used) {
+		// Low-power records, and corrections back to normal: a peer that
+		// rejoins after missing the one-shot correction (its own restart
+		// raced the broadcast) must learn "normal now", or it keeps a stale
+		// flag forever. Other normal records tell a peer nothing, and
+		// sending them all could fill the retransmission queue.
+		if (!r.used || (!r.lowPower && !r.corrected)) {
 			continue;
 		}
 		if ((n > 0U) && (m.room() < (arcp::TLV_HDR_LEN + 15U))) {

@@ -214,6 +214,13 @@ STA's score θ and S ≤ 1 takes one away (θ stays in 0..`lp_score_max`). The S
 becomes low-power when θ > `lp_threshold` (δ) and normal again when θ <
 δ − `lp_hysteresis`. S is not computed before `lp_min_samples` samples, nor
 while neither rate varies (an idle STA says nothing): θ is then unchanged.
+Nor does S count while the STA's recent uplink rate (a moving average over
+about 8 polls) is above `lp_max_mean_bps`: a large upload has the shape of a
+sensor burst at a thousand times the volume. A STA that negotiated a PHY
+ruled out by `lp_exclude_vht` / `lp_exclude_he` / `lp_exclude_eht` (defaults
+1 / 0 / 1; HE stays allowed because Wi-Fi 6 IoT chips use it for TWT) is
+never low-power; if it was, it is set back to normal at once, with its
+sample count raised by one so that peers accept the correction.
 Integer arithmetic: the running mean and variance use Welford's method; past
 1024 samples n and the sum of squares are halved, which keeps the variance.
 
@@ -225,7 +232,10 @@ Integer arithmetic: the running mean and variance use Welford's method; past
    record for it sends that AP the record. The new AP takes it over when it
    carries more samples than its own.
 3. An AP that sees a new peer, or a peer with a new `boot_id`, sends it all its
-   low-power records, so a restarted AP gets them back without re-learning.
+   low-power records, so a restarted AP gets them back without re-learning,
+   and the records that went from low-power back to normal, so a peer that
+   missed that change does not keep the old flag. Other normal records are
+   not sent.
 4. Each STA_CLASS is acknowledged (ACK_REQ, §4).
 
 **Use.** With `lp_no_steer` (default on), low-power STAs are left out of

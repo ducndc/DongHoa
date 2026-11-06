@@ -128,6 +128,9 @@ struct DevClassRec {
 	std::uint32_t samples{0U};
 	Mac source{}; // AP that classified it
 	Millis ts{0U};
+	// Normal now, low-power before: a peer may still hold the old flag, so
+	// syncDevClass sends this record too (other normal records it skips).
+	bool corrected{false};
 };
 
 // ---- remote side ----

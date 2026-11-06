@@ -74,3 +74,5 @@ __pycache__/
 *.dump
 *.ctu-info
 .archify/
+/ap2-install/donghoa
+/ap2-install/donghoa_cli

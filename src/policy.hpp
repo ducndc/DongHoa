@@ -95,10 +95,17 @@ struct RateStats {
 	std::uint64_t m2{0U};   // sum of squared deviations
 };
 
+// Weight of a new sample in TrafficStats::upRecent16 (1/8: ~8 polls).
+constexpr std::int64_t TRAFFIC_RECENT_DIV = 8;
+
 struct TrafficStats {
 	std::uint32_t n{0U};
 	RateStats up{};   // STA -> AP (hostapd rx_bytes)
 	RateStats down{}; // AP -> STA (hostapd tx_bytes)
+	// Moving average of the uplink rate x 16 over the last few polls: the
+	// lp_max_mean_bps gate follows what the STA does now, not a mean over
+	// the whole window (which would keep one big upload for minutes).
+	std::int64_t upRecent16{0};
 };
 
 void addTrafficSample(TrafficStats &t, std::uint64_t upBps, std::uint64_t downBps) noexcept;
@@ -112,6 +119,9 @@ int updateLpScore(const PolicyConfig &p, int theta, int s100) noexcept;
 // Low-power when theta > lp_threshold; once low-power it stays so until
 // theta < lp_threshold - lp_hysteresis.
 bool isLowPower(const PolicyConfig &p, int theta, bool wasLowPower) noexcept;
+// True when phyCaps (arcp::CAP_*) holds a PHY that lp_exclude_vht/he/eht
+// rules out for a low-power device.
+bool isLpExcludedPhy(const PolicyConfig &p, std::uint8_t phyCaps) noexcept;
 std::uint32_t isqrt(std::uint64_t v) noexcept;
 
 } // namespace policy
