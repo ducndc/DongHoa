@@ -100,7 +100,8 @@ accept the correction (records are versioned by sample count).
 ### Sharing between APs (no master)
 
 Each AP keeps up to 512 records `{STA, class, θ, samples, source AP, time,
-corrected}`; a full table replaces its oldest record. `samples` only grows
+corrected}` (the same record also carries the STA's learned roaming
+threshold, shared as STA_ROAM; see feature 6); a full table replaces its oldest record. `samples` only grows
 along one STA's history, so it is the record's version: a record replaces
 another only with **strictly more** samples.
 

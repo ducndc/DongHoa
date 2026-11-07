@@ -285,6 +285,7 @@ def scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2):
 
 STA20_MAC = "aa:bb:cc:dd:ee:20"  # S16: 11k STA measured both ways (calibration source)
 STA21_MAC = "aa:bb:cc:dd:ee:21"  # S16: no 11k, scored with the learned offset
+STA22_MAC = "aa:bb:cc:dd:ee:22"  # S17: sticky STA (refuses BTM): learns a lower roaming threshold
 STA18_MAC = "aa:bb:cc:dd:ee:18"  # S13: weak signal, but idle (old frame) until it sends again
 
 
@@ -346,6 +347,41 @@ def scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port):
         ap2.remove_sta(STA21_MAC)
     print("PASS 16: uplink/downlink offset learned per BSS (+8 dB from 3 paired measurements); "
           "STA without 11k scored at uplink + offset")
+
+
+def scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2):
+    """S17: per-STA roaming threshold. A STA at -80 dBm that refuses every
+    BTM request moves its threshold down (-75 -> -77 -> -79 -> -81) until it
+    sits above it; the value reaches AP2. When the STA then roams to AP2 by
+    itself, AP1 learns from that too (-81 -> -80) and AP2's live entry
+    takes the new value over."""
+    mark(logs, "S17 per-STA roaming threshold learned from outcomes")
+    sta = Sta(STA22_MAC, -80, {B2: (124, 149, -55)}, rrm={0}, btm_accept=False)
+    with world.lock:
+        ap1.add_sta(sta)
+    log1 = lambda: open(logs[0].name).read().split("=== S17")[-1]
+    line = lambda sock: next((l for l in cli(sock, "STAS").splitlines() if l.startswith("sta " + STA22_MAC)), "")
+    wait_for(lambda: "roaming threshold -79 -> -81 dBm (BTM refused, 3 events)" in log1(), 30,
+             "three refusals to lower the threshold to -81")
+    assert "roaming threshold -75 -> -77 dBm (BTM refused, 1 events)" in log1(), log1()[-2000:]
+    assert "roam_thr=-81(learned) roam_events=3" in line(socks[0]), line(socks[0])
+    wait_for(lambda: STA22_MAC in cli(socks[1], "DEVCLASS") and
+             "roam_thr=-81 roam_events=3" in cli(socks[1], "DEVCLASS"), 3, "AP2 to hold the threshold")
+    # At -80 dBm it is now above its own threshold (-81): once the backoff
+    # after 3 failures (1.5 s x 2^3 = 12 s) is over, no RSSI steer starts
+    # (with the global -75 dBm it would be steered again).
+    starts = log1().count(STA22_MAC + " start: reason rssi")
+    time.sleep(14.0)
+    assert log1().count(STA22_MAC + " start: reason rssi") == starts, "steered although above its threshold"
+    # It roams to AP2 on its own (no steer of ours): AP1 learns from the
+    # level it left at (-80), and AP2's live entry takes the value over.
+    world.move(STA22_MAC, B1, B2)
+    wait_for(lambda: "roaming threshold -81 -> -80 dBm (own roam, 4 events)" in log1(), 5, "own-roam update")
+    wait_for(lambda: "roam_thr=-80(learned) roam_events=4" in line(socks[1]), 5, "AP2's entry to follow")
+    with world.lock:
+        ap2.remove_sta(STA22_MAC)
+    print("PASS 17: per-STA roaming threshold: BTM refusals lower it (-75 -> -81), shared with AP2, "
+          "own roam updates it, AP2 follows")
 
 
 def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
@@ -664,6 +700,7 @@ def main():
             scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
+            scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_many_bss(world, procs, logs, tmp, base)
@@ -767,6 +804,7 @@ def main():
         scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
+        scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_many_bss(world, procs, logs, tmp, base)

@@ -35,9 +35,9 @@ answered in the same loop iteration, so the reply is a consistent snapshot.
 | `PING` | `PONG` |
 | `STATUS` | AP id, name, boot id, ports, air monitors, `survey=` and `station_dump=` statistics, each BSS: up/down, BSSID, channel, width, caps, MLD, load, `util_src=`, `sta_src=` |
 | `PEERS` | each peer: name, port, age, its BSSes (channel, util, STA count, MLD) and radios |
-| `STAS` | each local STA: BSS, RSSI, throughput, `flags=kvr`, beacon mode, bands (advertised, seen, 6 GHz block), class and `lp_score`, backoff; MLD links; then `remote` STAs on peers |
+| `STAS` | each local STA: BSS, RSSI, throughput, `flags=kvr`, beacon mode, bands (advertised, seen, 6 GHz block), class and `lp_score`, `roam_thr` (learned or default) and `roam_events`, backoff; MLD links; then `remote` STAs on peers |
 | `STEERS` | running transactions (state, candidate i/n) and reservations |
-| `DEVCLASS` | device class records: class, score, samples, source AP, age |
+| `DEVCLASS` | device class records: class, score, samples, source AP, age, and a learned `roam_thr` / `roam_events` |
 | `CALIB` | learned uplink → downlink offsets per BSS (feature 9) |
 | `STEER <sta> [<bssid>]` | start a manual steer (clears the STA's cooldown), optionally to one BSS |
 | `MONITOR <sta> [<ms>]` | measure a STA with this AP's monitors / driver API; result in the log |

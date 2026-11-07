@@ -19,6 +19,7 @@ constexpr Millis POOL_HINT_MS = 120000U; // measurement age that still orders th
 constexpr Millis REMOTE_HOLD_SLACK_MS = 1500U; // covers ARCP retransmissions
 constexpr Millis AMON_REPORT_SLACK_MS = 500U; // monitor report delivery after the watch
 constexpr Millis LB_ROAM_MS = 2000U;          // roam time allowed before judging an offload
+constexpr Millis SELF_ROAM_FRESH_MS = 5000U; // own roam: last RSSI here at most this old
 constexpr Millis BCN_QUIET_BASE_MS = 200U;    // + 2 channel times: no new beacon report -> 11k over
 constexpr std::uint8_t NO_STATUS = 0xffU;
 
@@ -224,6 +225,27 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	logging::info(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta, reasonName(t.reason),
 		      outcomeName(raw(outcome)), now - t.started);
 	sendResult(t, outcome, btmStatus);
+	// Per-STA roaming threshold: only RSSI steers say something about the
+	// level at which this STA should roam.
+	if ((s != nullptr) && (t.reason == arcp::SteerReason::RSSI)) {
+		const bool tgt = t.cur < t.nCand;
+		int gain = 0;
+		if (tgt && (t.cand[t.cur].rcpi <= 220U) && (t.startRssi != 0)) {
+			gain = rrm::rcpiToDbm(t.cand[t.cur].rcpi) - t.startRssi;
+		}
+		if (outcome == arcp::SteerOutcome::SUCCESS) {
+			noteRoamThr(*s, policy::updateRoamThrOutcome(mCfg.pol, s->roamThr, policy::RoamOutcome::SUCCESS, gain),
+				    (gain >= policy::ROAM_THR_BIG_GAIN_DB) ? "roamed, big gain" : "roamed");
+		} else if ((outcome == arcp::SteerOutcome::BTM_REJECT) || (outcome == arcp::SteerOutcome::BTM_TIMEOUT)) {
+			noteRoamThr(*s, policy::updateRoamThrOutcome(mCfg.pol, s->roamThr, policy::RoamOutcome::REFUSED, 0),
+				    "BTM refused");
+		} else if (outcome == arcp::SteerOutcome::ROAM_TIMEOUT) {
+			noteRoamThr(*s, policy::updateRoamThrOutcome(mCfg.pol, s->roamThr, policy::RoamOutcome::ROAM_TIMEOUT, 0),
+				    "roam timeout");
+		} else {
+			// wrong target / aborted: no lesson about the level
+		}
+	}
 	if (s != nullptr) {
 		if ((outcome == arcp::SteerOutcome::SUCCESS) || (outcome == arcp::SteerOutcome::WRONG_TARGET)) {
 			s->steerFailures = 0;
@@ -704,6 +726,7 @@ bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noe
 	t->reason = reason;
 	t->started = os::nowMs();
 	t->staMld = s.mld;
+	t->startRssi = s.rssi;
 	if (target != nullptr) {
 		t->forcedTarget = *target;
 	}
@@ -747,7 +770,13 @@ void Daemon::onStaPoll(Sta &s) noexcept
 		return;
 	}
 	const std::uint8_t band = mBss[s.bss].info.band;
-	if (policy::isRssiTriggered(p, s.rssi, s.lowCount)) {
+	// The learned threshold drifts back towards rssi_low when nothing new
+	// is learned (not shared: a decay step is not an event).
+	if (p.roamThrLearn && (s.roamThr != 0) && ((os::nowMs() - s.roamThrTs) > policy::ROAM_THR_DECAY_MS)) {
+		s.roamThr = policy::decayRoamThr(p, s.roamThr);
+		s.roamThrTs = os::nowMs();
+	}
+	if (policy::isRssiTriggered(p, s.rssi, s.lowCount, policy::roamThreshold(p, s.roamThr))) {
 		(void)startSteer(s, arcp::SteerReason::RSSI, nullptr);
 	} else if (!s.mld && policy::isBandTriggered(p, band, s.rssi) && (os::nowMs() >= s.nextBandMs) &&
 		   policy::hasHigherBand(policy::StaBands{s.bandsAdv, s.bandsSeen, s.bandsBlocked}, band)) {
@@ -928,6 +957,16 @@ void Daemon::onStaEvent(const Mac &ap, const arcp::StaEvent &e) noexcept
 	// inactivity timer fires: stop reporting and steering it meanwhile.
 	if (ap != mApId) {
 		Sta *const s = findSta(e.sta);
+		// Roamed by itself (no steer of ours): the level it left at is its
+		// own roaming point.
+		if ((s != nullptr) && !s->away && (findTxnBySta(e.sta) == nullptr) && (s->rssi != 0) &&
+		    ((os::nowMs() - s->lastPollMs) < SELF_ROAM_FRESH_MS)) {
+			noteRoamThr(*s, policy::updateRoamThrSelf(mCfg.pol, s->roamThr, s->rssi), "own roam");
+		} else if ((s == nullptr) && (findTxnBySta(e.sta) == nullptr)) {
+			noteOwnRoamFromRecord(e.sta); // it left here first
+		} else {
+			// steered by us (the outcome teaches), or already away
+		}
 		if ((s != nullptr) && !s->away) {
 			logging::info(LOG_MODULE, "sta {} now served by AP {}", e.sta, ap);
 			s->away = true;
