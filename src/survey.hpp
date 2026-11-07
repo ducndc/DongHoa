@@ -56,7 +56,7 @@ public:
 	static constexpr std::uint32_t SLOW_US = 20000U;
 	// Station dumps (NL80211_CMD_GET_STATION): interfaces, and stations
 	// kept from the last completed dump of each (all interfaces together).
-	static constexpr std::size_t MAX_STA_IFS = 8U;
+	static constexpr std::size_t MAX_STA_IFS = 16U; // one per BSS (MAX_BSS)
 	static constexpr std::size_t MAX_STATIONS = 256U;
 
 	bool open() noexcept;

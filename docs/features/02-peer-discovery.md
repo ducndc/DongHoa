@@ -12,7 +12,7 @@ from what it hears. Each AP keeps:
 
 - a **peer table** (up to 32 peers): id, name, flags, learned path, last
   seen, replay window;
-- per peer, its **BSSes** (up to 8) with their static info (BSS_INFO) and
+- per peer, its **BSSes** (up to 16) with their static info (BSS_INFO) and
   load (BSS_LOAD);
 - per peer, its **radios** (up to 4, RF_INFO);
 - a table of **remote STAs** (up to 512): which STA is on which peer's BSS.

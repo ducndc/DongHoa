@@ -124,7 +124,7 @@ bool parseBss(Config &c, std::string_view args) noexcept
 {
 	Tokens t(args, " \t");
 	std::string_view tok;
-	bool ok = (c.nBss < MAX_BSS) && t.next(tok);
+	bool ok = t.next(tok);
 
 	if (ok) {
 		BssCfg b;
@@ -144,9 +144,16 @@ bool parseBss(Config &c, std::string_view args) noexcept
 				ok = false;
 			}
 		}
-		if (ok) {
+		if (ok && (c.nBss < MAX_BSS)) {
 			c.bss[c.nBss] = b;
 			c.nBss++;
+		} else if (ok) {
+			if (c.nBssSkipped == 0U) {
+				c.bssSkippedFirst = b.ifname;
+			}
+			c.nBssSkipped++;
+		} else {
+			// invalid line
 		}
 	}
 	return ok;

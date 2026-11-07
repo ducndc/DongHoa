@@ -134,7 +134,8 @@ s5() {
 	out=$(rv 1 'm=S5-$$; mark $m
 waitlog $m "reason band" 20 && waitlog $m "\(band\) finished|band\): no suitable" 15
 since $m | grep -E "\(band\)" | tail -1; echo "link=$(link)"
-since $m | grep -E "cand |unsupported|no suitable" | sed "s/.*\] /  /"')
+since $m | grep -E "cand |unsupported|no suitable" | sed "s/.*\] /  /"
+donghoa_cli $C STAS | grep "^sta " | sed "s/^/  state: /"; donghoa_cli $C STEERS | sed "s/^/  steers: /"')
 	echo "$out" | grep -q "(band) finished: success" && echo "$out" | grep -q "link=$B1_5G"
 	r=$?
 	result "S5  automatic band steering 2.4->5 GHz" $r "$(echo "$out" | grep -o 'success after [0-9]* ms')"

@@ -697,6 +697,41 @@ void testAirMonitor()
 	CHECK(parseConfigLine(c, "air_monitor mon0") && c.nMonitors == 1U && c.monitors[0].view() == "mon0");
 	CHECK(parseConfigLine(c, "air_monitor_sim 31000") && c.monitorSimPort == 31000U);
 	CHECK(parseConfigLine(c, "amon_duration_ms 500") && c.pol.amonDurationMs == 500);
+	// bss lines: up to MAX_BSS managed, valid extra lines skipped (counted),
+	// an invalid line still rejected
+	{
+		Config cb;
+		bool all = true;
+		for (std::size_t i = 0U; i < (MAX_BSS + 2U); i++) {
+			FixedString<64U> line;
+			formatTo(line, "bss wlan{} mdid=a1b2", i);
+			all = parseConfigLine(cb, line.view()) && all;
+		}
+		CHECK(all && (cb.nBss == MAX_BSS) && (cb.nBssSkipped == 2U));
+		CHECK(cb.bssSkippedFirst.view() == "wlan16");
+		CHECK(!parseConfigLine(cb, "bss wlan99 mdid=zz")); // still validated
+	}
+	// HELLO and BSS_STATUS with MAX_BSS worst-case BSSes fit one message
+	{
+		const std::array<std::uint8_t, 4U> key{{1U, 2U, 3U, 4U}};
+		arcp::ApInfo ai;
+		(void)ai.name.assign("0123456789abcdef0123456789abcdef");
+		arcp::BssInfo bi;
+		bi.ssidLen = 32U;
+		bi.mldAddr = mac("02:00:00:00:00:99");
+		bi.linkId = 1U;
+		arcp::BssLoad bl;
+		arcp::Message hello;
+		arcp::Message status;
+		hello.begin(arcp::MsgType::HELLO, 0U, bi.mldAddr, 1U, 1U);
+		status.begin(arcp::MsgType::BSS_STATUS, 0U, bi.mldAddr, 1U, 1U);
+		bool ok = hello.add(ai);
+		for (std::size_t i = 0U; i < MAX_BSS; i++) {
+			ok = hello.add(bi) && status.add(bi) && status.add(bl) && ok;
+		}
+		CHECK(ok && hello.finish(viewOf(key)) && status.finish(viewOf(key)));
+		CHECK(status.bytes().size() <= arcp::MAX_PAYLOAD);
+	}
 	CHECK(!c.staRssiApi);
 	CHECK(parseConfigLine(c, "sta_rssi_api 1") && c.staRssiApi);
 	CHECK(!parseConfigLine(c, "sta_rssi_api 2"));

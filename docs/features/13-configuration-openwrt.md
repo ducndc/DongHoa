@@ -38,6 +38,7 @@ for each line:
     known global key  → parse its value (range-checked numbers, MACs, paths)
     known policy key  → table POL_BOOLS / POL_INTS (bool 0/1, ranged int)
     "bss" / "iface" / "air_monitor" / … → repeatable entries (bounded)
+    a valid "bss" line beyond 16 → counted, ignored, warned at start-up
     anything else or a bad value → error "<file>:<line>: invalid line", exit 1
 ```
 
@@ -112,6 +113,7 @@ flowchart LR
 | Situation | Behaviour |
 |---|---|
 | Bad configuration value | exit 1 with `<file>:<line>: invalid line` (systest S12) |
+| More than 16 `bss` lines (e.g. generated from a router with 3 radios × 3 SSIDs) | the first 16 are managed; warning `N bss line(s) beyond the limit of 16 ignored (first: …)`; list the BSSes to manage with explicit `bss` lines (itest PASS 15) |
 | `bss` names an interface without a hostapd socket | that BSS stays down, retried every 5 s |
 | `mdid` set but no FT AKM in hostapd | warning at start |
 | Key missing on one AP | it cannot authenticate with the others (feature 1) |

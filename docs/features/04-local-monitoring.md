@@ -150,7 +150,7 @@ deltas also feed the low-power classifier (feature 10).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `bss <ifname> [mdid=…] [max_sta=…] [ft_over_ds=1]` | — | A hostapd BSS to manage (on OpenWrt generated from UCI, feature 13) |
+| `bss <ifname> [mdid=…] [max_sta=…] [ft_over_ds=1]` | — | A hostapd BSS to manage, up to 16 (on OpenWrt generated from UCI, feature 13) |
 | `hostapd_ctrl_dir` | `/var/run/hostapd` | hostapd control sockets |
 | `sta_poll_interval_ms` | 1000 | Poll period |
 | `assume_kvr` | 1 | Assume 11k/v/r until shown otherwise |

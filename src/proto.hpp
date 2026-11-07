@@ -28,6 +28,10 @@ constexpr std::size_t MAX_PAYLOAD = 1400U;
 constexpr std::size_t AUTH_LEN = 16U;
 constexpr std::size_t TLV_HDR_LEN = 3U;
 constexpr std::size_t STA_ENTRY_LEN = 30U;
+// Largest values (SSID / name 32 bytes, MLD trailer included).
+constexpr std::size_t AP_INFO_MAX_LEN = 6U + 32U;
+constexpr std::size_t BSS_INFO_MAX_LEN = 22U + 32U + 7U;
+constexpr std::size_t BSS_LOAD_LEN = 14U;
 
 // Header flags
 constexpr std::uint8_t FLAG_ACK_REQ = 0x01U;

@@ -340,6 +340,53 @@ def scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2):
           "(last idle STA kept)")
 
 
+def scenario_many_bss(world, procs, logs, tmp, base):
+    """S15: an AP with 17 BSSes (32-character SSIDs: the largest HELLO and
+    BSS_STATUS frames). It starts, warns about the 17th, manages 16, and its
+    peer receives all 16 with their load."""
+    ssid = "S" * 32
+    ports = [base + 40, base + 41]
+    hdirs = [os.path.join(tmp, "mbhapd%d" % i) for i in (0, 1)]
+    for h in hdirs:
+        os.makedirs(h, exist_ok=True)
+    chans = [(5180 + 20 * (k % 8), 36 + 4 * (k % 8)) if k < 8 else (2412 + 5 * (k % 8), 1 + (k % 8))
+             for k in range(17)]
+    lines = []
+    for k in range(17):
+        world.add_bss(hdirs[0], "mb0-wl%d" % k, "02:00:00:00:60:%02x" % k, ssid, chans[k][0], chans[k][1], util=20)
+        if k > 0:
+            lines.append("bss mb0-wl%d mdid=a1b2" % k)
+    world.add_bss(hdirs[1], "mb1-wl0", "02:00:00:00:61:00", ssid, 5745, 149, util=20)
+    socks, mlogs = [], []
+    for i in (0, 1):
+        cfg, sock = os.path.join(tmp, "mb%d.conf" % i), os.path.join(tmp, "mbctrl%d" % i)
+        extra = "\n".join(lines) + "\n" if i == 0 else ""
+        write_cfg(cfg, "02:00:00:00:00:%02x" % (0x60 + i), "mb%d" % i, hdirs[i], sock, ports[i],
+                  [ports[1 - i]], "many-bss-key", extra=extra)
+        path = os.path.join(tmp, "mb%d.log" % i)
+        log = open(path, "a")
+        mlogs.append(log)
+        socks.append(sock)
+        procs.append(subprocess.Popen(DONGHOA + ["-c", cfg, "-d"], stderr=log))
+    mark(logs + mlogs, "S15 an AP with 17 BSSes: 16 managed, all 16 reach the peer")
+    bsslines = lambda out: [l for l in out.splitlines() if l.startswith("  bss 02:00:00:00:60:")]
+    wait_for(lambda: len([l for l in bsslines(cli(socks[1], "PEERS")) if "util=" in l]) == 16, 15,
+             "the peer to see 16 BSSes with load")
+    up = [l for l in cli(socks[0], "STATUS").splitlines() if l.startswith("mb0-wl") and l.endswith(" up")]
+    mlogs[0].flush()
+    warned = "1 bss line(s) beyond the limit of 16 ignored (first: mb0-wl16)" in open(mlogs[0].name).read()
+    for p in procs[-2:]:
+        p.send_signal(signal.SIGTERM)
+    for p in procs[-2:]:
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    assert len(up) == 16, up
+    assert warned, "warning about the 17th bss line"
+    print("PASS 15: AP with 17 BSSes starts, manages 16 (warning), peer receives all 16 with load")
+
+
 SCALE_APS = 12
 STA17_MAC = "aa:bb:cc:dd:ee:17"  # S12: hears only the BSS of the last peer in the pool order
 
@@ -556,6 +603,7 @@ def main():
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_many_bss(world, procs, logs, tmp, base)
             scenario_scale(world, procs, logs, tmp, base)
             ok = True
             return 0
@@ -657,6 +705,7 @@ def main():
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_many_bss(world, procs, logs, tmp, base)
         scenario_scale(world, procs, logs, tmp, base)
         ok = True
     finally:

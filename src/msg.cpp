@@ -158,6 +158,18 @@ void Daemon::sendAck(const Mac &peer, std::uint32_t id) noexcept
 
 // ---- periodic messages ----
 
+// HELLO and BSS_STATUS carry every local BSS in one message, and a message
+// that overflows is not sent at all: raising MAX_BSS must keep them inside
+// MAX_PAYLOAD (header, worst-case TLVs, AUTH).
+static_assert((arcp::HDR_LEN + (arcp::TLV_HDR_LEN + arcp::AP_INFO_MAX_LEN) +
+	       (MAX_BSS * (arcp::TLV_HDR_LEN + arcp::BSS_INFO_MAX_LEN)) + arcp::TLV_HDR_LEN + arcp::AUTH_LEN) <=
+		      arcp::MAX_PAYLOAD,
+	      "HELLO with MAX_BSS BSSes does not fit one ARCP message");
+static_assert((arcp::HDR_LEN +
+	       (MAX_BSS * ((arcp::TLV_HDR_LEN + arcp::BSS_INFO_MAX_LEN) + (arcp::TLV_HDR_LEN + arcp::BSS_LOAD_LEN))) +
+	       arcp::TLV_HDR_LEN + arcp::AUTH_LEN) <= arcp::MAX_PAYLOAD,
+	      "BSS_STATUS with MAX_BSS BSSes does not fit one ARCP message");
+
 void Daemon::sendHello() noexcept
 {
 	arcp::Message m;
