@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    U["Unit tests (make test)<br/>pure modules only, 510 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–17"]
+    U["Unit tests (make test)<br/>pure modules only, 529 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–18"]
     I --> Q["System test (openwrt/qemu/systest.sh)<br/>2 OpenWrt VMs: real hostapd, mac80211_hwsim,<br/>wpa_supplicant STA, raw-socket ARCP<br/>~7 min, S1–S16"]
     Q --> H["Real hardware<br/>(AP2: pending)"]
     S["Static and dynamic checks:<br/>strict warnings, cppcheck, ASan/UBSan,<br/>check-deps (libc only)"] -.-> U
@@ -66,6 +66,7 @@ all APs by time (`DONGHOA_KEEP_LOGS=1` keeps them).
 | 15 | AP with 17 BSSes: manages 16 with a warning, the peer receives all 16 (largest HELLO/BSS_STATUS) | 2, 13 |
 | 16 | Uplink/downlink offset learned per BSS; STA without 11k scored at uplink + offset | 9 |
 | 17 | Per-STA roaming threshold: refusals lower it, STA then left alone, shared, own roam updates it | 6 |
+| 18 | Q-learning: shadow learns from a refusal, active waits then steers, learns from the success | 15 |
 
 `DONGHOA_ITEST_EXTRA="score_model 1"` reruns everything under the
 throughput model (7–9 are skipped there by design: the mock BSSes are all

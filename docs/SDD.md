@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.5, 2026-11-07 (history in §13) |
+| Document version | 2.6, 2026-11-07 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -528,6 +528,17 @@ are released in `onStaEvent` (association at this AP), in
   10 min without events. Changes are stored in the device class record
   (`roamThr`, `roamEvents`) and sent as STA_ROAM by the class sharing code
   (`devclass.cpp`: immediate send, hand-over on association, rejoin sync).
+- Q-learning of when to roam (FR-TRG-8, feature guide 15): `onStaPoll`
+  builds `policy::RlFeatures` on a fresh sample (`Sta::sampleFresh`,
+  `rssiPrev` from `applyStaSignal`), closes a pending WAIT with
+  `rlRewardWait` (next = the new state), and records a decision below −60
+  dBm. Shadow: the rule's decision; active: `rlChoose` on `mRl` (432 × 2
+  values ×256, prior from `rlInit` at start). A STEER passes its state to
+  the transaction through `mRlNextArmed`/`mRlNextState` (copied in
+  `startSteer`, because a steer can end inside it); `endTxn` and
+  `failTxnNoCandidate` give the terminal reward. A pending WAIT ends with
+  −20 on a local disassociation below `rssi_low`, 0 on an own roam. Not
+  persisted or shared yet.
 - `onStaPoll`, after each STA sample:
   - skip if the STA is away, in cooldown, lacks 11v, or has a transaction
     [FR-TRG-5];
@@ -910,3 +921,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.3 | 2026-11-07 | `MAX_BSS` 16 (local and per peer), `Survey::MAX_STA_IFS` 16; compile-time checks that HELLO and BSS_STATUS with 16 worst-case BSSes fit one ARCP message; extra `bss` lines skipped with a warning; data size re-measured |
 | 2.4 | 2026-11-07 | §6.10: uplink/downlink offset learned per BSS (`pairUlDl`, `mCal`, `policy::addUlDlSample` / `uplinkToDownlink`), `CALIB`; R14 mitigated |
 | 2.5 | 2026-11-07 | §6.6: per-STA roaming threshold (state, update points, sharing via STA_ROAM in the class records); class-record slot reset on eviction |
+| 2.6 | 2026-11-07 | §6.6: Q-learning of when to roam (`policy::rl*`, `mRl`, decision hand-over to the transaction, rewards); `RL` command |

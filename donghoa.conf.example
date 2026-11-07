@@ -52,6 +52,9 @@ ctrl_socket /var/run/donghoa.sock
                          # rssi_low is the start value; donghoa_cli STAS shows roam_thr
 #roam_thr_min -82
 #roam_thr_max -65
+#rl_roam 1               # Q-learning of when to roam: 0 off, 1 shadow (learn only),
+                         # 2 active (the learned table decides); donghoa_cli RL
+#rl_epsilon_pct 1        # active mode: exploration in safe states
 #rssi_hysteresis 8       # dB the target must beat the current RSSI by
 #rssi_min_target -70     # dBm, minimum STA-measured target level
 #band_steer_rssi -55     # dBm, strong 2.4 GHz STA -> 5/6 GHz

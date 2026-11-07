@@ -51,6 +51,11 @@ void aggregateLinks(Sta &s) noexcept
 void Daemon::initLocal() noexcept
 {
 	mNBss = mCfg.nBss;
+	// Q-learning: the prior reproduces the rule-based trigger.
+	policy::rlInit(mRl);
+	mRlInit = true;
+	const std::optional<std::uint32_t> seed = os::randomU32();
+	mRng = (seed.has_value() && (*seed != 0U)) ? *seed : (static_cast<std::uint32_t>(os::nowMs()) | 1U);
 	if (mCfg.nBssSkipped > 0U) {
 		logging::warn(LOG_MODULE, "{} bss line(s) beyond the limit of {} ignored (first: {}); "
 					  "list the BSSes to manage with bss lines in the configuration",
@@ -203,6 +208,8 @@ bool Daemon::pruneStaLinks(Sta &s, std::size_t bss, Millis start) noexcept
 void Daemon::applyStaSignal(Sta &s, int signal, std::uint32_t inactiveMs) noexcept
 {
 	if ((signal != 0) && ((s.rssi == 0) || policy::isSignalFresh(inactiveMs, mCfg.staPollMs))) {
+		s.rssiPrev = (s.rssi != 0) ? s.rssi : signal;
+		s.sampleFresh = true;
 		s.rssi = (s.rssi != 0) ? (((3 * s.rssi) + signal) - 2) / 4 : signal;
 		s.lowCount = (signal < policy::roamThreshold(mCfg.pol, s.roamThr)) ? (s.lowCount + 1) : 0;
 	} else {
@@ -616,6 +623,11 @@ void Daemon::onHapdDisconnected(std::size_t bss, const Mac &addr) noexcept
 		// reports it soon, that was an own roam at this level.
 		const bool ownLeave = (s != nullptr) && !s->away && (s->rssi != 0) && (findTxnBySta(addr) == nullptr) &&
 				      mCfg.pol.roamThrLearn;
+		// Q-learning: the link dropped while we were waiting at a weak level.
+		if ((s != nullptr) && s->rlWaiting && (findTxnBySta(addr) == nullptr)) {
+			rlEndWait(*s, (s->rssi < mCfg.pol.rssiLow) ? policy::RL_R_LINK_DROP : 0,
+				  (s->rssi < mCfg.pol.rssiLow) ? "link dropped while waiting" : "left");
+		}
 		onLocalDisassoc(addr);
 		if (s != nullptr) {
 			saveDevClass(*s);

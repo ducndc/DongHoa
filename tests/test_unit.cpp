@@ -438,6 +438,86 @@ void testPolicy()
 	CHECK(!policy::isRssiTriggered(p, -80, 5, -82)); // a STA with a lower threshold hangs on
 	CHECK(policy::isRssiTriggered(p, -70, 5, -65));  // a higher one roams earlier
 
+	// Q-learning of when to roam
+	{
+		// state encoding: every combination maps to a distinct index
+		std::array<bool, policy::RL_STATES> seen{};
+		bool unique = true;
+		const std::array<int, 6U> rssis{{-55, -62, -68, -73, -78, -85}};
+		for (const int r : rssis) {
+			for (int sl = -1; sl <= 1; sl++) {
+				for (int g = 0; g < 4; g++) {
+					for (int rf = 0; rf < 3; rf++) {
+						for (int k = 0; k < 2; k++) {
+							policy::RlFeatures f;
+							f.rssi = r;
+							f.slope = sl;
+							f.gapKnown = g != 0;
+							f.gapDb = (g == 1) ? -3 : ((g == 2) ? 4 : 12);
+							f.refusals = rf;
+							f.lowStreak = k == 1;
+							const std::size_t i = policy::rlState(f);
+							unique = unique && (i < policy::RL_STATES) && !seen[i];
+							if (i < policy::RL_STATES) {
+								seen[i] = true;
+							}
+						}
+					}
+				}
+			}
+		}
+		CHECK(unique);
+		// the prior reproduces the rule: steer below -75 dBm with a low streak
+		policy::RlTable t;
+		policy::rlInit(t);
+		bool explored = false;
+		policy::RlFeatures w;
+		w.rssi = -78;
+		w.lowStreak = true;
+		CHECK(policy::rlChoose(t, policy::rlState(w), 0, 0U, explored) == policy::RlAction::STEER);
+		w.lowStreak = false;
+		CHECK(policy::rlChoose(t, policy::rlState(w), 0, 0U, explored) == policy::RlAction::WAIT);
+		w.rssi = -72;
+		w.lowStreak = true;
+		CHECK(policy::rlChoose(t, policy::rlState(w), 0, 0U, explored) == policy::RlAction::WAIT);
+		// exploration: STEER only where safe (below -65, neighbour not known worse)
+		w.rssi = -72;
+		CHECK((policy::rlChoose(t, policy::rlState(w), 100, 0U, explored) == policy::RlAction::STEER) && explored);
+		w.gapKnown = true;
+		w.gapDb = -4;
+		CHECK((policy::rlChoose(t, policy::rlState(w), 100, 0U, explored) == policy::RlAction::WAIT) && !explored);
+		w.rssi = -62;
+		w.gapKnown = false;
+		CHECK(policy::rlChoose(t, policy::rlState(w), 100, 0U, explored) == policy::RlAction::WAIT);
+		CHECK(policy::rlChoose(t, policy::rlState(w), 1, 50U, explored) == policy::RlAction::WAIT); // rnd 50 >= 1%
+		// learning: a STA that refuses at -78 makes STEER worse than WAIT there
+		policy::RlFeatures r78;
+		r78.rssi = -78;
+		r78.lowStreak = true;
+		const std::size_t s78 = policy::rlState(r78);
+		policy::rlUpdate(t, s78, policy::RlAction::STEER, policy::RL_R_REFUSED, true, 0U);
+		CHECK(t.q[s78][1U] == (policy::RL_R_REFUSED * policy::RL_ONE)); // alpha 1 on the first visit
+		CHECK(policy::rlChoose(t, s78, 0, 0U, explored) == policy::RlAction::WAIT);
+		for (int i = 0; i < 40; i++) {
+			policy::rlUpdate(t, s78, policy::RlAction::STEER, 20, true, 0U); // later: big successes
+		}
+		CHECK((t.q[s78][1U] > (18 * policy::RL_ONE)) && (t.n[s78][1U] == 41U));
+		CHECK(policy::rlChoose(t, s78, 0, 0U, explored) == policy::RlAction::STEER);
+		// non-terminal: discounted best of the next state
+		policy::RlTable u;
+		policy::rlInit(u);
+		u.q[3][1U] = 10 * policy::RL_ONE;
+		policy::rlUpdate(u, 1U, policy::RlAction::WAIT, -2, false, 3U);
+		CHECK(u.q[1][0U] == ((-2 * policy::RL_ONE) + ((10 * policy::RL_ONE * policy::RL_GAMMA) / policy::RL_ONE)));
+		// rewards
+		CHECK(policy::rlRewardSteer(arcp::SteerOutcome::SUCCESS, 30) == (policy::RL_R_SUCCESS + policy::RL_R_GAIN_MAX));
+		CHECK(policy::rlRewardSteer(arcp::SteerOutcome::BTM_REJECT, 0) == policy::RL_R_REFUSED);
+		CHECK(policy::rlRewardSteer(arcp::SteerOutcome::ABORTED, 0) == 0);
+		CHECK((policy::rlRewardWait(-65) == 0) && (policy::rlRewardWait(-82) == -3) && (policy::rlRewardWait(0) == 0));
+		Config c;
+		CHECK(c.pol.rlRoam == 1); // shadow by default
+		CHECK(parseConfigLine(c, "rl_roam 2") && (c.pol.rlRoam == 2) && !parseConfigLine(c, "rl_roam 3"));
+	}
 	// per-STA roaming threshold
 	{
 		PolicyConfig q; // rssi_low -75, range -82..-65, learning on

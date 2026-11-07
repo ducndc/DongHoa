@@ -225,6 +225,13 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	logging::info(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta, reasonName(t.reason),
 		      outcomeName(raw(outcome)), now - t.started);
 	sendResult(t, outcome, btmStatus);
+	if (t.rlArmed && (outcome != arcp::SteerOutcome::ABORTED)) {
+		int g = 0;
+		if ((t.cur < t.nCand) && (t.cand[t.cur].rcpi <= 220U) && (t.startRssi != 0)) {
+			g = rrm::rcpiToDbm(t.cand[t.cur].rcpi) - t.startRssi;
+		}
+		rlLearn(t.sta, t.rlState, policy::RlAction::STEER, policy::rlRewardSteer(outcome, g), true, 0U);
+	}
 	// Per-STA roaming threshold: only RSSI steers say something about the
 	// level at which this STA should roam.
 	if ((s != nullptr) && (t.reason == arcp::SteerReason::RSSI)) {
@@ -270,6 +277,9 @@ void Daemon::failTxnNoCandidate(SteerTxn &t) noexcept
 	const Millis now = os::nowMs();
 
 	logging::info(LOG_MODULE, "steer #{} {} ({}): no suitable candidate", t.id, t.sta, reasonName(t.reason));
+	if (t.rlArmed) {
+		rlLearn(t.sta, t.rlState, policy::RlAction::STEER, policy::RL_R_NO_CANDIDATE, true, 0U);
+	}
 	if (s != nullptr) {
 		s->nextSteerMs = now + static_cast<Millis>(mCfg.pol.steerCooldownMs);
 		if (t.reason == arcp::SteerReason::BAND) {
@@ -727,6 +737,9 @@ bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noe
 	t->started = os::nowMs();
 	t->staMld = s.mld;
 	t->startRssi = s.rssi;
+	t->rlArmed = mRlNextArmed && (reason == arcp::SteerReason::RSSI);
+	t->rlState = mRlNextState;
+	mRlNextArmed = false;
 	if (target != nullptr) {
 		t->forcedTarget = *target;
 	}
@@ -776,8 +789,70 @@ void Daemon::onStaPoll(Sta &s) noexcept
 		s.roamThr = policy::decayRoamThr(p, s.roamThr);
 		s.roamThrTs = os::nowMs();
 	}
-	if (policy::isRssiTriggered(p, s.rssi, s.lowCount, policy::roamThreshold(p, s.roamThr))) {
-		(void)startSteer(s, arcp::SteerReason::RSSI, nullptr);
+	const bool rssiTrig = policy::isRssiTriggered(p, s.rssi, s.lowCount, policy::roamThreshold(p, s.roamThr));
+	const policy::RlMode mode = rlMode();
+	bool steer = rssiTrig;
+	bool rec = false;
+	std::size_t st = 0U;
+	// Q-learning: a decision on each fresh sample (shadow: also when the rule
+	// fires on an old one, to learn from every steer it makes).
+	if ((mode != policy::RlMode::OFF) && !s.mld && (s.rssi != 0) &&
+	    (s.sampleFresh || ((mode == policy::RlMode::SHADOW) && rssiTrig))) {
+		policy::RlFeatures f;
+		f.rssi = s.rssi;
+		f.slope = s.rssi - s.rssiPrev;
+		f.refusals = s.steerFailures;
+		f.lowStreak = s.lowCount >= p.rssiLowCount;
+		for (std::size_t i = 0U; i < s.nMeas; i++) {
+			const Measurement &m = s.meas[i];
+			if ((m.bssid != mBss[s.bss].info.bssid) && (m.rcpi <= 220U) && ((os::nowMs() - m.ts) < POOL_HINT_MS)) {
+				const int g = rrm::rcpiToDbm(m.rcpi) - s.rssi;
+				f.gapDb = (!f.gapKnown || (g > f.gapDb)) ? g : f.gapDb;
+				f.gapKnown = true;
+			}
+		}
+		st = policy::rlState(f);
+		if (s.rlWaiting) {
+			rlLearn(s.addr, s.rlState, policy::RlAction::WAIT, policy::rlRewardWait(s.rssi), false, st);
+			s.rlWaiting = false;
+		}
+		if (s.rssi < policy::RL_MIN_RSSI) {
+			if (mode == policy::RlMode::ACTIVE) {
+				bool explored = false;
+				steer = policy::rlChoose(mRl, st, p.rlEpsilonPct, nextRandom(), explored) ==
+					policy::RlAction::STEER;
+				mRlStats.explored += explored ? 1U : 0U;
+			}
+			rec = true;
+			mRlStats.decisions++;
+		} else if (mode == policy::RlMode::ACTIVE) {
+			steer = false; // strong signal: always wait
+		} else {
+			// shadow: the rule decides
+		}
+	} else if ((mode == policy::RlMode::ACTIVE) && !s.mld) {
+		steer = false; // active: decisions only on fresh samples
+	} else {
+		// off, MLD STA (rule), or shadow without a fresh sample
+	}
+	s.sampleFresh = false;
+	if (steer) {
+		mRlNextArmed = rec;
+		mRlNextState = st;
+		mRlStats.steers += rec ? 1U : 0U;
+		if (!startSteer(s, arcp::SteerReason::RSSI, nullptr) && mRlNextArmed) {
+			// no transaction at all (empty pool): nothing to move to
+			rlLearn(s.addr, st, policy::RlAction::STEER, policy::RL_R_NO_CANDIDATE, true, 0U);
+		}
+		mRlNextArmed = false;
+	} else if (rec) {
+		s.rlWaiting = true;
+		s.rlState = st;
+	} else {
+		// no recorded decision
+	}
+	if (steer) {
+		// RSSI steer started (or tried)
 	} else if (!s.mld && policy::isBandTriggered(p, band, s.rssi) && (os::nowMs() >= s.nextBandMs) &&
 		   policy::hasHigherBand(policy::StaBands{s.bandsAdv, s.bandsSeen, s.bandsBlocked}, band)) {
 		(void)startSteer(s, arcp::SteerReason::BAND, nullptr);
@@ -957,6 +1032,9 @@ void Daemon::onStaEvent(const Mac &ap, const arcp::StaEvent &e) noexcept
 	// inactivity timer fires: stop reporting and steering it meanwhile.
 	if (ap != mApId) {
 		Sta *const s = findSta(e.sta);
+		if ((s != nullptr) && !s->away && s->rlWaiting) {
+			rlEndWait(*s, 0, "roamed by itself");
+		}
 		// Roamed by itself (no steer of ours): the level it left at is its
 		// own roaming point.
 		if ((s != nullptr) && !s->away && (findTxnBySta(e.sta) == nullptr) && (s->rssi != 0) &&
@@ -1153,6 +1231,47 @@ void Daemon::tickSteer(Millis now) noexcept
 		if (r.used && (r.expiry <= now)) {
 			r.used = false;
 		}
+	}
+}
+
+// ---- Q-learning of when to roam ----
+
+policy::RlMode Daemon::rlMode() const noexcept
+{
+	const int m = (mRlModeOverride >= 0) ? mRlModeOverride : mCfg.pol.rlRoam;
+	return (m == 2) ? policy::RlMode::ACTIVE : ((m == 1) ? policy::RlMode::SHADOW : policy::RlMode::OFF);
+}
+
+std::uint32_t Daemon::nextRandom() noexcept
+{
+	// xorshift32: exploration only, no security role
+	mRng ^= mRng << 13U;
+	mRng ^= mRng >> 17U;
+	mRng ^= mRng << 5U;
+	return mRng;
+}
+
+void Daemon::rlLearn(const Mac &sta, std::size_t s, policy::RlAction a, int rewardDb, bool terminal,
+		     std::size_t next) noexcept
+{
+	if (!mRlInit) {
+		policy::rlInit(mRl);
+		mRlInit = true;
+	}
+	const std::size_t ai = (a == policy::RlAction::STEER) ? 1U : 0U;
+	const int before = mRl.q[s][ai];
+	policy::rlUpdate(mRl, s, a, rewardDb, terminal, next);
+	mRlStats.updates++;
+	logging::dbg(LOG_MODULE, "rl sta {}: state {} {} reward {} -> Q {} -> {} (x256)", sta, s,
+		     (a == policy::RlAction::STEER) ? "steer" : "wait", rewardDb, before, mRl.q[s][ai]);
+}
+
+void Daemon::rlEndWait(Sta &s, int rewardDb, std::string_view why) noexcept
+{
+	if (s.rlWaiting) {
+		logging::dbg(LOG_MODULE, "rl sta {}: waiting ended ({})", s.addr, why);
+		rlLearn(s.addr, s.rlState, policy::RlAction::WAIT, rewardDb, true, 0U);
+		s.rlWaiting = false;
 	}
 }
 

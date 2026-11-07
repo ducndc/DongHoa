@@ -3,7 +3,10 @@
 #ifndef DONGHOA_POLICY_HPP
 #define DONGHOA_POLICY_HPP
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <limits>
 
 #include "config.hpp"
@@ -76,6 +79,57 @@ int updateRoamThrOutcome(const PolicyConfig &p, int learnedDbm, RoamOutcome o, i
 int updateRoamThrSelf(const PolicyConfig &p, int learnedDbm, int leftAtDbm) noexcept;
 // One decay step towards rssi_low.
 int decayRoamThr(const PolicyConfig &p, int learnedDbm) noexcept;
+
+// ---- Q-learning: when to roam ----
+// State of a STA at a fresh sample, actions WAIT / STEER, Q values x256 in
+// a fixed table. Integer only; the caller supplies the random number.
+enum class RlMode : std::uint8_t { OFF = 0, SHADOW = 1, ACTIVE = 2 };
+enum class RlAction : std::uint8_t { WAIT = 0, STEER = 1 };
+struct RlFeatures {
+	int rssi{0};          // smoothed dBm
+	int slope{0};         // dB since the previous fresh sample
+	int gapDb{0};         // best known neighbour level - rssi
+	bool gapKnown{false}; // a neighbour level measured in the last 2 min
+	int refusals{0};      // steer failures in a row
+	bool lowStreak{false}; // lowCount >= rssi_low_count (below its threshold)
+};
+constexpr std::size_t RL_RSSI_BINS = 6U;  // >=-60, -65, -70, -75, -80, below
+constexpr std::size_t RL_TREND_BINS = 3U; // falling (<= -1 dB), stable, rising (>= +1 dB)
+constexpr std::size_t RL_GAP_BINS = 4U;   // unknown, < 0, 0..7, >= 8 dB
+constexpr std::size_t RL_REF_BINS = 3U;   // 0, 1, >= 2 refusals
+constexpr std::size_t RL_STREAK_BINS = 2U;
+constexpr std::size_t RL_STATES = RL_RSSI_BINS * RL_TREND_BINS * RL_GAP_BINS * RL_REF_BINS * RL_STREAK_BINS;
+constexpr int RL_ONE = 256;               // fixed point
+constexpr int RL_GAMMA = 205;             // 0.8 x 256
+constexpr std::uint32_t RL_ALPHA_N = 8U;  // alpha = 1/(n+1) up to 1/8
+constexpr int RL_MIN_RSSI = -60;          // stronger: always WAIT, no decision recorded
+// Rewards (x RL_ONE when applied).
+constexpr int RL_R_SUCCESS = 8;           // + gain in dB, gain capped at RL_R_GAIN_MAX
+constexpr int RL_R_GAIN_MAX = 24;
+constexpr int RL_R_WRONG_TARGET = 4;
+constexpr int RL_R_REFUSED = -10;
+constexpr int RL_R_ROAM_TIMEOUT = -6;
+constexpr int RL_R_NO_CANDIDATE = -2;
+constexpr int RL_R_LINK_DROP = -20;
+constexpr int RL_WAIT_FREE_DBM = -70;     // waiting above this costs nothing
+
+struct RlTable {
+	std::array<std::array<int, 2U>, RL_STATES> q{};
+	std::array<std::array<std::uint32_t, 2U>, RL_STATES> n{};
+};
+std::size_t rlState(const RlFeatures &f) noexcept;
+// The prior: STEER preferred exactly where the rule-based RSSI trigger
+// fires (below -75 dBm with a low streak), so a fresh table behaves as today.
+void rlInit(RlTable &t) noexcept;
+// Greedy action; with probability eps% (rnd 0..99) the other one, but STEER
+// only in "safe" states (below -65 dBm, a neighbour not known to be worse).
+RlAction rlChoose(const RlTable &t, std::size_t s, int epsPct, std::uint32_t rnd, bool &explored) noexcept;
+// Q(s,a) += alpha (r + gamma max Q(next) - Q(s,a)); terminal: no next.
+void rlUpdate(RlTable &t, std::size_t s, RlAction a, int rewardDb, bool terminal, std::size_t next) noexcept;
+int rlRewardSteer(arcp::SteerOutcome o, int gainDb) noexcept;   // in dB units
+int rlRewardWait(int rssi) noexcept;                            // per fresh poll while waiting
+// Bin labels for the RL command, e.g. "-75..-80".
+std::string_view rlRssiBinName(std::size_t bin) noexcept;
 // hostapd's signal is the level of the STA's last received frame. A poll
 // sample is fresh only when that frame came within the last poll interval
 // (inactive_msec, 0 when hostapd does not report it): an idle STA's old

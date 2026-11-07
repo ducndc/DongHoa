@@ -450,5 +450,123 @@ bool isLowPower(const PolicyConfig &p, int theta, bool wasLowPower) noexcept
 	return wasLowPower ? (theta >= (p.lpThreshold - p.lpHysteresis)) : (theta > p.lpThreshold);
 }
 
+// ---- Q-learning ----
+
+std::size_t rlState(const RlFeatures &f) noexcept
+{
+	std::size_t r = 5U;
+	if (f.rssi >= -60) {
+		r = 0U;
+	} else if (f.rssi >= -65) {
+		r = 1U;
+	} else if (f.rssi >= -70) {
+		r = 2U;
+	} else if (f.rssi >= -75) {
+		r = 3U;
+	} else if (f.rssi >= -80) {
+		r = 4U;
+	} else {
+		// below -80
+	}
+	const std::size_t tr = (f.slope <= -1) ? 0U : ((f.slope >= 1) ? 2U : 1U);
+	std::size_t g = 0U;
+	if (f.gapKnown) {
+		g = (f.gapDb < 0) ? 1U : ((f.gapDb < 8) ? 2U : 3U);
+	}
+	const std::size_t ref = (f.refusals <= 0) ? 0U : ((f.refusals == 1) ? 1U : 2U);
+	const std::size_t st = f.lowStreak ? 1U : 0U;
+	return ((((((r * RL_TREND_BINS) + tr) * RL_GAP_BINS) + g) * RL_REF_BINS + ref) * RL_STREAK_BINS) + st;
+}
+
+void rlInit(RlTable &t) noexcept
+{
+	for (std::size_t s = 0U; s < RL_STATES; s++) {
+		const std::size_t rssiBin = s / (RL_TREND_BINS * RL_GAP_BINS * RL_REF_BINS * RL_STREAK_BINS);
+		const bool streak = (s % RL_STREAK_BINS) == 1U;
+		t.q[s][0U] = 0;
+		t.q[s][1U] = ((rssiBin >= 4U) && streak) ? RL_ONE : -RL_ONE;
+		t.n[s][0U] = 0U;
+		t.n[s][1U] = 0U;
+	}
+}
+
+RlAction rlChoose(const RlTable &t, std::size_t s, int epsPct, std::uint32_t rnd, bool &explored) noexcept
+{
+	const RlAction greedy = (t.q[s][1U] > t.q[s][0U]) ? RlAction::STEER : RlAction::WAIT;
+	RlAction a = greedy;
+	explored = false;
+	if ((epsPct > 0) && (static_cast<int>(rnd % 100U) < epsPct)) {
+		const std::size_t rssiBin = s / (RL_TREND_BINS * RL_GAP_BINS * RL_REF_BINS * RL_STREAK_BINS);
+		const std::size_t gap = (s / (RL_REF_BINS * RL_STREAK_BINS)) % RL_GAP_BINS;
+		const bool safeSteer = (rssiBin >= 2U) && (gap != 1U);
+		if (greedy == RlAction::STEER) {
+			a = RlAction::WAIT; // waiting one more poll is always safe
+			explored = true;
+		} else if (safeSteer) {
+			a = RlAction::STEER;
+			explored = true;
+		} else {
+			// no safe exploration here
+		}
+	}
+	return a;
+}
+
+void rlUpdate(RlTable &t, std::size_t s, RlAction a, int rewardDb, bool terminal, std::size_t next) noexcept
+{
+	const std::size_t ai = (a == RlAction::STEER) ? 1U : 0U;
+	std::int64_t target = static_cast<std::int64_t>(rewardDb) * RL_ONE;
+	if (!terminal && (next < RL_STATES)) {
+		const int best = (t.q[next][0U] > t.q[next][1U]) ? t.q[next][0U] : t.q[next][1U];
+		target += (static_cast<std::int64_t>(best) * RL_GAMMA) / RL_ONE;
+	}
+	const std::uint32_t n = t.n[s][ai];
+	const std::int64_t div = static_cast<std::int64_t>((n < RL_ALPHA_N) ? (n + 1U) : RL_ALPHA_N);
+	const std::int64_t q = t.q[s][ai];
+	std::int64_t v = q + ((target - q) / div);
+	const std::int64_t lim = static_cast<std::int64_t>(1000) * RL_ONE;
+	v = (v > lim) ? lim : ((v < -lim) ? -lim : v);
+	t.q[s][ai] = static_cast<int>(v);
+	t.n[s][ai] = (n < 0xffffffffU) ? (n + 1U) : n;
+}
+
+int rlRewardSteer(arcp::SteerOutcome o, int gainDb) noexcept
+{
+	int r = 0;
+	switch (o) {
+	case arcp::SteerOutcome::SUCCESS: {
+		const int g = (gainDb < 0) ? 0 : ((gainDb > RL_R_GAIN_MAX) ? RL_R_GAIN_MAX : gainDb);
+		r = RL_R_SUCCESS + g;
+		break;
+	}
+	case arcp::SteerOutcome::WRONG_TARGET:
+		r = RL_R_WRONG_TARGET;
+		break;
+	case arcp::SteerOutcome::BTM_REJECT:
+	case arcp::SteerOutcome::BTM_TIMEOUT:
+		r = RL_R_REFUSED;
+		break;
+	case arcp::SteerOutcome::ROAM_TIMEOUT:
+		r = RL_R_ROAM_TIMEOUT;
+		break;
+	default:
+		r = 0; // aborted: no lesson
+		break;
+	}
+	return r;
+}
+
+int rlRewardWait(int rssi) noexcept
+{
+	return ((rssi == 0) || (rssi >= RL_WAIT_FREE_DBM)) ? 0 : -((RL_WAIT_FREE_DBM - rssi + 2) / 4);
+}
+
+std::string_view rlRssiBinName(std::size_t bin) noexcept
+{
+	constexpr std::array<std::string_view, RL_RSSI_BINS> NAMES{
+		">=-60", "-60..-65", "-65..-70", "-70..-75", "-75..-80", "<-80"};
+	return (bin < NAMES.size()) ? NAMES[bin] : std::string_view("?");
+}
+
 } // namespace policy
 } // namespace donghoa

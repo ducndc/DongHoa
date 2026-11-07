@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.4, 2026-11-07 (history in Appendix B) |
+| Document version | 2.5, 2026-11-07 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -142,7 +142,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
-| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
+| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
 | IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
@@ -219,6 +219,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-TRG-4 | **Manual.** `STEER <sta> [<bssid>]` shall start a steer with reason MANUAL. It ignores the STA's cooldown and, when a BSSID is given, considers only that BSS. | T-O |
 | FR-TRG-6 | **STA bands.** The daemon shall take the bands a STA advertises from hostapd's `supp_op_classes` (Supported Operating Classes: 81–84 = 2.4 GHz, 115–129 = 5 GHz, 131–137 = 6 GHz, up to the 130 or 0 delimiter), and add every band the STA was associated or measured on. A STA whose association AKM is PSK, FT-PSK or PSK-SHA256 (not allowed on 6 GHz) shall have 6 GHz blocked. Automatic steers shall consider only candidates on usable bands. A STA that advertises no classes counts as able to use every band that is not blocked. | T-U `test_rrm`, `test_policy`, `test_hapd_parsers`, T-I 7, 8 |
 | FR-TRG-7 | **Per-STA roaming threshold.** With `roam_thr_learn` on, each STA's roaming threshold shall start at `rssi_low` and stay within `roam_thr_min`..`roam_thr_max` (−82..−65 dBm). After an RSSI steer of the STA: BTM rejected or not answered −2 dB; roam timeout −1 dB; success with a target ≥ 15 dB better than the STA's level at the start +1 dB; other outcomes unchanged. When the STA roams to another AP without a steer of this AP (also after a local disassociation followed within 5 s by the peer's report), the threshold shall move a quarter of the way (at least 1 dB) towards the STA's last level here. Without events for 10 min it shall drift 1 dB back towards `rssi_low`. The low-sample count and the trigger shall use the STA's threshold. The threshold shall be shared as in FR-LPC-3/4 (STA_ROAM, versioned by event count) and shown in `STAS` and `DEVCLASS`. | T-U, T-I 17 |
+| FR-TRG-8 | **Q-learning of when to roam.** With `rl_roam` 1 (shadow, default) or 2 (active), each fresh sample of a non-MLD STA below −60 dBm shall be a decision WAIT/STEER in one of 432 states (RSSI bin, trend, best known neighbour gap, refusals, low streak), with Q values updated as Q ← Q + α(r + γ·max Q(s′) − Q), α = 1/(n+1) then 1/8, γ = 0.8, integer ×256. Rewards: steer success +8 + gain (≤ 24), wrong target +4, refused −10, roam timeout −6, no candidate −2; waiting −(−70 − RSSI + 2)/4 per sample below −70 dBm, −20 if the link drops below `rssi_low`, 0 on an own roam. The table shall start from a prior equal to the rule-based trigger. Shadow mode shall not change behaviour; active mode shall decide with the table, exploring `rl_epsilon_pct` (1 %) only in safe states. `RL`, `RL mode <n>`, `RL reset` shall show and control it. | T-U, T-I 18 |
 | FR-TRG-5 | Automatic triggers shall skip a STA that lacks 11v, is "away", is in cooldown or backoff, or already has a transaction. | I |
 
 ### 4.6 Steering transaction, source side (STR)
@@ -412,6 +413,7 @@ measurement timeout.
 | `sta_poll_interval_ms` / `peer_timeout_ms` | 1000 / 7000 | ms |
 | `rssi_steering` / `band_steering` / `load_balancing` | 1 / 1 / 1 | on/off |
 | `roam_thr_learn` / `roam_thr_min` / `roam_thr_max` | 1 / −82 / −65 | bool / dBm / dBm |
+| `rl_roam` / `rl_epsilon_pct` | 1 / 1 | 0 off, 1 shadow, 2 active / % |
 | `rssi_low` / `rssi_low_count` / `rssi_hysteresis` / `rssi_min_target` | −75 / 3 / 8 / −70 | dBm / samples / dB / dBm |
 | `band_steer_rssi` | −55 | dBm |
 | `band_steer_6g` | 1 | on/off: 5 → 6 GHz band steering |
@@ -455,3 +457,4 @@ measurement timeout.
 | 2.2 | 2026-11-07 | NFR-CAP-1: 16 local BSSes and 16 per peer (was 8); `bss` lines beyond the limit ignored with a warning instead of a fatal error; NFR-CAP-2 re-measured (391,424 bytes) |
 | 2.3 | 2026-11-07 | New FR-AMN-9 (uplink/downlink offset learned per BSS); FR-AMN-4 uses it; IR-3: `CALIB`; keys `amon_offset_learn`, `amon_offset_min_samples` |
 | 2.4 | 2026-11-07 | New FR-TRG-7 (per-STA roaming threshold learned from outcomes and own roams, shared over ARCP); FR-TRG-1 uses it; keys `roam_thr_learn`, `roam_thr_min`, `roam_thr_max` |
+| 2.5 | 2026-11-07 | New FR-TRG-8 (Q-learning of when to roam: shadow by default, active on request); IR-3: `RL`; keys `rl_roam`, `rl_epsilon_pct` |

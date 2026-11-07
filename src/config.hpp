@@ -46,6 +46,11 @@ struct PolicyConfig {
 	// and its own roams, kept in roam_thr_min..roam_thr_max; rssi_low is
 	// the starting point and what an unlearned STA uses.
 	bool roamThrLearn{true};
+	// Q-learning of when to roam (policy::rl*): 0 off, 1 shadow (learn from
+	// the RSSI trigger's decisions, behaviour unchanged), 2 active (the
+	// learned table decides, exploring rl_epsilon_pct % in safe states).
+	int rlRoam{1};
+	int rlEpsilonPct{1};
 	int roamThrMin{-82};
 	int roamThrMax{-65};
 	int rssiHysteresis{8};   // dB the target must beat the current RSSI by
