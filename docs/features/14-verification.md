@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    U["Unit tests (make test)<br/>pure modules only, 469 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1 min, PASS 1–15"]
+    U["Unit tests (make test)<br/>pure modules only, 487 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1 min, PASS 1–16"]
     I --> Q["System test (openwrt/qemu/systest.sh)<br/>2 OpenWrt VMs: real hostapd, mac80211_hwsim,<br/>wpa_supplicant STA, raw-socket ARCP<br/>~7 min, S1–S16"]
     Q --> H["Real hardware<br/>(AP2: pending)"]
     S["Static and dynamic checks:<br/>strict warnings, cppcheck, ASan/UBSan,<br/>check-deps (libc only)"] -.-> U
@@ -64,6 +64,7 @@ all APs by time (`DONGHOA_KEEP_LOGS=1` keeps them).
 | 13 | Idle STA's stale weak signal ignored | 4, 6 |
 | 14 | Load balancing pauses when offloading does not help | 8 |
 | 15 | AP with 17 BSSes: manages 16 with a warning, the peer receives all 16 (largest HELLO/BSS_STATUS) | 2, 13 |
+| 16 | Uplink/downlink offset learned per BSS; STA without 11k scored at uplink + offset | 9 |
 
 `DONGHOA_ITEST_EXTRA="score_model 1"` reruns everything under the
 throughput model (7–9 are skipped there by design: the mock BSSes are all
@@ -74,7 +75,9 @@ throughput model (7–9 are skipped there by design: the mock BSSes are all
 Two x86-64 OpenWrt 25.12 VMs under QEMU/KVM, each an AP with two hostapd
 BSSes on `mac80211_hwsim` (2.4 and 5 GHz, FT-PSK, 11k, 11v); VM1's spare
 radio is a `wpa_supplicant` STA; ARCP runs on a shared Ethernet segment. The
-run shortens the cooldown, turns on `log_debug steer,amon`, and restores
+run shortens the cooldown, turns on `log_debug steer,amon`, turns low-power
+classification off except in S15 (see feature 10, limitations), stops both
+daemons before starting either (no class records survive), and restores
 `/etc/donghoa.conf` and `/etc/config/wireless` at the end.
 
 | S | Scenario | S | Scenario |

@@ -38,6 +38,7 @@ answered in the same loop iteration, so the reply is a consistent snapshot.
 | `STAS` | each local STA: BSS, RSSI, throughput, `flags=kvr`, beacon mode, bands (advertised, seen, 6 GHz block), class and `lp_score`, backoff; MLD links; then `remote` STAs on peers |
 | `STEERS` | running transactions (state, candidate i/n) and reservations |
 | `DEVCLASS` | device class records: class, score, samples, source AP, age |
+| `CALIB` | learned uplink → downlink offsets per BSS (feature 9) |
 | `STEER <sta> [<bssid>]` | start a manual steer (clears the STA's cooldown), optionally to one BSS |
 | `MONITOR <sta> [<ms>]` | measure a STA with this AP's monitors / driver API; result in the log |
 | `LOG` | each module's level |

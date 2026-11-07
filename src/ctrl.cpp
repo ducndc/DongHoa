@@ -245,6 +245,18 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 					  (now - r.ts) / 1000U);
 			}
 		}
+	} else if (req == "CALIB") {
+		// Learned uplink -> downlink offsets used for AP-side levels.
+		formatTo(o, "default amon_rssi_offset={} learn={} min_samples={}\n", mCfg.pol.amonRssiOffset,
+			  mCfg.pol.amonOffsetLearn ? 1 : 0, mCfg.pol.amonOffsetMinSamples);
+		for (const UlDlCal &c : mCal) {
+			if (c.used) {
+				FixedString<16U> off;
+				formatOffset16(off, c.off.offset16);
+				formatTo(o, "calib {} offset={}dB samples={} used={} age={}s\n", c.bssid, off, c.off.n,
+					  policy::isUlDlCalibrated(mCfg.pol, c.off) ? "yes" : "no", (now - c.ts) / 1000U);
+			}
+		}
 	} else if (req == "STEERS") {
 		for (const SteerTxn &t : mTxn) {
 			if (t.used) {

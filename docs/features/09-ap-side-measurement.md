@@ -123,6 +123,47 @@ average dBm of the STA's own frames. `sta_rssi_sim <file>` selects a
 simulated driver for tests: lines `<ifname> <sta> <dBm>`, `unsupported`,
 `fail`; the file is re-read on each call.
 
+### Uplink → downlink calibration (`pairUlDl`, `policy::addUlDlSample`)
+
+An AP-side level is **uplink**: how the BSS's radio hears the STA. Steering
+needs **downlink**: how the STA would hear the BSS. They differ by the TX
+power and antenna asymmetry between AP and STA, typically several dB. One
+global `amon_rssi_offset` cannot fit every AP, so DongHoa learns the offset
+per BSS from STAs that are measured both ways.
+
+```mermaid
+flowchart LR
+    D["11k report: STA hears BSS B<br/>at −55 dBm (downlink)"] --> P{"both in the STA's cache,<br/>≤ 5 s apart, neither used yet?"}
+    U["AP-side: B hears the STA<br/>at −63 dBm (uplink, raw)"] --> P
+    P -->|yes| S["sample Δ = −55 − (−63) = +8 dB<br/>both marked used"]
+    S --> L["B's offset: mean of first 8, then EWMA 1/8<br/>reject |Δ| > 30, or > 12 from the mean"]
+    L --> C{"≥ amon_offset_min_samples [3]?"}
+    C -->|yes| X["AP-side level of B = uplink + learned offset"]
+    C -->|no| G["AP-side level = uplink + amon_rssi_offset"]
+```
+
+```
+sample:      Δ = downlink_dBm − uplink_dBm              (11k RCPI/2 − 110, raw AP-side RSSI)
+accept:      |Δ| ≤ 30, and once calibrated |Δ − mean| ≤ 12
+update:      mean16 += (16·Δ − mean16) / min(n + 1, 8)   (×16 fixed point)
+use:         downlink = uplink + round(mean16 / 16)      if n ≥ amon_offset_min_samples
+```
+
+- Pairs come for free: every steer of an 802.11k STA runs the Beacon Request
+  and the AP-side measurement in parallel. Reports outside a steer count too.
+- Each measurement is used once: a burst of reports against one AP-side
+  result is a single sample.
+- The table holds 64 BSSes; the least recently updated is replaced.
+- `CALIB` lists them:
+
+```
+default amon_rssi_offset=0 learn=1 min_samples=3
+calib 02:00:00:00:02:00 offset=+8.0dB samples=3 used=yes age=4s
+```
+
+Log: `ul/dl sample <bssid> sta …: downlink -55 uplink -63 -> 8 dB, offset +8.0 (3 samples)`
+(debug) and `<bssid>: uplink/downlink offset learned: +8.0 dB (3 samples)` (info).
+
 ### Answer statuses
 
 | Status | Sent | Meaning |
@@ -140,7 +181,9 @@ simulated driver for tests: lines `<ifname> <sta> <dBm>`, `unsupported`,
 | `air_monitor <ifname>` | — | Monitor interface (repeatable, ≤ 4); create with `iw phy <phy> interface add mon1 type monitor` |
 | `amon_request` | 1 | Ask the APs during MEASURE |
 | `amon_duration_ms` | 1000 | Watch time (≤ 5000) |
-| `amon_rssi_offset` | 0 dB | Correction for TX-power asymmetry (uplink vs downlink) |
+| `amon_rssi_offset` | 0 dB | Uplink → downlink correction until a BSS's offset is learned |
+| `amon_offset_learn` | 1 | Learn the offset per BSS (below) |
+| `amon_offset_min_samples` | 3 | Samples before a learned offset is used |
 | `sta_rssi_api` | 0 | Use the driver per-STA RSSI API |
 | `air_monitor_sim`, `sta_rssi_sim` | — | Test inputs (radiotap over UDP; simulated driver file) |
 
@@ -156,6 +199,8 @@ simulated driver for tests: lines `<ifname> <sta> <dBm>`, `unsupported`,
 
 - Unit: radiotap alignment and extended bitmaps, frame filter rules,
   STA_MONITOR_REQ/RESULT/STATUS round trips, forward-compatible decode.
+- itest PASS 16 (offset learning: three pairs at +8 dB, then a STA without
+  11k heard at −70 dBm is scored at −62 dBm; fails if the offset is ignored).
 - itest PASS 5 (monitor path, injected radiotap frames), PASS 11 (driver API:
   "unsupported" answered at once and evaluated early; then measured −50 dBm
   and steered).
@@ -167,5 +212,6 @@ simulated driver for tests: lines `<ifname> <sta> <dBm>`, `unsupported`,
 
 - The vendor API is a placeholder: on real hardware every AP answers
   *unsupported* unless it has a monitor interface.
-- Uplink RSSI stands in for the STA's downlink level; one global offset.
+- One learned offset per BSS: STAs with very different TX power share it.
+- Offsets are learned on the AP that saw both measurements, not shared.
 - A monitor hears a busy STA only on its own channel.

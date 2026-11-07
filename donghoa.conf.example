@@ -99,7 +99,10 @@ ctrl_socket /var/run/donghoa.sock
 #air_monitor mon1
 #amon_request 1          # ask peers' monitors when steering (in parallel with 11k)
 #amon_duration_ms 1000   # watch time per request
-#amon_rssi_offset 0      # dB added to monitor (uplink) RSSI
+#amon_rssi_offset 0      # dB added to monitor (uplink) RSSI until a BSS's offset is learned
+#amon_offset_learn 1     # learn the uplink -> downlink offset per BSS from STAs
+                         # measured both ways (11k and AP-side); donghoa_cli CALIB
+#amon_offset_min_samples 3
 # The driver's per-STA RSSI API: the STA's MAC address is passed to the
 # Wi-Fi driver, which measures that STA's frames on each BSS's radio. The
 # vendor implementation (src/vendor_rssi.cpp) is a placeholder until the

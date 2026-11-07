@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.3, 2026-11-07 (history in §13) |
+| Document version | 2.4, 2026-11-07 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -608,8 +608,19 @@ STA_MONITOR_REPORT, reliable unicast to the requester, or straight to
 that cannot start is answered at once with the status alone (`onAmonReq`).
 
 **Results.** `onAmonResult` logs the result and stores it in the STA's
-measurement cache as `MEAS_AMON`, with level = RSSI + `amon_rssi_offset` and
-op class/channel from the BSS info. It then calls `onMonitorResult`,
+measurement cache as `MEAS_AMON`, with level = `policy::uplinkToDownlink`
+(RSSI + the BSS's learned offset once calibrated, else + `amon_rssi_offset`),
+the raw uplink value (`ulDbm`) and op class/channel from the BSS info.
+
+**Uplink/downlink calibration.** Whenever a STA's cache holds an 11k level
+and an AP-side level of the same BSS, both unused (`paired`) and within
+`ULDL_PAIR_MS` (5 s), `pairUlDl` turns them into one sample `downlink −
+uplink` for that BSS in `mCal` (64 entries, least recently updated
+replaced) and marks both used: a burst of reports counts once.
+`policy::addUlDlSample` keeps a cumulative mean for the first 8 samples,
+then an EWMA of 1/8, rejecting |Δ| > 30 dB and, once calibrated, samples
+more than 12 dB from the mean. The offset is learned on the source AP that
+saw both measurements; it is not shared between APs yet. It then calls `onMonitorResult`,
 which ends MEASURE early when `isMeasureComplete` allows it. The cache keeps
 11k (`MeasSrc::STA_11K`) and monitor entries side by side; `levelLookup` prefers 11k.
 
@@ -841,7 +852,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | R11 | Early evaluation waits for a report from *every* candidate (and, with `score_model 1`, the serving BSS). A candidate the STA cannot hear, such as a remote AP out of range, makes every steer wait the full `beacon_req_timeout_ms` (1.5 s) | Slower steering, not wrong steering | Evaluate when the report for the single request is complete (all reports for its token received) |
 | R12 | Throughput model: peak rate assumes the STA matches the BSS capability with `sta_nss` streams; one sigmoid for all widths and bands | Over-estimates gain for low-end STAs (e.g. 1×1, HT-only) | Read STA HT/VHT/HE capabilities from hostapd `STA` output; calibrate per width from MCS sensitivity tables |
 | R13 | Air monitors hear a STA only on their own channel (uplink data on that channel, probe requests when it scans) | APs on other channels rarely measure an active STA; in 5 GHz plans with one channel per AP the monitor helps mostly via probes | A dedicated scan radio, or a vendor off-channel air-monitor API feeding `amon.cpp` (`addAmonSample()` is the entry point) |
-| R14 | Uplink RSSI stands in for the STA's downlink level; one global `amon_rssi_offset` | Biased when AP and STA TX power differ widely | Per-band offsets, or learn the offset from STAs that give both 11k and monitor values |
+| R14 | Uplink RSSI stands in for the STA's downlink level | Biased when AP and STA TX power differ widely | Mitigated in v2.4: offset learned per BSS from STAs measured both ways (`amon_offset_learn`). Remaining: STAs of different TX power share one per-BSS offset; offsets are not shared between APs |
 | R15 | Monitor interfaces are created outside DongHoa and lost on reboot or `wifi` restart; the BPF program has no unit test | Monitor silently missing after a restart (logged) | Create them from the OpenWrt init script, re-open on interface events; test the filter with a BPF interpreter |
 | R16 | Low-power thresholds (`lp_threshold`, α per band) are not calibrated against real devices; S compares the variability of uplink and downlink, so a device that uploads steadily (low σ_u) may not qualify, and a phone uploading photos for a long time may | Misclassification: a device kept out of automatic steering, or steered | Collect traces of real IoT devices and phones; tune α per band; add more features (packet size, inactivity). Mitigated in part by `lp_max_mean_bps` (large uploads) and `lp_exclude_vht/eht`; a streaming camera exceeds the default gate and is not classified |
 
@@ -885,3 +896,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.1 | 2026-11-06 | §6.6: 11k quiet period ends MEASURE; RSSI samples count only when fresh (`policy::isSignalFresh`, `inactive_msec`); `STATUS` util_src per BSS |
 | 2.2 | 2026-11-06 | §6.4: per-STA metrics from nl80211 station dumps (`nlparse.cpp`, `Survey::requestStations`, `processStationDumps`), hostapd listing every 10 s; §6.6: load-balancing feedback and pause |
 | 2.3 | 2026-11-07 | `MAX_BSS` 16 (local and per peer), `Survey::MAX_STA_IFS` 16; compile-time checks that HELLO and BSS_STATUS with 16 worst-case BSSes fit one ARCP message; extra `bss` lines skipped with a warning; data size re-measured |
+| 2.4 | 2026-11-07 | §6.10: uplink/downlink offset learned per BSS (`pairUlDl`, `mCal`, `policy::addUlDlSample` / `uplinkToDownlink`), `CALIB`; R14 mitigated |

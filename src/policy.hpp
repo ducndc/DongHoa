@@ -57,6 +57,24 @@ bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount) noexcept;
 // (inactive_msec, 0 when hostapd does not report it): an idle STA's old
 // value must not count again on every poll.
 bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept;
+
+// Uplink -> downlink offset of one BSS: downlink (the STA's 11k level of
+// the BSS) minus uplink (the BSS's radio hearing the STA), learned from
+// STAs measured both ways. It covers the TX power and antenna asymmetry
+// between AP and STAs that one global amon_rssi_offset cannot.
+struct UlDlOffset {
+	int offset16{0};      // mean offset x 16 (dB)
+	std::uint32_t n{0U};  // samples accepted
+};
+constexpr int ULDL_MAX_DELTA = 30; // |downlink - uplink| above this: not one link, dropped
+constexpr int ULDL_OUTLIER = 12;   // once calibrated, a sample this far from the mean is dropped
+constexpr std::uint32_t ULDL_AVG_N = 8U; // cumulative mean up to 8 samples, then EWMA 1/8
+// Adds one paired sample; false if it was rejected as an outlier.
+bool addUlDlSample(const PolicyConfig &p, UlDlOffset &o, int downlinkDbm, int uplinkDbm) noexcept;
+// Downlink estimate of an uplink level: the learned offset once the BSS has
+// amon_offset_min_samples samples (and learning is on), else amon_rssi_offset.
+int uplinkToDownlink(const PolicyConfig &p, const UlDlOffset *o, int uplinkDbm) noexcept;
+bool isUlDlCalibrated(const PolicyConfig &p, const UlDlOffset &o) noexcept;
 bool isBandTriggered(const PolicyConfig &p, std::uint8_t band, int rssi) noexcept;
 bool isBssOverloaded(const PolicyConfig &p, int utilPct, int staCount, int maxSta) noexcept;
 bool isLbStaEligible(const PolicyConfig &p, std::uint32_t tputKbps) noexcept;
