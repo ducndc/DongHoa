@@ -433,8 +433,57 @@ void testPolicy()
 	in.band = arcp::BAND_2G;
 	CHECK(policy::score(p, ctx, in) == policy::INELIGIBLE);
 
-	CHECK(policy::isRssiTriggered(p, -80, 3) && !policy::isRssiTriggered(p, -80, 2));
-	CHECK(!policy::isRssiTriggered(p, -70, 5) && !policy::isRssiTriggered(p, 0, 5));
+	CHECK(policy::isRssiTriggered(p, -80, 3, p.rssiLow) && !policy::isRssiTriggered(p, -80, 2, p.rssiLow));
+	CHECK(!policy::isRssiTriggered(p, -70, 5, p.rssiLow) && !policy::isRssiTriggered(p, 0, 5, p.rssiLow));
+	CHECK(!policy::isRssiTriggered(p, -80, 5, -82)); // a STA with a lower threshold hangs on
+	CHECK(policy::isRssiTriggered(p, -70, 5, -65));  // a higher one roams earlier
+
+	// per-STA roaming threshold
+	{
+		PolicyConfig q; // rssi_low -75, range -82..-65, learning on
+		CHECK(policy::roamThreshold(q, 0) == -75);             // not learned: rssi_low
+		CHECK(policy::roamThreshold(q, -79) == -79);
+		CHECK(policy::roamThreshold(q, -90) == -82);           // clamped
+		CHECK(policy::updateRoamThrOutcome(q, 0, policy::RoamOutcome::REFUSED, 0) == -77);
+		CHECK(policy::updateRoamThrOutcome(q, -77, policy::RoamOutcome::ROAM_TIMEOUT, 0) == -78);
+		CHECK(policy::updateRoamThrOutcome(q, -78, policy::RoamOutcome::SUCCESS, 20) == -77); // big gain: earlier
+		CHECK(policy::updateRoamThrOutcome(q, -78, policy::RoamOutcome::SUCCESS, 10) == -78); // modest: kept
+		int t = 0;
+		for (int i = 0; i < 10; i++) {
+			t = policy::updateRoamThrOutcome(q, t, policy::RoamOutcome::REFUSED, 0);
+		}
+		CHECK(t == -82);                                        // floor
+		CHECK(policy::updateRoamThrSelf(q, -75, -67) == -73);   // quarter of the way
+		CHECK(policy::updateRoamThrSelf(q, -75, -77) == -76);   // at least 1 dB
+		CHECK(policy::updateRoamThrSelf(q, -75, -75) == -75);
+		CHECK(policy::updateRoamThrSelf(q, -66, -40) == -65);   // ceiling
+		CHECK((policy::decayRoamThr(q, -80) == -79) && (policy::decayRoamThr(q, -70) == -71) &&
+		      (policy::decayRoamThr(q, -75) == -75));
+		q.roamThrLearn = false;
+		CHECK(policy::roamThreshold(q, -80) == -75);            // learning off: rssi_low
+		Config c;
+		CHECK(parseConfigLine(c, "roam_thr_min -85") && (c.pol.roamThrMin == -85));
+		CHECK(parseConfigLine(c, "roam_thr_learn 0") && !c.pol.roamThrLearn);
+		// STA_ROAM TLV round trip; a longer TLV from a newer peer decodes
+		arcp::StaRoam r;
+		r.sta = mac("02:00:00:00:02:09");
+		r.thresholdDbm = -79;
+		r.events = 7U;
+		arcp::Message m;
+		m.begin(arcp::MsgType::STA_CLASS, 0U, r.sta, 1U, 1U);
+		CHECK(m.add(r) && m.finish(ByteView()));
+		const std::optional<arcp::Header> h = arcp::parseHeader(m.bytes());
+		if (h.has_value()) {
+			arcp::TlvReader rd(m.bytes(), *h);
+			std::uint8_t ty = 0U;
+			ByteView v;
+			arcp::StaRoam o;
+			CHECK(rd.next(ty, v) && (ty == arcp::raw(arcp::Tlv::STA_ROAM)) && arcp::decode(v, o));
+			CHECK((o.sta == r.sta) && (o.thresholdDbm == -79) && (o.events == 7U));
+			CHECK(!arcp::decode(v.first(10U), o));
+		}
+		CHECK(arcp::tlvName(arcp::raw(arcp::Tlv::STA_ROAM)) == "STA_ROAM");
+	}
 	CHECK(policy::isBandTriggered(p, arcp::BAND_2G, -50) && policy::isBandTriggered(p, arcp::BAND_5G, -50));
 	CHECK(!policy::isBandTriggered(p, arcp::BAND_5G, -60) && !policy::isBandTriggered(p, arcp::BAND_6G, -40));
 	{

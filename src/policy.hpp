@@ -51,7 +51,31 @@ int computeExpectedKbps(const PolicyConfig &p, int rssi, int peak, int utilPct) 
 // the score is the candidate's expected throughput in kbps.
 int score(const PolicyConfig &p, const SteerCtx &ctx, const CandInput &c) noexcept;
 
-bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount) noexcept;
+// thresholdDbm: the STA's roaming threshold (roamThreshold()).
+bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount, int thresholdDbm) noexcept;
+
+// ---- per-STA roaming threshold ----
+// A STA's threshold in dBm: its learned value (0 = none yet) when learning
+// is on, else rssi_low; always within roam_thr_min..roam_thr_max.
+int roamThreshold(const PolicyConfig &p, int learnedDbm) noexcept;
+enum class RoamOutcome : std::uint8_t {
+	SUCCESS,      // moved to the chosen target
+	REFUSED,      // BTM rejected or not answered: the STA hangs on
+	ROAM_TIMEOUT, // accepted but never arrived
+};
+constexpr int ROAM_THR_REFUSED_DB = -2;  // roam it later
+constexpr int ROAM_THR_TIMEOUT_DB = -1;
+constexpr int ROAM_THR_BIG_GAIN_DB = 15; // success this much better: it waited too long
+constexpr int ROAM_THR_EARLIER_DB = 1;
+constexpr Millis ROAM_THR_DECAY_MS = 600000U; // no event this long: 1 dB back towards rssi_low
+// New threshold after an RSSI steer of the STA. gainDb: target level minus
+// the STA's level when the steer started (SUCCESS only).
+int updateRoamThrOutcome(const PolicyConfig &p, int learnedDbm, RoamOutcome o, int gainDb) noexcept;
+// New threshold after the STA roamed to another AP by itself, leaving this
+// one at leftAtDbm: a quarter of the way towards that level.
+int updateRoamThrSelf(const PolicyConfig &p, int learnedDbm, int leftAtDbm) noexcept;
+// One decay step towards rssi_low.
+int decayRoamThr(const PolicyConfig &p, int learnedDbm) noexcept;
 // hostapd's signal is the level of the STA's last received frame. A poll
 // sample is fresh only when that frame came within the last poll interval
 // (inactive_msec, 0 when hostapd does not report it): an idle STA's old

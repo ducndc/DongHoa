@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.3, 2026-11-07 (history in Appendix B) |
+| Document version | 2.4, 2026-11-07 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -213,11 +213,12 @@ interface, and it learns about STAs from hostapd's output and events.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| FR-TRG-1 | **RSSI.** With `rssi_steering` on, a STA whose smoothed RSSI is below `rssi_low` (−75 dBm), after `rssi_low_count` (3) consecutive low samples, shall trigger a steer with reason RSSI. A sample counts (for the low count and the smoothed RSSI) only when the STA sent a frame within the last poll interval (hostapd `inactive_msec`); an idle STA's signal is its last frame's and shall not count again on every poll. | T-U `test_policy`, T-I 3 |
+| FR-TRG-1 | **RSSI.** With `rssi_steering` on, a STA whose smoothed RSSI is below its roaming threshold (FR-TRG-7; `rssi_low`, −75 dBm, until learned), after `rssi_low_count` (3) consecutive low samples, shall trigger a steer with reason RSSI. A sample counts (for the low count and the smoothed RSSI) only when the STA sent a frame within the last poll interval (hostapd `inactive_msec`); an idle STA's signal is its last frame's and shall not count again on every poll. | T-U `test_policy`, T-I 3 |
 | FR-TRG-2 | **Band.** With `band_steering` on, a STA on 2.4 GHz whose RSSI is at least `band_steer_rssi` (−55 dBm) shall trigger a steer with reason BAND, towards higher bands only, when it can use a higher band (FR-TRG-6). With `band_steer_6g` also on, a STA on 5 GHz whose RSSI is at least `band_steer_6g_rssi` (−55 dBm) shall trigger a BAND steer towards 6 GHz, only when 6 GHz is advertised or seen for it and not blocked. After a band steer in which no candidate was measured, the next band steer of that STA shall wait `steer_cooldown_ms` × 2^n (n = such steers in a row, capped at `steer_backoff_max_ms`); a 5/6 GHz level of the STA resets n. | T-U, T-I 7, 8, T-O |
 | FR-TRG-3 | **Load.** Every `lb_interval_ms` (10000), with `load_balancing` on, each BSS whose utilisation is at least `util_high` (70 %) or whose STA count has reached `max_sta` shall offload one STA: the weakest STA that is eligible. With `lb_only_idle`, only STAs below `idle_kbps` qualify. After a utilisation-triggered offload has moved its STA, the next offload from that BSS shall wait until the move can be judged (5 polls + 2 s); a move that did not lower the BSS's utilisation by `lb_min_drop_pct` (3) points counts as futile, and after `lb_max_futile` (2) futile moves in a row the BSS shall stop offloading for `lb_hold_ms` (300 s), with a warning naming the likely cause (airtime of other networks or interference). | T-U, T-I 4, 14 |
 | FR-TRG-4 | **Manual.** `STEER <sta> [<bssid>]` shall start a steer with reason MANUAL. It ignores the STA's cooldown and, when a BSSID is given, considers only that BSS. | T-O |
 | FR-TRG-6 | **STA bands.** The daemon shall take the bands a STA advertises from hostapd's `supp_op_classes` (Supported Operating Classes: 81–84 = 2.4 GHz, 115–129 = 5 GHz, 131–137 = 6 GHz, up to the 130 or 0 delimiter), and add every band the STA was associated or measured on. A STA whose association AKM is PSK, FT-PSK or PSK-SHA256 (not allowed on 6 GHz) shall have 6 GHz blocked. Automatic steers shall consider only candidates on usable bands. A STA that advertises no classes counts as able to use every band that is not blocked. | T-U `test_rrm`, `test_policy`, `test_hapd_parsers`, T-I 7, 8 |
+| FR-TRG-7 | **Per-STA roaming threshold.** With `roam_thr_learn` on, each STA's roaming threshold shall start at `rssi_low` and stay within `roam_thr_min`..`roam_thr_max` (−82..−65 dBm). After an RSSI steer of the STA: BTM rejected or not answered −2 dB; roam timeout −1 dB; success with a target ≥ 15 dB better than the STA's level at the start +1 dB; other outcomes unchanged. When the STA roams to another AP without a steer of this AP (also after a local disassociation followed within 5 s by the peer's report), the threshold shall move a quarter of the way (at least 1 dB) towards the STA's last level here. Without events for 10 min it shall drift 1 dB back towards `rssi_low`. The low-sample count and the trigger shall use the STA's threshold. The threshold shall be shared as in FR-LPC-3/4 (STA_ROAM, versioned by event count) and shown in `STAS` and `DEVCLASS`. | T-U, T-I 17 |
 | FR-TRG-5 | Automatic triggers shall skip a STA that lacks 11v, is "away", is in cooldown or backoff, or already has a transaction. | I |
 
 ### 4.6 Steering transaction, source side (STR)
@@ -410,6 +411,7 @@ measurement timeout.
 | `hello_interval_ms` / `bss_status_interval_ms` / `sta_status_interval_ms` / `rf_status_interval_ms` | 2000 / 5000 / 10000 / 10000 | ms |
 | `sta_poll_interval_ms` / `peer_timeout_ms` | 1000 / 7000 | ms |
 | `rssi_steering` / `band_steering` / `load_balancing` | 1 / 1 / 1 | on/off |
+| `roam_thr_learn` / `roam_thr_min` / `roam_thr_max` | 1 / −82 / −65 | bool / dBm / dBm |
 | `rssi_low` / `rssi_low_count` / `rssi_hysteresis` / `rssi_min_target` | −75 / 3 / 8 / −70 | dBm / samples / dB / dBm |
 | `band_steer_rssi` | −55 | dBm |
 | `band_steer_6g` | 1 | on/off: 5 → 6 GHz band steering |
@@ -452,3 +454,4 @@ measurement timeout.
 | 2.1 | 2026-11-06 | FR-TRG-3: load-balancing feedback and pause (`lb_min_drop_pct`, `lb_max_futile`, `lb_hold_ms`); NFR-PRF-4: per-STA metrics from nl80211 station dumps, hostapd listing every 10 s |
 | 2.2 | 2026-11-07 | NFR-CAP-1: 16 local BSSes and 16 per peer (was 8); `bss` lines beyond the limit ignored with a warning instead of a fatal error; NFR-CAP-2 re-measured (391,424 bytes) |
 | 2.3 | 2026-11-07 | New FR-AMN-9 (uplink/downlink offset learned per BSS); FR-AMN-4 uses it; IR-3: `CALIB`; keys `amon_offset_learn`, `amon_offset_min_samples` |
+| 2.4 | 2026-11-07 | New FR-TRG-7 (per-STA roaming threshold learned from outcomes and own roams, shared over ARCP); FR-TRG-1 uses it; keys `roam_thr_learn`, `roam_thr_min`, `roam_thr_max` |

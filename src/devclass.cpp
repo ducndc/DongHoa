@@ -23,6 +23,8 @@ namespace donghoa {
 namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::CLASS};
+// A local disassociation and a peer's association report this close make an own roam.
+constexpr Millis OWN_ROAM_WINDOW_MS = 5000U;
 
 std::uint64_t perSecond(std::uint64_t bytes, Millis dtMs) noexcept
 {
@@ -53,9 +55,9 @@ const DevClassRec *Daemon::findDevClass(const Mac &sta) const noexcept
 	return r;
 }
 
-// Updates or adds the record of sta; a full table drops its oldest record.
-DevClassRec &Daemon::storeDevClass(const Mac &sta, bool lowPower, int score, std::uint32_t samples,
-				   const Mac &source) noexcept
+// The record of sta, or a new one (a free slot, else the oldest record,
+// reset): one record per STA holds its class and its roaming threshold.
+DevClassRec &Daemon::devClassSlot(const Mac &sta) noexcept
 {
 	DevClassRec *slot = nullptr;
 	DevClassRec *spare = nullptr; // a free slot, else the oldest record
@@ -70,23 +72,129 @@ DevClassRec &Daemon::storeDevClass(const Mac &sta, bool lowPower, int score, std
 			// an older record is already the spare
 		}
 	}
-	bool corrected = false;
 	if (slot == nullptr) {
 		slot = spare;
-	} else if (!lowPower) {
-		corrected = slot->lowPower || slot->corrected;
-	} else {
-		// low-power again
+		*slot = DevClassRec{};
+		slot->used = true;
+		slot->sta = sta;
 	}
-	slot->corrected = corrected;
-	slot->used = true;
-	slot->sta = sta;
-	slot->lowPower = lowPower;
-	slot->score = score;
-	slot->samples = samples;
-	slot->source = source;
-	slot->ts = os::nowMs();
 	return *slot;
+}
+
+// Updates or adds the class of sta.
+DevClassRec &Daemon::storeDevClass(const Mac &sta, bool lowPower, int score, std::uint32_t samples,
+				   const Mac &source) noexcept
+{
+	const bool existed = findDevClass(sta) != nullptr;
+	DevClassRec &slot = devClassSlot(sta);
+	slot.corrected = existed && !lowPower && (slot.lowPower || slot.corrected);
+	slot.lowPower = lowPower;
+	slot.score = score;
+	slot.samples = samples;
+	slot.source = source;
+	slot.ts = os::nowMs();
+	return slot;
+}
+
+void Daemon::storeRoamRec(const Mac &sta, int thresholdDbm, std::uint32_t events, const Mac &source) noexcept
+{
+	DevClassRec &slot = devClassSlot(sta);
+	slot.roamThr = thresholdDbm;
+	slot.roamEvents = events;
+	if (slot.samples == 0U) {
+		slot.source = source; // no class evidence: the threshold's AP
+	}
+	slot.ts = os::nowMs();
+}
+
+void Daemon::sendStaRoam(const Mac &peer, const DevClassRec &r) noexcept
+{
+	arcp::Message m;
+	arcp::StaRoam c;
+
+	c.sta = r.sta;
+	c.thresholdDbm = static_cast<std::int8_t>(r.roamThr);
+	c.events = r.roamEvents;
+	beginMsg(m, arcp::MsgType::STA_CLASS, arcp::FLAG_ACK_REQ);
+	(void)m.add(c);
+	(void)unicast(peer, m);
+}
+
+void Daemon::shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t events,
+			   std::string_view why) noexcept
+{
+	if (newDbm == oldDbm) {
+		logging::dbg(LOG_MODULE, "sta {}: roaming threshold stays {} dBm ({}, {} events)", sta, oldDbm, why, events);
+		return;
+	}
+	logging::info(LOG_MODULE, "sta {}: roaming threshold {} -> {} dBm ({}, {} events)", sta, oldDbm, newDbm, why,
+		      events);
+	storeRoamRec(sta, newDbm, events, mApId);
+	const DevClassRec *const r = findDevClass(sta);
+	for (const Peer &peer : mPeers) {
+		if (peer.used && (r != nullptr)) {
+			sendStaRoam(peer.id, *r);
+		}
+	}
+}
+
+void Daemon::noteRoamThr(Sta &s, int thresholdDbm, std::string_view why) noexcept
+{
+	const PolicyConfig &p = mCfg.pol;
+	if (!p.roamThrLearn) {
+		return;
+	}
+	const int old = policy::roamThreshold(p, s.roamThr);
+	s.roamThr = thresholdDbm;
+	s.roamEvents++;
+	s.roamThrTs = os::nowMs();
+	shareRoamThr(s.addr, old, thresholdDbm, s.roamEvents, why);
+}
+
+void Daemon::noteOwnRoamFromRecord(const Mac &sta) noexcept
+{
+	const PolicyConfig &p = mCfg.pol;
+	DevClassRec *r = nullptr;
+	for (DevClassRec &d : mDevClass) {
+		if ((r == nullptr) && d.used && (d.sta == sta)) {
+			r = &d;
+		}
+	}
+	if (!p.roamThrLearn || (r == nullptr) || (r->leftTs == 0U) || (r->leftRssi == 0) ||
+	    ((os::nowMs() - r->leftTs) > OWN_ROAM_WINDOW_MS)) {
+		return;
+	}
+	const int old = policy::roamThreshold(p, r->roamThr);
+	const int thr = policy::updateRoamThrSelf(p, r->roamThr, r->leftRssi);
+	const std::uint32_t events = r->roamEvents + 1U;
+	r->leftTs = 0U; // used once
+	r->roamThr = thr;
+	r->roamEvents = events;
+	shareRoamThr(sta, old, thr, events, "own roam");
+}
+
+void Daemon::onStaRoam(const Peer &from, const arcp::StaRoam &c) noexcept
+{
+	const PolicyConfig &p = mCfg.pol;
+	const int lo = (p.roamThrMin <= p.roamThrMax) ? p.roamThrMin : p.roamThrMax;
+	const int hi = (p.roamThrMin <= p.roamThrMax) ? p.roamThrMax : p.roamThrMin;
+	const int thr = (c.thresholdDbm < lo) ? lo : ((c.thresholdDbm > hi) ? hi : static_cast<int>(c.thresholdDbm));
+	const DevClassRec *const known = findDevClass(c.sta);
+
+	// events only grow along a STA's history: the larger count is newer
+	if ((known == nullptr) || (c.events > known->roamEvents)) {
+		storeRoamRec(c.sta, thr, c.events, from.id);
+	}
+	Sta *const s = findSta(c.sta);
+	if ((s != nullptr) && !s->away && (c.events > s->roamEvents)) {
+		if (s->roamThr != thr) {
+			logging::info(LOG_MODULE, "sta {}: roaming threshold {} dBm ({} events, from AP {})", c.sta, thr,
+				      c.events, from.id);
+		}
+		s->roamThr = thr;
+		s->roamEvents = c.events;
+		s->roamThrTs = os::nowMs();
+	}
 }
 
 void Daemon::sendStaClass(const Mac &peer, const DevClassRec &r) noexcept
@@ -174,6 +282,9 @@ void Daemon::restoreDevClass(Sta &s) noexcept
 		s.lowPower = r->lowPower;
 		s.lpScore = r->score;
 		s.lpSamples = r->samples;
+		s.roamThr = r->roamThr;
+		s.roamEvents = r->roamEvents;
+		s.roamThrTs = os::nowMs();
 		logging::dbg(LOG_MODULE, "sta {}: known {} (score {}, {} samples, from {})", s.addr,
 			     r->lowPower ? "low-power" : "normal", r->score, r->samples, r->source);
 	}
@@ -181,6 +292,10 @@ void Daemon::restoreDevClass(Sta &s) noexcept
 
 void Daemon::saveDevClass(const Sta &s) noexcept
 {
+	const DevClassRec *const known = findDevClass(s.addr);
+	if ((s.roamEvents > 0U) && ((known == nullptr) || (known->roamEvents <= s.roamEvents))) {
+		storeRoamRec(s.addr, s.roamThr, s.roamEvents, mApId);
+	}
 	const DevClassRec *const r = findDevClass(s.addr);
 	// Keep what was learned here, unless a peer already holds more.
 	if ((s.lpSamples > 0U) && ((r == nullptr) || (r->samples <= s.lpSamples))) {
@@ -219,13 +334,16 @@ void Daemon::onPeerStaAssoc(const Mac &ap, const Mac &sta) noexcept
 		return;
 	}
 	const Sta *const s = findSta(sta);
-	if ((s != nullptr) && (s->lpSamples > 0U)) {
+	if ((s != nullptr) && ((s->lpSamples > 0U) || (s->roamEvents > 0U))) {
 		saveDevClass(*s);
 	}
 	const DevClassRec *const r = findDevClass(sta);
 	if (r != nullptr) {
 		logging::dbg(LOG_MODULE, "sta {} joined AP {}: sending its class", sta, ap);
 		sendStaClass(ap, *r);
+		if (r->roamEvents > 0U) {
+			sendStaRoam(ap, *r);
+		}
 	}
 }
 
@@ -237,7 +355,7 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 
 	// Live local STAs first, so the table holds their latest state.
 	for (const Sta &s : mSta) {
-		if (s.used && !s.away && (s.lpSamples > 0U)) {
+		if (s.used && !s.away && ((s.lpSamples > 0U) || (s.roamEvents > 0U))) {
 			saveDevClass(s);
 		}
 	}
@@ -247,22 +365,34 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		// raced the broadcast) must learn "normal now", or it keeps a stale
 		// flag forever. Other normal records tell a peer nothing, and
 		// sending them all could fill the retransmission queue.
-		if (!r.used || (!r.lowPower && !r.corrected)) {
+		// Also any learned roaming threshold, so it follows the STA.
+		const bool cls = r.lowPower || r.corrected;
+		const bool roam = r.roamEvents > 0U;
+		if (!r.used || (!cls && !roam)) {
 			continue;
 		}
-		if ((n > 0U) && (m.room() < (arcp::TLV_HDR_LEN + 15U))) {
+		if ((n > 0U) && (m.room() < ((arcp::TLV_HDR_LEN + 15U) + (arcp::TLV_HDR_LEN + 11U)))) {
 			(void)unicast(peer, m);
 			n = 0U;
 		}
 		if (n == 0U) {
 			beginMsg(m, arcp::MsgType::STA_CLASS, arcp::FLAG_ACK_REQ);
 		}
-		arcp::StaClass c;
-		c.sta = r.sta;
-		c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER : arcp::DevClass::NORMAL);
-		c.score = static_cast<std::int32_t>(r.score);
-		c.samples = r.samples;
-		(void)m.add(c);
+		if (cls) {
+			arcp::StaClass c;
+			c.sta = r.sta;
+			c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER : arcp::DevClass::NORMAL);
+			c.score = static_cast<std::int32_t>(r.score);
+			c.samples = r.samples;
+			(void)m.add(c);
+		}
+		if (roam) {
+			arcp::StaRoam c;
+			c.sta = r.sta;
+			c.thresholdDbm = static_cast<std::int8_t>(r.roamThr);
+			c.events = r.roamEvents;
+			(void)m.add(c);
+		}
 		n++;
 		total++;
 	}
@@ -270,7 +400,7 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		(void)unicast(peer, m);
 	}
 	if (total > 0U) {
-		logging::dbg(LOG_MODULE, "sent {} class records to AP {}", total, peer);
+		logging::dbg(LOG_MODULE, "sent {} class / roaming records to AP {}", total, peer);
 	}
 }
 

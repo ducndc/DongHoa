@@ -179,7 +179,7 @@ void Daemon::updateStaLink(Sta &s, const hapd::Sta &h, std::size_t bss, Millis n
 	l->lastPollMs = now;
 	if ((h.signal != 0) && policy::isSignalFresh(h.inactiveMs, mCfg.staPollMs)) {
 		l->rssi = (l->rssi != 0) ? (((3 * l->rssi) + h.signal) - 2) / 4 : h.signal;
-		l->lowCount = (h.signal < mCfg.pol.rssiLow) ? (l->lowCount + 1) : 0;
+		l->lowCount = (h.signal < policy::roamThreshold(mCfg.pol, s.roamThr)) ? (l->lowCount + 1) : 0;
 	}
 	aggregateLinks(s);
 }
@@ -204,7 +204,7 @@ void Daemon::applyStaSignal(Sta &s, int signal, std::uint32_t inactiveMs) noexce
 {
 	if ((signal != 0) && ((s.rssi == 0) || policy::isSignalFresh(inactiveMs, mCfg.staPollMs))) {
 		s.rssi = (s.rssi != 0) ? (((3 * s.rssi) + signal) - 2) / 4 : signal;
-		s.lowCount = (signal < mCfg.pol.rssiLow) ? (s.lowCount + 1) : 0;
+		s.lowCount = (signal < policy::roamThreshold(mCfg.pol, s.roamThr)) ? (s.lowCount + 1) : 0;
 	} else {
 		// No signal, or the same old frame's (idle STA): neither the
 		// average nor the low count moves.
@@ -612,9 +612,22 @@ void Daemon::onHapdDisconnected(std::size_t bss, const Mac &addr) noexcept
 	const bool ownLink = (s != nullptr) && s->mld && isSameApMld(s->bss, bss);
 	if ((s == nullptr) || (s->bss == bss) || ownLink) {
 		sendStaEvent(addr, bss, arcp::StaEventType::DISASSOC, 0U);
+		// Left by itself (no steer of ours) with a known level: if a peer
+		// reports it soon, that was an own roam at this level.
+		const bool ownLeave = (s != nullptr) && !s->away && (s->rssi != 0) && (findTxnBySta(addr) == nullptr) &&
+				      mCfg.pol.roamThrLearn;
 		onLocalDisassoc(addr);
 		if (s != nullptr) {
 			saveDevClass(*s);
+			if (ownLeave) {
+				DevClassRec &r = devClassSlot(addr);
+				if (r.roamEvents == 0U) {
+					r.roamThr = s->roamThr;
+				}
+				r.leftRssi = s->rssi;
+				r.leftTs = os::nowMs();
+				r.ts = r.leftTs;
+			}
 			s->used = false;
 		}
 	}

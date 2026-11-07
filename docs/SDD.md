@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.4, 2026-11-07 (history in §13) |
+| Document version | 2.5, 2026-11-07 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -516,6 +516,18 @@ are released in `onStaEvent` (association at this AP), in
 
 #### 6.6.4 Triggers
 
+- Per-STA roaming threshold (FR-TRG-7): `Sta::roamThr` (0 = `rssi_low`),
+  `roamEvents`, `roamThrTs`. `policy::roamThreshold` gives the value used by
+  the low-sample count (`applyStaSignal`, MLD links) and `isRssiTriggered`.
+  `endTxn` of an RSSI steer applies `policy::updateRoamThrOutcome` (the gain
+  is the chosen target's RCPI minus `SteerTxn::startRssi`); `onStaEvent`
+  from a peer without a steer of ours applies `updateRoamThrSelf` to the
+  live entry, or, when the STA already left locally (`onHapdDisconnected`
+  records `leftRssi`/`leftTs` in its class record), to the record within
+  5 s (`noteOwnRoamFromRecord`). `onStaPoll` applies `decayRoamThr` after
+  10 min without events. Changes are stored in the device class record
+  (`roamThr`, `roamEvents`) and sent as STA_ROAM by the class sharing code
+  (`devclass.cpp`: immediate send, hand-over on association, rejoin sync).
 - `onStaPoll`, after each STA sample:
   - skip if the STA is away, in cooldown, lacks 11v, or has a transaction
     [FR-TRG-5];
@@ -897,3 +909,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.2 | 2026-11-06 | §6.4: per-STA metrics from nl80211 station dumps (`nlparse.cpp`, `Survey::requestStations`, `processStationDumps`), hostapd listing every 10 s; §6.6: load-balancing feedback and pause |
 | 2.3 | 2026-11-07 | `MAX_BSS` 16 (local and per peer), `Survey::MAX_STA_IFS` 16; compile-time checks that HELLO and BSS_STATUS with 16 worst-case BSSes fit one ARCP message; extra `bss` lines skipped with a warning; data size re-measured |
 | 2.4 | 2026-11-07 | §6.10: uplink/downlink offset learned per BSS (`pairUlDl`, `mCal`, `policy::addUlDlSample` / `uplinkToDownlink`), `CALIB`; R14 mitigated |
+| 2.5 | 2026-11-07 | §6.6: per-STA roaming threshold (state, update points, sharing via STA_ROAM in the class records); class-record slot reset on eviction |

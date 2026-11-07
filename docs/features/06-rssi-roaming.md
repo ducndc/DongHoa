@@ -18,8 +18,8 @@ With 802.11r the move takes tens of milliseconds and the session continues.
 flowchart TB
     S["poll sample: signal, inactive_ms"] --> F{"fresh?<br/>inactive_ms < poll interval"}
     F -->|no: idle STA, old frame| N["ignore (no EWMA, no low count)"]
-    F -->|yes| E["rssi = (3·rssi + signal − 2)/4<br/>lowCount = signal < rssi_low ? +1 : 0"]
-    E --> T{"rssi < rssi_low [−75]<br/>and lowCount ≥ rssi_low_count [3]?"}
+    F -->|yes| E["rssi = (3·rssi + signal − 2)/4<br/>lowCount = signal < threshold ? +1 : 0"]
+    E --> T{"rssi < the STA's threshold<br/>(learned, else rssi_low −75)<br/>and lowCount ≥ rssi_low_count [3]?"}
     T -->|no| X["no trigger"]
     T -->|yes| G{"eligible STA?<br/>11v, not away, no transaction,<br/>cooldown over, not low-power"}
     G -->|no| X
@@ -65,7 +65,56 @@ backoff. A sample counts only if `inactive_ms` < poll interval
 STA's RSSI is that of its best link and its low count the *minimum* over
 links, so it counts as weak only when every link is.
 
-### Choosing the target
+### Per-STA roaming threshold
+
+Clients differ: some cooperate with BTM and benefit from an early move,
+others are "sticky" and refuse every request at −80 dBm. One global
+`rssi_low` either pesters the sticky ones or moves the cooperative ones too
+late. So each STA has its **own** threshold, learned from what happens when
+DongHoa tries to move it, and from where it roams by itself.
+
+```mermaid
+flowchart TB
+    S["RSSI steer of the STA ends"] --> O{"outcome"}
+    O -->|"BTM rejected / not answered"| R["threshold −2 dB<br/>(roam it later)"]
+    O -->|"accepted, never arrived"| T["−1 dB"]
+    O -->|"success, target ≥ 15 dB better"| B["+1 dB<br/>(it waited too long)"]
+    O -->|"success, smaller gain / other"| K["unchanged"]
+    OWN["STA roams to another AP by itself<br/>(peer's STA_EVENT, no steer of ours)"] --> Q["move a quarter of the way (≥ 1 dB)<br/>towards the level it left at"]
+    D["10 min without events"] --> DD["1 dB back towards rssi_low"]
+    R --> C["clamp to roam_thr_min..roam_thr_max<br/>[−82 .. −65 dBm]"]
+    T --> C
+    B --> C
+    Q --> C
+    C --> SH["store in the STA's record,<br/>STA_ROAM to every peer (on change)"]
+```
+
+```
+threshold(s) = clamp(learned ≠ 0 ? learned : rssi_low,  roam_thr_min, roam_thr_max)
+lowCount     counts fresh samples below threshold(s)
+trigger      rssi < threshold(s) and lowCount ≥ rssi_low_count
+```
+
+- **Only RSSI steers teach.** Load and band steers, manual steers and "no
+  suitable candidate" say nothing about the level at which this STA should
+  roam.
+- **Own roams.** If the STA leaves for another AP without a steer of ours,
+  its last smoothed RSSI here is its natural roaming point. If it
+  disassociated locally first (its entry is gone when the peer's report
+  arrives), the level is kept in its record and used if the report comes
+  within 5 s.
+- **Sharing.** The threshold and an event counter travel with the STA in a
+  STA_ROAM TLV, in the same reliable STA_CLASS messages as the low-power
+  class (feature 10): sent to every peer on change, to the AP the STA
+  associates to, and to new or restarted peers. A larger event count is the
+  newer value.
+- **Example (itest PASS 17).** A STA at −80 dBm refuses three BTM requests:
+  −75 → −77 → −79 → −81 dBm. At −80 it is now above its own threshold and is
+  left alone (with the global −75 it would be asked again after each
+  backoff). AP2 holds the value. When the STA then roams to AP2 on its own,
+  AP1 learns −81 → −80 and AP2's live entry takes it over.
+
+## Choosing the target
 
 The engine (feature 5) measures the candidates. For reason RSSI:
 
@@ -108,7 +157,9 @@ STA is not stranded on a failing link for lack of a report.
 | Key | Default | Meaning |
 |---|---|---|
 | `rssi_steering` | 1 | Enable the trigger |
-| `rssi_low` | −75 dBm | Smoothed RSSI below this is weak |
+| `rssi_low` | −75 dBm | Start value of every STA's threshold (and the value without learning) |
+| `roam_thr_learn` | 1 | Learn a threshold per STA |
+| `roam_thr_min` / `roam_thr_max` | −82 / −65 dBm | Range of a learned threshold |
 | `rssi_low_count` | 3 | Consecutive fresh low samples needed |
 | `rssi_hysteresis` | 8 dB | Target must be this much better |
 | `rssi_min_target` | −70 dBm | Never steer to a weaker target |
@@ -117,7 +168,9 @@ STA is not stranded on a failing link for lack of a report.
 ## Tuning notes
 
 - `rssi_low` higher (e.g. −70) roams earlier: better throughput, more
-  steers. Lower values leave the STA longer on a weak AP.
+  steers. Lower values leave the STA longer on a weak AP. With learning on,
+  it is only the starting point: each STA moves within
+  `roam_thr_min`..`roam_thr_max` from its own outcomes.
 - `rssi_low_count` × `sta_poll_interval_ms` is the minimum detection time.
 - Raising `rssi_hysteresis` reduces ping-pong in overlapping coverage.
 
@@ -125,6 +178,9 @@ STA is not stranded on a failing link for lack of a report.
 
 - Unit `test_policy`: trigger and freshness rules, floors, the
   unmeasured-candidate floor.
+- itest PASS 17 (per-STA threshold: refusals lower it to −81, the STA is
+  then left alone, the value reaches AP2, an own roam updates it, AP2's live
+  entry follows; fails if the learned value is ignored).
 - itest PASS 3 (cross-AP roam, passive mode fallback), PASS 5 and 11 (STA
   without 11k, measured by the other AP), PASS 9 (MLD STA roams only when
   all links are weak), PASS 13 (idle STA with a stale weak value is not

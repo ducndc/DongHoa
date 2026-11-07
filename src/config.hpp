@@ -42,6 +42,12 @@ struct PolicyConfig {
 
 	int rssiLow{-75};        // dBm: STA below this is a roam candidate
 	int rssiLowCount{3};    // consecutive polls below rssi_low
+	// Per-STA roaming threshold, learned from each STA's RSSI-steer outcomes
+	// and its own roams, kept in roam_thr_min..roam_thr_max; rssi_low is
+	// the starting point and what an unlearned STA uses.
+	bool roamThrLearn{true};
+	int roamThrMin{-82};
+	int roamThrMax{-65};
 	int rssiHysteresis{8};   // dB the target must beat the current RSSI by
 	int rssiMinTarget{-70}; // dBm: minimum STA-measured target level
 	int bandSteerRssi{-55}; // dBm: 2.4 GHz STA above this -> 5/6 GHz

@@ -228,6 +228,11 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			formatScore(sText, s.lpS100);
 			formatTo(o, " class={} lp_score={}/{} s={}", s.lowPower ? "low-power" : "normal", s.lpScore,
 				  mCfg.pol.lpThreshold, sText);
+			formatTo(o, " roam_thr={}({})", policy::roamThreshold(mCfg.pol, s.roamThr),
+				  (s.roamEvents > 0U) ? "learned" : "default");
+			if (s.roamEvents > 0U) {
+				formatTo(o, " roam_events={}", s.roamEvents);
+			}
 			formatTo(o, " backoff={}ms\n", backoff);
 		}
 		for (const RemoteSta &r : mRsta) {
@@ -240,9 +245,13 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		// Device class records: learned here or received from peers.
 		for (const DevClassRec &r : mDevClass) {
 			if (r.used) {
-				formatTo(o, "devclass {} class={} score={} samples={} from={} age={}s\n", r.sta,
+				formatTo(o, "devclass {} class={} score={} samples={} from={} age={}s", r.sta,
 					  r.lowPower ? "low-power" : "normal", r.score, r.samples, r.source,
 					  (now - r.ts) / 1000U);
+				if (r.roamEvents > 0U) {
+					formatTo(o, " roam_thr={} roam_events={}", r.roamThr, r.roamEvents);
+				}
+				formatTo(o, "\n");
 			}
 		}
 	} else if (req == "CALIB") {

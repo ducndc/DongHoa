@@ -38,7 +38,8 @@ constexpr std::array<CfgInt, 6U> CFG_INTS{{
 	{"peer_timeout_ms", &Config::peerTimeoutMs},
 }};
 
-constexpr std::array<PolBool, 14U> POL_BOOLS{{
+constexpr std::array<PolBool, 15U> POL_BOOLS{{
+	{"roam_thr_learn", &PolicyConfig::roamThrLearn},
 	{"amon_offset_learn", &PolicyConfig::amonOffsetLearn},
 	{"rssi_steering", &PolicyConfig::rssiSteering},
 	{"load_balancing", &PolicyConfig::loadBalancing},
@@ -55,7 +56,9 @@ constexpr std::array<PolBool, 14U> POL_BOOLS{{
 	{"lp_exclude_eht", &PolicyConfig::lpExcludeEht},
 }};
 
-constexpr std::array<PolInt, 42U> POL_INTS{{
+constexpr std::array<PolInt, 44U> POL_INTS{{
+	{"roam_thr_min", &PolicyConfig::roamThrMin},
+	{"roam_thr_max", &PolicyConfig::roamThrMax},
 	{"amon_offset_min_samples", &PolicyConfig::amonOffsetMinSamples},
 	{"rssi_low", &PolicyConfig::rssiLow},
 	{"rssi_low_count", &PolicyConfig::rssiLowCount},

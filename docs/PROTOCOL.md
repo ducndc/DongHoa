@@ -73,6 +73,7 @@ later versions can add fields there.
 | 0x13 | ACK | msg_id u32 |
 | 0x14 | STA_MONITOR_REQ | txn u32, sta 6, duration_ms u16, op_class u8, channel u8 (the STA's current channel, a hint) |
 | 0x15 | STA_MONITOR_RESULT | txn u32, sta 6, bssid 6, rssi i8 (dBm), samples u16, age_ms u16 (since the last sample) |
+| 0x17 | STA_ROAM | sta 6, threshold i8 (dBm, the STA's learned roaming threshold), events u32 (outcomes behind it; it only grows along a STA's history, so the larger value is the newer record) (§9) |
 | 0x16 | STA_MONITOR_STATUS | txn u32, sta 6, status u8: 0 measured (results in the same report), 1 not heard, 2 unsupported (no monitor, no driver API), 3 busy (watch table full), 4 failed (driver API error) |
 | 0xFF | AUTH | 16 bytes: HMAC-SHA256 truncated |
 
@@ -98,7 +99,7 @@ Report (dBm = RCPI/2 − 110). 255 means it is not available.
 | 0x03 | STA_STATUS | multicast | STA_ENTRY* (split over several messages if needed) | `sta_status_interval_ms` |
 | 0x04 | RF_STATUS | multicast | RF_INFO* (one per operating channel) | `rf_status_interval_ms` |
 | 0x05 | STA_EVENT | multicast | STA_EVENT | when a STA associates or disassociates |
-| 0x06 | STA_CLASS | unicast, ACK_REQ | STA_CLASS* | device class of STAs (§8): to every peer when a local STA's class changes; to the AP a STA just associated to (its STA_EVENT) when this AP knows the STA's class; all low-power records to a peer that appeared or restarted (several messages if needed) |
+| 0x06 | STA_CLASS | unicast, ACK_REQ | STA_CLASS*, STA_ROAM* | device class (§8) and learned roaming threshold (§9) of STAs: to every peer when a local STA's class changes; to the AP a STA just associated to (its STA_EVENT) when this AP knows the STA's class; all low-power records to a peer that appeared or restarted (several messages if needed) |
 | 0x10 | STEER_REQ | unicast, ACK_REQ | STEER_REQ | source AP asks the target AP to accept a STA |
 | 0x11 | STEER_RESP | unicast, ACK_REQ | STEER_RESP | target AP's admission decision |
 | 0x12 | STEER_RESULT | unicast, ACK_REQ | STEER_RESULT | source AP reports the outcome so the target frees its reservation |
@@ -261,3 +262,19 @@ Integer arithmetic: the running mean and variance use Welford's method; past
 automatic RSSI, band and load-balancing steering; a manual `STEER` still
 works. STA_ENTRY carries the class as flag 0x20.
 
+## 9. Per-STA roaming threshold
+
+Each STA has its own RSSI roaming threshold, learned by the AP it is on
+from the outcomes of its RSSI steers and from its own roams, within
+`roam_thr_min`..`roam_thr_max` (−82..−65 dBm); `rssi_low` is the start
+value. The value travels with the STA like its class: in STA_ROAM TLVs,
+carried in STA_CLASS messages, versioned by `events` (a record replaces
+another only with strictly more events).
+
+1. A change of a local STA's threshold is sent to every peer.
+2. When a STA associates to another AP, an AP holding its record sends it
+   (with the class record).
+3. A new or restarted peer gets every record with a learned threshold.
+4. A live STA takes a received threshold over when it carries more events.
+
+An AP that does not know STA_ROAM ignores it (unknown TLV).

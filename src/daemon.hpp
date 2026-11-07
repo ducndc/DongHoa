@@ -146,6 +146,11 @@ struct Sta {
 	bool lowPower{false};
 	std::uint8_t phyCaps{0U}; // arcp::CAP_VHT/CAP_HE/CAP_EHT it negotiated
 	bool capsKnown{false}; // capabilities read from hostapd at least once
+	// Learned roaming threshold (dBm, 0 = none: rssi_low applies), the
+	// outcomes behind it (its version when shared) and the last change.
+	int roamThr{0};
+	std::uint32_t roamEvents{0U};
+	Millis roamThrTs{0U};
 };
 
 // Device class of a STA, kept by every AP so that it follows the STA
@@ -161,6 +166,13 @@ struct DevClassRec {
 	// Normal now, low-power before: a peer may still hold the old flag, so
 	// syncDevClass sends this record too (other normal records it skips).
 	bool corrected{false};
+	// The STA's learned roaming threshold, shared the same way (STA_ROAM).
+	int roamThr{0};
+	std::uint32_t roamEvents{0U};
+	// Left this AP by itself (no steer of ours) at this RSSI, at leftTs:
+	// a peer's association report soon after is an own roam.
+	int leftRssi{0};
+	Millis leftTs{0U};
 };
 
 // ---- remote side ----
@@ -248,6 +260,7 @@ struct SteerTxn {
 	bool anyMeasured{false};    // some candidate had a level at evaluate()
 	bool staMld{false};         // MLD STA (kept: its entry may go before the outcome)
 	Mac forcedTarget{};         // manual steer target, zero = any
+	int startRssi{0};           // the STA's RSSI when the steer started
 };
 
 struct Reservation {
@@ -405,6 +418,12 @@ public:
 	void saveDevClass(const Sta &s) noexcept;
 	const DevClassRec *findDevClass(const Mac &sta) const noexcept;
 	void onStaClass(const Peer &from, const arcp::StaClass &c) noexcept;
+	void onStaRoam(const Peer &from, const arcp::StaRoam &r) noexcept;
+	// A roaming-threshold event of a local STA: store, share on change.
+	void noteRoamThr(Sta &s, int thresholdDbm, std::string_view why) noexcept;
+	// Own roam of a STA that already left: from its record (leftRssi).
+	void noteOwnRoamFromRecord(const Mac &sta) noexcept;
+	void shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t events, std::string_view why) noexcept;
 	// A peer reports sta associated to it: hand it what we know.
 	void onPeerStaAssoc(const Mac &ap, const Mac &sta) noexcept;
 	// A peer appeared or restarted: send it every low-power record.
@@ -464,6 +483,9 @@ private:
 	DevClassRec &storeDevClass(const Mac &sta, bool lowPower, int score, std::uint32_t samples,
 				   const Mac &source) noexcept;
 	void sendStaClass(const Mac &peer, const DevClassRec &r) noexcept;
+	void sendStaRoam(const Mac &peer, const DevClassRec &r) noexcept;
+	DevClassRec &devClassSlot(const Mac &sta) noexcept;
+	void storeRoamRec(const Mac &sta, int thresholdDbm, std::uint32_t events, const Mac &source) noexcept;
 	// ctrl.cpp helpers
 	void runCtrlCommand(std::string_view req, FixedString<8192U> &out) noexcept;
 	// main.cpp helpers

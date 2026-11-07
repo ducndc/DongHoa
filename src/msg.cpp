@@ -360,6 +360,13 @@ void Daemon::handleTlvs(Peer &p, ByteView frame, const arcp::Header &h) noexcept
 			}
 			break;
 		}
+		case arcp::Tlv::STA_ROAM: {
+			arcp::StaRoam r;
+			if (arcp::decode(v, r)) {
+				onStaRoam(p, r);
+			}
+			break;
+		}
 		case arcp::Tlv::STEER_REQ: {
 			arcp::SteerReq r;
 			if (arcp::decode(v, r)) {

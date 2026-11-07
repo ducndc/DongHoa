@@ -68,6 +68,7 @@ enum class Tlv : std::uint8_t {
 	STA_MONITOR_REQ = 0x14U,
 	STA_MONITOR_RESULT = 0x15U,
 	STA_MONITOR_STATUS = 0x16U,
+	STA_ROAM = 0x17U,
 	AUTH = 0xFFU,
 };
 
@@ -289,6 +290,13 @@ enum class MonitorStatus : std::uint8_t {
 	FAILED = 4U,      // the driver API returned an error
 };
 
+// A STA's learned roaming threshold, sent with its class (STA_CLASS message).
+struct StaRoam {
+	Mac sta{};
+	std::int8_t thresholdDbm{0};
+	std::uint32_t events{0U}; // outcomes behind it; the larger value is newer
+};
+
 struct StaMonitorStatus {
 	std::uint32_t txn{0U};
 	Mac sta{};
@@ -319,6 +327,7 @@ public:
 	bool add(const StaMonitorReq &v) noexcept;
 	bool add(const StaMonitorResult &v) noexcept;
 	bool add(const StaMonitorStatus &v) noexcept;
+	bool add(const StaRoam &v) noexcept;
 	bool addAck(std::uint32_t msgId) noexcept;
 
 	// Sets the length and, with a non-empty key, appends the HMAC.
@@ -380,6 +389,7 @@ bool decode(ByteView v, SteerResult &o) noexcept;
 bool decode(ByteView v, StaMonitorReq &o) noexcept;
 bool decode(ByteView v, StaMonitorResult &o) noexcept;
 bool decode(ByteView v, StaMonitorStatus &o) noexcept;
+bool decode(ByteView v, StaRoam &o) noexcept;
 std::string_view monitorStatusName(std::uint8_t status) noexcept;
 bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept;
 

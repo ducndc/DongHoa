@@ -151,9 +151,60 @@ int score(const PolicyConfig &p, const SteerCtx &ctx, const CandInput &c) noexce
 	return r;
 }
 
-bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount) noexcept
+bool isRssiTriggered(const PolicyConfig &p, int rssi, int lowCount, int thresholdDbm) noexcept
 {
-	return p.rssiSteering && (rssi != 0) && (rssi < p.rssiLow) && (lowCount >= p.rssiLowCount);
+	return p.rssiSteering && (rssi != 0) && (rssi < thresholdDbm) && (lowCount >= p.rssiLowCount);
+}
+
+namespace {
+
+int clampRoamThr(const PolicyConfig &p, int v) noexcept
+{
+	const int lo = (p.roamThrMin <= p.roamThrMax) ? p.roamThrMin : p.roamThrMax;
+	const int hi = (p.roamThrMin <= p.roamThrMax) ? p.roamThrMax : p.roamThrMin;
+	return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+} // namespace
+
+int roamThreshold(const PolicyConfig &p, int learnedDbm) noexcept
+{
+	return clampRoamThr(p, (p.roamThrLearn && (learnedDbm != 0)) ? learnedDbm : p.rssiLow);
+}
+
+int updateRoamThrOutcome(const PolicyConfig &p, int learnedDbm, RoamOutcome o, int gainDb) noexcept
+{
+	int t = roamThreshold(p, learnedDbm);
+	if (o == RoamOutcome::REFUSED) {
+		t += ROAM_THR_REFUSED_DB;
+	} else if (o == RoamOutcome::ROAM_TIMEOUT) {
+		t += ROAM_THR_TIMEOUT_DB;
+	} else if (gainDb >= ROAM_THR_BIG_GAIN_DB) {
+		t += ROAM_THR_EARLIER_DB;
+	} else {
+		// a success with a modest gain: the threshold was right
+	}
+	return clampRoamThr(p, t);
+}
+
+int updateRoamThrSelf(const PolicyConfig &p, int learnedDbm, int leftAtDbm) noexcept
+{
+	const int t = roamThreshold(p, learnedDbm);
+	int r = t;
+	if (leftAtDbm < 0) {
+		const int d = leftAtDbm - t;
+		// at least 1 dB per roam towards the level it left at
+		const int step = (d / 4 != 0) ? (d / 4) : ((d > 0) ? 1 : ((d < 0) ? -1 : 0));
+		r = t + step;
+	}
+	return clampRoamThr(p, r);
+}
+
+int decayRoamThr(const PolicyConfig &p, int learnedDbm) noexcept
+{
+	const int t = roamThreshold(p, learnedDbm);
+	const int base = clampRoamThr(p, p.rssiLow);
+	return (t < base) ? (t + 1) : ((t > base) ? (t - 1) : t);
 }
 
 bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept

@@ -296,6 +296,17 @@ bool Message::add(const StaMonitorStatus &v) noexcept
 	return putTlv(Tlv::STA_MONITOR_STATUS, viewOf(b));
 }
 
+bool Message::add(const StaRoam &v) noexcept
+{
+	std::array<std::uint8_t, 11U> b{};
+	const ByteSpan s = spanOf(b);
+
+	putMac(s, 0U, v.sta);
+	b[6U] = asU8(v.thresholdDbm);
+	putBe32(s, 7U, v.events);
+	return putTlv(Tlv::STA_ROAM, viewOf(b));
+}
+
 bool Message::add(const StaClass &v) noexcept
 {
 	std::array<std::uint8_t, 15U> b{};
@@ -598,6 +609,17 @@ std::string_view monitorStatusName(std::uint8_t status) noexcept
 	return n;
 }
 
+bool decode(ByteView v, StaRoam &o) noexcept
+{
+	bool ok = v.size() >= 11U;
+	if (ok) {
+		o.sta = getMac(v, 0U);
+		o.thresholdDbm = asS8(v[6U]);
+		o.events = getBe32(v, 7U);
+	}
+	return ok;
+}
+
 bool decode(ByteView v, StaClass &o) noexcept
 {
 	bool ok = v.size() >= 15U;
@@ -659,6 +681,7 @@ std::string_view tlvName(std::uint8_t type) noexcept
 	case raw(Tlv::STA_MONITOR_REQ): n = "STA_MONITOR_REQ"; break;
 	case raw(Tlv::STA_MONITOR_RESULT): n = "STA_MONITOR_RESULT"; break;
 	case raw(Tlv::STA_MONITOR_STATUS): n = "STA_MONITOR_STATUS"; break;
+	case raw(Tlv::STA_ROAM): n = "STA_ROAM"; break;
 	case raw(Tlv::AUTH): n = "AUTH"; break;
 	default: break;
 	}
