@@ -65,12 +65,22 @@ B1_2G=02:a1:00:00:01:00
 B1_5G=02:a1:00:00:01:01
 B2_5G=02:a1:00:00:02:01
 
+# Low-power classification is off while testing, except in S15: the test
+# STA only ever sends small uplink frames, which is a sensor's traffic
+# shape, and a class learned over hours of uptime would keep it out of
+# automatic steering (S5, S7). Both daemons are stopped before either
+# starts, so no class record survives in a peer's table.
+SYSTEST_CONF='printf "steer_cooldown_ms 3000\nlog_debug steer,amon\nlp_classify 0\n" >> /etc/donghoa.conf'
+
 setup() {
 	for n in 1 2; do
 		rv $n 'cp /etc/donghoa.conf /tmp/donghoa.conf.systest
 cp /etc/config/wireless /tmp/wireless.systest
-printf "steer_cooldown_ms 3000\nlog_debug steer,amon\n" >> /etc/donghoa.conf
-restart' || return 1
+'"$SYSTEST_CONF"'
+/etc/init.d/donghoa stop' || return 1
+	done
+	for n in 1 2; do
+		rv $n 'restart' || return 1
 	done
 }
 
@@ -233,7 +243,7 @@ s13() {
 	rv 2 'sed -i "s/^key .*/key hex:ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100/" /etc/donghoa.conf; restart' >/dev/null
 	sleep 10
 	mid=$(rv 1 'echo "lost=$(since '"$m13"' | grep -c "lost") peers=$(donghoa_cli $C PEERS | grep -c "^peer") nr=$(nrcount ap-2g)"')
-	rv 2 'cp /tmp/donghoa.conf.systest /etc/donghoa.conf; printf "steer_cooldown_ms 3000\nlog_debug steer,amon\n" >> /etc/donghoa.conf; restart' >/dev/null
+	rv 2 'cp /tmp/donghoa.conf.systest /etc/donghoa.conf; '"$SYSTEST_CONF"'; restart' >/dev/null
 	end=$(rv 1 'i=0; until donghoa_cli $C PEERS | grep -q "^peer"; do i=$((i+1)); [ $i -ge 20 ] && break; sleep 1; done
 sleep 3; echo "peers=$(donghoa_cli $C PEERS | grep -c "^peer") nr=$(nrcount ap-2g)"')
 	echo "$mid" | grep -q "lost=1 peers=0 nr=1" && echo "$end" | grep -q "peers=1 nr=3"
@@ -273,7 +283,7 @@ s15() {
 	# stay normal (an idle poll is no evidence); uplink-only traffic (ARP
 	# requests for an address nobody has, no reply) makes it low-power, and
 	# the class reaches AP2.
-	out=$(rv 1 'printf "lp_threshold 4\nlp_hysteresis 1\nlp_min_samples 3\n" >> /etc/donghoa.conf; restart; waitlink
+	out=$(rv 1 'printf "lp_classify 1\nlp_threshold 4\nlp_hysteresis 1\nlp_min_samples 3\n" >> /etc/donghoa.conf; restart; waitlink
 m=S15-$$; mark $m; sleep 10
 echo "idle=$(donghoa_cli $C STAS | grep "^sta '"$STA"'" | grep -o "class=[a-z-]*")"
 ip addr add 10.99.0.2/24 dev sta0
@@ -285,7 +295,7 @@ kill %1 2>/dev/null; ip addr del 10.99.0.2/24 dev sta0')
 	peer=$(rv 2 'donghoa_cli $C DEVCLASS | grep "'"$STA"'" | grep -o "class=[a-z-]*"')
 	# Forget the class on both APs (each would hand it back to the other).
 	rv 2 '/etc/init.d/donghoa stop' >/dev/null
-	rv 1 'sed -i "/^lp_threshold 4$/d; /^lp_hysteresis 1$/d; /^lp_min_samples 3$/d" /etc/donghoa.conf; restart' >/dev/null
+	rv 1 'sed -i "/^lp_classify 1$/d; /^lp_threshold 4$/d; /^lp_hysteresis 1$/d; /^lp_min_samples 3$/d" /etc/donghoa.conf; restart' >/dev/null
 	rv 2 'restart' >/dev/null
 	echo "$out" | grep -q "idle=class=normal" && echo "$out" | grep -q "busy=class=low-power" &&
 		[ "$peer" = "class=low-power" ]

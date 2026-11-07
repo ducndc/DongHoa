@@ -89,7 +89,12 @@ struct PolicyConfig {
 
 	bool amonRequest{true};  // ask peers' air monitors during MEASURE
 	int amonDurationMs{1000};
-	int amonRssiOffset{0};  // dB added to monitor (uplink) RSSI
+	int amonRssiOffset{0};  // dB added to monitor (uplink) RSSI until learned
+	// Learn the uplink -> downlink offset per BSS from STAs measured both
+	// ways (11k report and AP-side level of the same BSS), and use it
+	// instead of amon_rssi_offset once a BSS has this many samples.
+	bool amonOffsetLearn{true};
+	int amonOffsetMinSamples{3};
 
 	// Low-power (IoT) device classification from traffic behaviour:
 	// S = alpha(band) x sigma_up / sigma_down over the connection; theta

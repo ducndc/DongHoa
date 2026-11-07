@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.2, 2026-11-07 (history in Appendix B) |
+| Document version | 2.3, 2026-11-07 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -142,7 +142,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
-| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
+| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
 | IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
@@ -279,7 +279,8 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-AMN-3 | An AP receiving STA_MONITOR_REQ shall watch the STA for the requested duration (`amon_duration_ms`, 1000 ms by default, at most 5 s), averaging the dBm signal of its frames per frequency on its monitors and starting the driver per-STA RSSI measurement on each BSS that supports it (`sta_rssi_api`). It shall then send STA_MONITOR_REPORT with one STA_MONITOR_RESULT per local BSS (up) that heard the STA (the driver's value for a BSS, else the monitor's on the BSS's frequency) and a STA_MONITOR_STATUS (measured / not heard / failed). An AP that cannot measure (no monitor and no supported driver API: unsupported; 16 watches running: busy; driver error: failed) shall send the report with only the status at once. | T-U, T-I 5, 11, T-O |
 | FR-AMN-7 | The source AP shall end MEASURE as soon as every peer owning a candidate (and its own watch) has sent its STA_MONITOR_STATUS and no 802.11k report is pending; at the MEASURE timeout it shall log each AP that has not answered and treat it as unable to measure. | T-I 11 |
 | FR-AMN-8 | The driver per-STA RSSI API shall sit behind `src/vendor_rssi.hpp` (supported?, start, read, stop; non-blocking). Until the chipset vendor's API is documented, the implementation shall report unsupported; a file-backed simulation (`sta_rssi_sim`) shall stand in for tests. | T-I 11 |
-| FR-AMN-4 | The source AP shall use a monitor result (≤ 10 s old, plus `amon_rssi_offset`) as a candidate's level only when the STA gave no 802.11k report for that candidate. | T-I 5 |
+| FR-AMN-4 | The source AP shall use a monitor result (≤ 10 s old, converted to a downlink level per FR-AMN-9) as a candidate's level only when the STA gave no 802.11k report for that candidate. | T-I 5, 16 |
+| FR-AMN-9 | With `amon_offset_learn` on, the source AP shall learn, per BSS, the offset between a STA's 802.11k level of the BSS (downlink) and the BSS's AP-side level of that STA (uplink) from pairs measured within 5 s of each other, each measurement used once: cumulative mean of the first 8 samples, then EWMA 1/8; a pair whose difference exceeds 30 dB, or (once calibrated) lies more than 12 dB from the mean, shall be rejected. A BSS with at least `amon_offset_min_samples` samples shall convert AP-side levels with its learned offset, otherwise with `amon_rssi_offset`. `CALIB` shall list the learned offsets. | T-U, T-I 16 |
 | FR-AMN-5 | A refused or unanswered Beacon Request shall not end MEASURE while monitor reports are pending. MEASURE shall end early when every candidate has an 11k report, or, once no 11k report is pending, when every candidate has any measurement; otherwise at max(`beacon_req_timeout_ms`, `amon_duration_ms` + 500 ms). | T-I 5 |
 | FR-AMN-6 | Without monitors on any candidate AP, steering behaviour shall be unchanged. | T-I 1–4, 6 |
 
@@ -423,7 +424,8 @@ measurement timeout.
 | `beacon_mode` / `beacon_duration` | 1 (active) / 50 | 0 passive, 1 active, 2 table / TU |
 | `assume_kvr` | 1 | treat STAs as 11k/v/r capable unless shown otherwise |
 | `air_monitor` / `air_monitor_sim` | — | Monitor interface, repeatable (≤ 4) / UDP test input |
-| `amon_request` / `amon_duration_ms` / `amon_rssi_offset` | 1 / 1000 / 0 | bool / ms / dB |
+| `amon_request` / `amon_duration_ms` / `amon_rssi_offset` | 1 / 1000 / 0 | bool / ms / dB (used until a BSS's offset is learned) |
+| `amon_offset_learn` / `amon_offset_min_samples` | 1 / 3 | bool / samples |
 | `sta_rssi_api` / `sta_rssi_sim` | 0 / — | measure STAs with the driver's per-STA RSSI API / test: simulated driver file (implies `sta_rssi_api 1`) |
 | `score_model` / `tput_rssi_mid` / `tput_gain_pct` / `sta_nss` | 0 (linear) / −72 / 150 / 2 | 0 linear, 1 expected throughput / dBm / % / streams |
 | `lp_classify` / `lp_no_steer` | 1 / 1 | low-power classification / keep low-power STAs out of automatic steering |
@@ -449,3 +451,4 @@ measurement timeout.
 | 2.0 | 2026-11-06 | FR-TRG-1: only fresh signal samples count (idle STA); FR-STR-3: MEASURE's 11k part ends after a quiet period following the last report; STATUS shows each BSS's utilisation source (`util_src`) |
 | 2.1 | 2026-11-06 | FR-TRG-3: load-balancing feedback and pause (`lb_min_drop_pct`, `lb_max_futile`, `lb_hold_ms`); NFR-PRF-4: per-STA metrics from nl80211 station dumps, hostapd listing every 10 s |
 | 2.2 | 2026-11-07 | NFR-CAP-1: 16 local BSSes and 16 per peer (was 8); `bss` lines beyond the limit ignored with a warning instead of a fatal error; NFR-CAP-2 re-measured (391,424 bytes) |
+| 2.3 | 2026-11-07 | New FR-AMN-9 (uplink/downlink offset learned per BSS); FR-AMN-4 uses it; IR-3: `CALIB`; keys `amon_offset_learn`, `amon_offset_min_samples` |

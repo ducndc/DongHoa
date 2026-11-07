@@ -159,8 +159,8 @@ int Daemon::countReservations(std::size_t bss, Millis now) const noexcept
 	return n;
 }
 
-void Daemon::storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_t rcpi,
-			std::uint8_t opClass, std::uint8_t channel, Millis ts) noexcept
+Measurement &Daemon::storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_t rcpi,
+				      std::uint8_t opClass, std::uint8_t channel, Millis ts) noexcept
 {
 	Measurement *e = nullptr;
 	for (std::size_t i = 0U; (i < s.nMeas) && (e == nullptr); i++) {
@@ -187,12 +187,15 @@ void Daemon::storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_
 	e->opClass = opClass;
 	e->channel = channel;
 	e->ts = ts;
+	e->ulDbm = 0;
+	e->paired = false; // a new value: usable for calibration again
 	// A level on a band proves the STA can use it.
 	const std::uint8_t bit = rrm::opClassBandBit(opClass);
 	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | bit);
 	if ((bit & (rrm::BANDS_5G | rrm::BANDS_6G)) != 0U) {
 		s.bandEmpty = 0;
 	}
+	return *e;
 }
 
 // ---- transaction end ----
@@ -853,7 +856,8 @@ void Daemon::onBeaconReport(Sta &s, const std::optional<rrm::BeaconReport> &r) n
 	SteerTxn *const t = findTxnBySta(s.addr);
 
 	if (r.has_value()) {
-		storeMeasurement(s, r->bssid, MeasSrc::STA_11K, r->rcpi, r->opClass, r->channel, os::nowMs());
+		(void)storeMeasurement(s, r->bssid, MeasSrc::STA_11K, r->rcpi, r->opClass, r->channel, os::nowMs());
+		pairUlDl(s, r->bssid);
 	}
 	if ((t == nullptr) || (t->state != SteerState::MEASURE)) {
 		return;

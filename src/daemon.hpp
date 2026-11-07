@@ -36,6 +36,7 @@ constexpr std::size_t MAX_CAND = 16U;
 constexpr std::size_t MAX_WATCH = 16U;
 constexpr std::size_t WATCH_FREQS = 4U;
 constexpr std::size_t MAX_DEV_CLASS = 512U;
+constexpr std::size_t MAX_CAL = 64U; // BSSes with a learned uplink/downlink offset
 
 // ---- local side ----
 
@@ -85,6 +86,8 @@ struct Measurement {
 	std::uint8_t channel{0U};
 	MeasSrc src{MeasSrc::STA_11K};
 	Millis ts{0U};
+	std::int8_t ulDbm{0}; // AIR_MONITOR: the uplink level as measured (before the offset)
+	bool paired{false};   // already used as an uplink/downlink calibration sample
 };
 
 // One link of an MLD STA: the local BSS (an AP MLD link) it is on.
@@ -297,6 +300,16 @@ struct AmonWatch {
 std::string_view steerStateName(SteerState s) noexcept;
 // Behaviour score S x 100 as "1.25", "inf" or "-" (no evidence).
 void formatScore(FixedString<16U> &out, int s100) noexcept;
+// Offset x 16 as "+8.0" / "-3.5" (dB).
+void formatOffset16(FixedString<16U> &out, int offset16) noexcept;
+
+// Learned uplink -> downlink offset of one BSS (amon.cpp).
+struct UlDlCal {
+	bool used{false};
+	Mac bssid{};
+	policy::UlDlOffset off{};
+	Millis ts{0U}; // last sample
+};
 
 // Replay window: true if (bootId, msgId) is new for p, and records it.
 bool acceptPeerSeq(Peer &p, std::uint32_t bootId, std::uint32_t msgId) noexcept;
@@ -364,8 +377,12 @@ public:
 	void onMonitorResult(Sta &s) noexcept;
 	int countReservations(std::size_t bss, Millis now) const noexcept;
 	SteerTxn *findTxnBySta(const Mac &sta) noexcept;
-	static void storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_t rcpi,
-			       std::uint8_t opClass, std::uint8_t channel, Millis ts) noexcept;
+	static Measurement &storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_t rcpi,
+					     std::uint8_t opClass, std::uint8_t channel, Millis ts) noexcept;
+	// Uplink/downlink calibration: a STA has both an 11k and an AP-side level
+	// of bssid, close in time and not used yet -> one sample (amon.cpp).
+	void pairUlDl(Sta &s, const Mac &bssid) noexcept;
+	const UlDlCal *findCal(const Mac &bssid) const noexcept;
 
 	// ---- amon.cpp ----
 	void initAmon() noexcept;
@@ -475,6 +492,7 @@ private:
 	std::size_t mNAmon{0U};
 	std::array<AmonWatch, MAX_WATCH> mWatch{};
 	std::array<DevClassRec, MAX_DEV_CLASS> mDevClass{};
+	std::array<UlDlCal, MAX_CAL> mCal{};
 
 	os::Fd mCtrlFd{};
 

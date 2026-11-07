@@ -283,7 +283,69 @@ def scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2):
           "measured STA steered to the AP that heard it")
 
 
+STA20_MAC = "aa:bb:cc:dd:ee:20"  # S16: 11k STA measured both ways (calibration source)
+STA21_MAC = "aa:bb:cc:dd:ee:21"  # S16: no 11k, scored with the learned offset
 STA18_MAC = "aa:bb:cc:dd:ee:18"  # S13: weak signal, but idle (old frame) until it sends again
+
+
+def scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port):
+    """S16: AP1 learns the uplink -> downlink offset of AP2's BSS from a STA
+    measured both ways (its 11k report: -55 dBm; AP2's monitor hearing it:
+    -63 dBm; +8 dB), then scores a STA without 11k, heard by AP2 at
+    -70 dBm, at -62 dBm instead of -70."""
+    mark(logs, "S16 uplink/downlink offset learned per BSS")
+    src = Sta(STA20_MAC, -50, {B2: (124, 149, -55)}, rrm={0}, btm_accept=False)
+    stop = threading.Event()
+    levels = {STA20_MAC: -63}
+
+    def inject():
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        while not stop.is_set():
+            for mac, sig in list(levels.items()):
+                sk.sendto(radiotap_data(mac, B1, 5745, sig), ("127.0.0.1", mon_port))
+            time.sleep(0.05)
+        sk.close()
+
+    th = threading.Thread(target=inject, daemon=True)
+    th.start()
+    try:
+        with world.lock:
+            ap1.add_sta(src)
+        log1 = lambda: open(logs[0].name).read().split("=== S16")[-1]
+        learned = lambda: B2 + ": uplink/downlink offset learned: +8.0 dB" in log1()
+        # Polled first (flags=kvr), so each steer sends an 11k request.
+        wait_for(lambda: "flags=kvr" in next((l for l in cli(socks[0], "STAS").splitlines()
+                                             if l.startswith("sta " + STA20_MAC)), ""), 3, "STA20 tracked")
+        # One steer per sample: its AP-side result arrives after the 1 s watch,
+        # and each measurement may count once (a burst of steers is one sample).
+        samples = lambda: log1().count("ul/dl sample " + B2)
+        for i in range(6):
+            if learned():
+                break
+            n = samples()
+            wait_for(lambda: "OK" in cli(socks[0], "STEER", STA20_MAC, B2), 5, "STEER accepted")
+            wait_for(lambda: samples() > n, 5, "paired sample %d" % (i + 1))
+        wait_for(learned, 3, "AP1 to learn +8 dB")
+        assert log1().count("ul/dl sample " + B2) == 3, "learned from exactly 3 paired samples"
+        calib = cli(socks[0], "CALIB")
+        line = next((l for l in calib.splitlines() if l.startswith("calib " + B2)), "")
+        assert "offset=+8.0dB" in line and "used=yes" in line, calib
+        # A STA without 11k, heard by AP2 at -70 dBm: downlink estimate -62.
+        with world.lock:
+            ap1.remove_sta(STA20_MAC)
+            levels.pop(STA20_MAC)
+            levels[STA21_MAC] = -70
+            ap1.add_sta(Sta(STA21_MAC, -85, {}, rrm=False))
+        wait_for(lambda: any(t[0] == B1 and t[1] == STA21_MAC and t[2] == B2 for t in world.btm_log), 15,
+                 "BTM for STA21 towards AP2")
+        assert "cand " + B2 + " rssi -62 (air monitor)" in log1(), "scored with uplink -70 + learned +8"
+        wait_for(lambda: STA21_MAC in ap2.stas, 3, "STA21 to roam to AP2")
+    finally:
+        stop.set()
+    with world.lock:
+        ap2.remove_sta(STA21_MAC)
+    print("PASS 16: uplink/downlink offset learned per BSS (+8 dB from 3 paired measurements); "
+          "STA without 11k scored at uplink + offset")
 
 
 def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
@@ -601,6 +663,7 @@ def main():
             print("SKIP 7, 8, 9: band steering and MLO scenarios assume score_model 0 (20 MHz mock BSSes)")
             scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_many_bss(world, procs, logs, tmp, base)
@@ -703,6 +766,7 @@ def main():
         print("PASS 9: MLO: one entry per MLD STA, no band steer onto its own link, roam only when all links are weak")
         scenario_low_power(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_many_bss(world, procs, logs, tmp, base)

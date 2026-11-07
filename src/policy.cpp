@@ -161,6 +161,38 @@ bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept
 	return (pollMs <= 0) || (inactiveMs < static_cast<std::uint32_t>(pollMs));
 }
 
+bool isUlDlCalibrated(const PolicyConfig &p, const UlDlOffset &o) noexcept
+{
+	const std::uint32_t need = (p.amonOffsetMinSamples < 1) ? 1U : static_cast<std::uint32_t>(p.amonOffsetMinSamples);
+	return p.amonOffsetLearn && (o.n >= need);
+}
+
+bool addUlDlSample(const PolicyConfig &p, UlDlOffset &o, int downlinkDbm, int uplinkDbm) noexcept
+{
+	const int delta = downlinkDbm - uplinkDbm;
+	bool ok = (downlinkDbm < 0) && (uplinkDbm < 0) && (delta <= ULDL_MAX_DELTA) && (delta >= -ULDL_MAX_DELTA);
+	if (ok && isUlDlCalibrated(p, o)) {
+		const int dev = (16 * delta) - o.offset16;
+		ok = (dev <= (16 * ULDL_OUTLIER)) && (dev >= -(16 * ULDL_OUTLIER));
+	}
+	if (ok) {
+		const std::uint32_t div = (o.n < ULDL_AVG_N) ? (o.n + 1U) : ULDL_AVG_N;
+		o.offset16 += ((16 * delta) - o.offset16) / static_cast<int>(div);
+		o.n++;
+	}
+	return ok;
+}
+
+int uplinkToDownlink(const PolicyConfig &p, const UlDlOffset *o, int uplinkDbm) noexcept
+{
+	int off = p.amonRssiOffset;
+	if ((o != nullptr) && isUlDlCalibrated(p, *o)) {
+		// round x16 to the nearest dB, symmetric around 0
+		off = (o->offset16 >= 0) ? ((o->offset16 + 8) / 16) : -(((-o->offset16) + 8) / 16);
+	}
+	return uplinkDbm + off;
+}
+
 bool isBandTriggered(const PolicyConfig &p, std::uint8_t band, int rssi) noexcept
 {
 	const bool from2g = (band == arcp::BAND_2G) && (rssi >= p.bandSteerRssi);

@@ -24,6 +24,8 @@ namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::AMON};
 constexpr int MAX_DURATION_MS = 5000;
+// An 11k and an AP-side level further apart than this are not one sample.
+constexpr Millis ULDL_PAIR_MS = 5000U;
 
 } // namespace
 
@@ -280,11 +282,98 @@ void Daemon::onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noex
 
 	logging::info(LOG_MODULE, "{} heard by {} (AP {}): {} dBm, {} samples", r.sta, r.bssid, from, r.rssi, r.samples);
 	if ((s != nullptr) && (bi != nullptr)) {
-		storeMeasurement(*s, r.bssid, MeasSrc::AIR_MONITOR,
-			   rrm::dbmToRcpi(static_cast<int>(r.rssi) + mCfg.pol.amonRssiOffset), bi->opClass,
-			   bi->channel, os::nowMs() - r.ageMs);
+		// Uplink -> downlink: this BSS's learned offset, else amon_rssi_offset.
+		const UlDlCal *const cal = findCal(r.bssid);
+		const int dl = policy::uplinkToDownlink(mCfg.pol, (cal != nullptr) ? &cal->off : nullptr,
+							static_cast<int>(r.rssi));
+		Measurement &m = storeMeasurement(*s, r.bssid, MeasSrc::AIR_MONITOR, rrm::dbmToRcpi(dl), bi->opClass,
+						  bi->channel, os::nowMs() - r.ageMs);
+		m.ulDbm = r.rssi;
+		pairUlDl(*s, r.bssid);
 		onMonitorResult(*s);
 	}
+}
+
+const UlDlCal *Daemon::findCal(const Mac &bssid) const noexcept
+{
+	const UlDlCal *r = nullptr;
+	for (const UlDlCal &c : mCal) {
+		if ((r == nullptr) && c.used && (c.bssid == bssid)) {
+			r = &c;
+		}
+	}
+	return r;
+}
+
+void Daemon::pairUlDl(Sta &s, const Mac &bssid) noexcept
+{
+	const Millis now = os::nowMs();
+	Measurement *dl = nullptr;
+	Measurement *ul = nullptr;
+
+	if (!mCfg.pol.amonOffsetLearn) {
+		return;
+	}
+	for (std::size_t i = 0U; i < s.nMeas; i++) {
+		Measurement &m = s.meas[i];
+		if ((m.bssid != bssid) || m.paired || ((now - m.ts) > ULDL_PAIR_MS)) {
+			continue;
+		}
+		if (m.src == MeasSrc::STA_11K) {
+			dl = &m;
+		} else if (m.ulDbm != 0) {
+			ul = &m;
+		} else {
+			// AP-side level without its raw uplink value
+		}
+	}
+	if ((dl == nullptr) || (ul == nullptr)) {
+		return;
+	}
+	const Millis gap = (dl->ts > ul->ts) ? (dl->ts - ul->ts) : (ul->ts - dl->ts);
+	if (gap > ULDL_PAIR_MS) {
+		return;
+	}
+	dl->paired = true; // each value counts once
+	ul->paired = true;
+	UlDlCal *c = nullptr;
+	UlDlCal *spare = nullptr; // a free slot, else the least recently updated
+	for (UlDlCal &x : mCal) {
+		if (x.used && (x.bssid == bssid)) {
+			c = &x;
+		} else if ((spare != nullptr) && !spare->used) {
+			// keep the free slot
+		} else if ((spare == nullptr) || !x.used || (x.ts < spare->ts)) {
+			spare = &x;
+		} else {
+			// an older entry is already the spare
+		}
+	}
+	if (c == nullptr) {
+		c = spare;
+		*c = UlDlCal{};
+		c->used = true;
+		c->bssid = bssid;
+	}
+	const int down = rrm::rcpiToDbm(dl->rcpi);
+	const bool wasCal = policy::isUlDlCalibrated(mCfg.pol, c->off);
+	const bool ok = policy::addUlDlSample(mCfg.pol, c->off, down, static_cast<int>(ul->ulDbm));
+	c->ts = now;
+	FixedString<16U> off;
+	formatOffset16(off, c->off.offset16);
+	logging::dbg(LOG_MODULE, "ul/dl sample {} sta {}: downlink {} uplink {} -> {} dB{}, offset {} ({} samples)", bssid,
+		     s.addr, down, ul->ulDbm, down - static_cast<int>(ul->ulDbm), ok ? "" : " (outlier, dropped)", off,
+		     c->off.n);
+	if (!wasCal && policy::isUlDlCalibrated(mCfg.pol, c->off)) {
+		logging::info(LOG_MODULE, "{}: uplink/downlink offset learned: {} dB ({} samples)", bssid, off, c->off.n);
+	}
+}
+
+void formatOffset16(FixedString<16U> &out, int offset16) noexcept
+{
+	const int a = (offset16 < 0) ? -offset16 : offset16;
+	const int tenths = ((a * 10) + 8) / 16; // rounded to 0.1 dB
+	formatTo(out, "{}{}.{}", (offset16 < 0) ? "-" : "+", tenths / 10, tenths % 10);
 }
 
 void Daemon::onAmonStatus(const Mac &from, const arcp::StaMonitorStatus &r) noexcept

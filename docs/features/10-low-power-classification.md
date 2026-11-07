@@ -166,6 +166,15 @@ Log: `sta … classified low-power (score 61/60, S inf, 70 samples)`,
 
 ## Limitations
 
+- A STA that only ever sends small uplink frames and receives nothing (no
+  downlink at all, as the QEMU test STA does) collects evidence on each such
+  poll and nothing takes it away: after hours it can turn low-power, and the
+  shared record then keeps it there across AP restarts unless every AP is
+  stopped at once. The QEMU system test turns classification off outside S15
+  for this reason. A magnitude floor per evidence poll or a slow decay of θ
+  would address it; both need a decision on UDP-only sensors, which also
+  send uplink only.
+
 - Thresholds and α are not calibrated on real IoT devices (SDD R16).
 - A streaming camera exceeds the default rate gate and is not classified.
 - A class that is already wrong stays wrong while the STA is idle; it clears

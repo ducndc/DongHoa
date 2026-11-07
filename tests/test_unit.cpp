@@ -1050,6 +1050,37 @@ void testLowPower()
 		CHECK(parseConfigLine(c, "lb_hold_ms 60000") && (c.pol.lbHoldMs == 60000));
 		CHECK(parseConfigLine(c, "lb_min_drop_pct 5") && (c.pol.lbMinDropPct == 5));
 	}
+	// uplink -> downlink offset learning
+	{
+		PolicyConfig q; // learn on, 3 samples, amon_rssi_offset 0
+		policy::UlDlOffset o;
+		CHECK(policy::uplinkToDownlink(q, &o, -70) == -70);     // nothing learned: global offset
+		q.amonRssiOffset = 2;
+		CHECK(policy::uplinkToDownlink(q, nullptr, -70) == -68);
+		q.amonRssiOffset = 0;
+		CHECK(policy::addUlDlSample(q, o, -55, -63)); // +8
+		CHECK(policy::addUlDlSample(q, o, -56, -63)); // +7
+		CHECK(!policy::isUlDlCalibrated(q, o));
+		CHECK(policy::uplinkToDownlink(q, &o, -70) == -70);     // 2 samples: not used yet
+		CHECK(policy::addUlDlSample(q, o, -54, -63)); // +9
+		CHECK(policy::isUlDlCalibrated(q, o) && (o.n == 3U));
+		CHECK(o.offset16 == 128);                               // cumulative mean +8.0
+		CHECK(policy::uplinkToDownlink(q, &o, -70) == -62);
+		CHECK(!policy::addUlDlSample(q, o, -40, -63));          // +23: 15 dB from the mean, outlier
+		CHECK(o.n == 3U);
+		CHECK(!policy::addUlDlSample(q, o, -20, -60));          // +40: not one link
+		CHECK(!policy::addUlDlSample(q, o, 0, -60));            // no level
+		policy::UlDlOffset neg;
+		for (int i = 0; i < 20; i++) {
+			(void)policy::addUlDlSample(q, neg, -66, -62);  // -4
+		}
+		CHECK((neg.offset16 == -64) && (policy::uplinkToDownlink(q, &neg, -60) == -64));
+		q.amonOffsetLearn = false;                               // learning off: global offset
+		CHECK(policy::uplinkToDownlink(q, &o, -70) == -70);
+		Config c;
+		CHECK(parseConfigLine(c, "amon_offset_learn 0") && !c.pol.amonOffsetLearn);
+		CHECK(parseConfigLine(c, "amon_offset_min_samples 5") && (c.pol.amonOffsetMinSamples == 5));
+	}
 	// signal freshness: only a frame within the last poll counts
 	CHECK(policy::isSignalFresh(0U, 1000));     // hostapd gave no inactive_msec
 	CHECK(policy::isSignalFresh(999U, 1000));
