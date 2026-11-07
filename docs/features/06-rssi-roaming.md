@@ -116,9 +116,10 @@ trigger      rssi < threshold(s) and lowCount ≥ rssi_low_count
 
 ## Learned decision (Q-learning)
 
-With `rl_roam 2` the decision *when* to steer comes from a learned Q-table
-instead of the rule above; by default (`rl_roam 1`) the table only learns
-from the rule's decisions. See [feature 15](15-rl-roaming.md).
+Q-learning is off by default. With `rl_roam 2` (or `RL mode 2` at run time)
+the decision *when* to steer comes from a learned Q-table instead of the
+rule above; with `rl_roam 1` the table only learns from the rule's
+decisions. See [feature 15](15-rl-roaming.md).
 
 ## Choosing the target
 

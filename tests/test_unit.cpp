@@ -515,7 +515,7 @@ void testPolicy()
 		CHECK(policy::rlRewardSteer(arcp::SteerOutcome::ABORTED, 0) == 0);
 		CHECK((policy::rlRewardWait(-65) == 0) && (policy::rlRewardWait(-82) == -3) && (policy::rlRewardWait(0) == 0));
 		Config c;
-		CHECK(c.pol.rlRoam == 1); // shadow by default
+		CHECK(c.pol.rlRoam == 0); // off by default; rl_roam or RL mode enables it
 		CHECK(parseConfigLine(c, "rl_roam 2") && (c.pol.rlRoam == 2) && !parseConfigLine(c, "rl_roam 3"));
 	}
 	// per-STA roaming threshold

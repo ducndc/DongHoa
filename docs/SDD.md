@@ -532,7 +532,7 @@ are released in `onStaEvent` (association at this AP), in
   builds `policy::RlFeatures` on a fresh sample (`Sta::sampleFresh`,
   `rssiPrev` from `applyStaSignal`), closes a pending WAIT with
   `rlRewardWait` (next = the new state), and records a decision below −60
-  dBm. Shadow: the rule's decision; active: `rlChoose` on `mRl` (432 × 2
+  dBm (off by default: `rl_roam` 0, or `RL mode 0`). Shadow: the rule's decision; active: `rlChoose` on `mRl` (432 × 2
   values ×256, prior from `rlInit` at start). A STEER passes its state to
   the transaction through `mRlNextArmed`/`mRlNextState` (copied in
   `startSteer`, because a steer can end inside it); `endTxn` and

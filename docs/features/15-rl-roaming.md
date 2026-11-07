@@ -17,10 +17,15 @@ from what actually happens afterwards, the value of *waiting* versus
 It is built for an embedded AP: a few hundred states, integer arithmetic,
 one fixed table, learning from the tens of decisions a day an AP sees.
 
+Q-learning is **off by default**. Enable it in the configuration file
+(`rl_roam 1` or `rl_roam 2`) or at run time, without a restart:
+`donghoa_cli <sock> RL mode 1` (shadow) or `RL mode 2` (active);
+`RL mode 0` turns it off again (the table is kept).
+
 | Mode (`rl_roam`) | Behaviour |
 |---|---|
-| 0 off | rule only |
-| **1 shadow** (default) | the rule decides; the table learns from every decision the rule makes and its outcome, without changing behaviour |
+| **0 off** (default) | rule only; nothing is learned |
+| 1 shadow | the rule decides; the table learns from every decision the rule makes and its outcome, without changing behaviour. The recommended first step on a new network |
 | 2 active | the table decides WAIT / STEER on each fresh sample; small exploration in safe states |
 
 ## Data flow
@@ -124,14 +129,16 @@ sequenceDiagram
 
 | Key | Default | Meaning |
 |---|---|---|
-| `rl_roam` | 1 | 0 off, 1 shadow, 2 active |
+| `rl_roam` | 0 | 0 off, 1 shadow, 2 active (also `RL mode <n>` at run time) |
 | `rl_epsilon_pct` | 1 | Exploration in active mode (0–100) |
 
 ## Observability
 
 ```
 donghoa_cli <sock> RL
-  rl mode=shadow epsilon=1% decisions=… steers=… explored=… updates=…
+  rl mode=off epsilon=1% decisions=0 steers=0 explored=0 updates=0      # default
+donghoa_cli <sock> RL mode 1     # enable: shadow (learn only)
+  OK mode shadow
   q 313 rssi=-75..-80 trend=stable gap=unknown refusals=0 streak=1 wait=+0.0 steer=-10.0 n=0/1 greedy=wait
 donghoa_cli <sock> RL mode 2     # switch at run time (no restart, table kept)
 donghoa_cli <sock> RL reset      # back to the rule-based prior
@@ -145,10 +152,13 @@ Only visited states are listed; the others still hold the prior.
 - Unit: every feature combination maps to a distinct state; the prior equals
   the rule; exploration never steers in unsafe states; first-visit and
   converged updates; discounted non-terminal update; rewards; config ranges.
-- itest PASS 18 (shadow learning, active waiting then steering, learning from
-  the success); fails if active mode ignores the table. All other scenarios
-  run in shadow mode, which shows that shadow learning changes no behaviour.
-- systest: 16/16 with shadow learning on.
+- itest PASS 18 (enabled with `RL mode 1`, shadow learning, active waiting
+  then steering, learning from the success, `RL mode 0` again); fails if
+  active mode ignores the table.
+- The whole itest also passes with `DONGHOA_ITEST_EXTRA="rl_roam 1"` (every
+  scenario with shadow learning on), which shows that shadow learning changes
+  no behaviour.
+- systest: 16/16 (Q-learning off, the default).
 
 ## Limitations and next steps
 
