@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.6, 2026-11-07 (history in Appendix B) |
+| Document version | 2.7, 2026-11-07 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -90,8 +90,18 @@ interface, and it learns about STAs from hostapd's output and events.
 4. Decide when a STA should move (RSSI, band, load, or an operator command)
    and run a steering transaction that ends in a measured, admitted, standard
    transition.
-5. Admit or refuse incoming STAs on the target side, holding a reservation.
-6. Report status to the operator and accept manual steering commands.
+5. Admit or refuse incoming STAs on the target side, holding a reservation,
+   and stop offloading from a BSS when moving STAs does not lower its load.
+6. Measure STAs that give no 802.11k report from the APs' side (monitor
+   interfaces or the driver per-STA RSSI API), every AP always answering,
+   and learn the uplink → downlink offset per BSS.
+7. Recognise low-power (IoT) devices from their traffic and keep them out of
+   automatic steering; share the class between APs.
+8. Learn a roaming threshold per STA from the outcomes of its steers and its
+   own roams, shared between APs; optionally (off by default) learn when to
+   roam with a Q-table.
+9. Handle Wi-Fi 7 AP MLDs and MLD STAs as one device each.
+10. Report status to the operator and accept manual steering commands.
 
 ### 2.3 User classes
 
@@ -144,7 +154,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
 | IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
-| IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
+| IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`, `class`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
 ### 3.2 Software interfaces
 
@@ -259,7 +269,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | FR-REL-1 | STEER_REQ, STEER_RESP and STEER_RESULT shall be sent unicast with ACK_REQ. They shall be retransmitted every 300 ms with the same `msg_id` until acknowledged, for at most 4 transmissions in total. | I |
-| FR-REL-2 | The receiver shall acknowledge every copy of an ACK_REQ message, duplicates included, and process each message once. Duplicates shall be detected with a 64-entry sliding window over `msg_id` per peer and boot. | I (no automated test, see §7) |
+| FR-REL-2 | The receiver shall acknowledge every copy of an ACK_REQ message, duplicates included, and process each message once. Duplicates shall be detected with a 64-entry sliding window over `msg_id` per peer and boot. | T-U `test_replay_window` |
 | FR-REL-3 | A node with several ports shall send multicast on all of them. Unicast to a peer shall use the port and source address that delivered that peer's most recent new (non-duplicate) message. Unicast thereby fails over between wired and Wi-Fi backhaul. | I |
 
 ### 4.10 Security (SEC)
@@ -321,19 +331,21 @@ The method is defined in `docs/PROTOCOL.md` §8.
 | NFR-PRF-4 | Every blocking call shall be bounded: hostapd command ≤ 1 s. Per-STA metrics (signal, signal average, inactivity, byte counters, rates) shall come from an nl80211 station dump per BSS, read from the main loop without waiting, with a full hostapd `STA-FIRST`/`STA-NEXT` listing only every 10 s (capabilities, missed events), for a STA seen for the first time (`STA <addr>`), for AP MLD links, and as fallback when nl80211 is unavailable or two dumps in a row do not complete; `STATUS` shall show the source per BSS (`sta_src`). The nl80211 survey shall not wait for its reply (it is read from the main loop) and shall be abandoned after 1 s; it shall run once per radio per poll, whatever the number of BSSes on the radio, and the time spent in the driver per dump shall be measured and reported in `STATUS`. | I, T-O |
 
 Measured, not required (hwsim on QEMU): a local band steer, from trigger to
-association, took 397–407 ms. A cross-AP STEER_REQ → STEER_RESP round trip
-took about 1 ms. A manual steer with the single multi-channel Beacon Request
-(serving + target channel in one measurement) took 720 ms. A band steer under
-the throughput model took 1.8 s, of which 1.5 s was the measurement timeout
-because one candidate (a remote AP) could not be heard by the STA (SDD R11).
+association, took 377–410 ms. A cross-AP STEER_REQ → STEER_RESP round trip
+took about 1 ms. A band steer with a remote candidate the STA cannot hear
+took 0.76–0.85 s: MEASURE ends 302 ms after the last beacon report (quiet
+period, FR-STR-3) instead of at the 1.5 s timeout (1.78 s before). Per-STA
+metrics: one nl80211 station dump per BSS per poll, at most 110 µs in the
+kernel; 6 hostapd STA round trips per 20 s instead of one per STA per BSS
+per second.
 
 ### 5.2 Capacity and resources
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| NFR-CAP-1 | Fixed limits: 16 local BSSes (valid `bss` lines beyond 16 are ignored with a warning, the daemon still starts), 256 local STAs, 32 peers with 16 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class records. Running out of space in a table shall be logged and handled without crashing. | I |
-| NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 391,424 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
-| NFR-CAP-3 | The OpenWrt package file should stay below 64 KiB (measured: `donghoa-1.0-r5.apk`, 40.8 KB, x86-64). | T-O |
+| NFR-CAP-1 | Fixed limits: 16 local BSSes (valid `bss` lines beyond 16 are ignored with a warning, the daemon still starts), 256 local STAs, 32 peers with 16 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class / roaming records, 64 uplink/downlink calibration entries, 16 candidates per steer, 256 stations per nl80211 station dump, a 432 × 2 Q-table. Running out of space in a table shall be logged and handled without crashing. | I |
+| NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 449,352 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
+| NFR-CAP-3 | The OpenWrt package file should stay below 64 KiB. **Not met:** `donghoa-1.0-r21.apk` is 99.2 KB on x86-64 (40.8 KB at `r5`); the growth comes from the features added since (AP-side measurement, low-power classification, station dumps, learning). Build with `-Os` or split rarely used parts if the limit matters on a target | T-O |
 
 ### 5.3 Reliability and availability
 
@@ -375,27 +387,35 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
 
 ## 7. Verification matrix
 
-| Area | Automated coverage | Gaps (manual or not yet covered) |
-|---|---|---|
-| Wire format, HMAC (IR-8/9, FR-SEC-1..3) | `test_sha256`, `test_proto_roundtrip`, `test_proto_overflow`, `test_steer_tlvs`, `test_config`; itest PASS 2 | Forward-compatibility of longer TLVs (IR-10): inspection only |
-| 802.11k/v byte layouts (FR-NBR-2, FR-STR-3/6) | `test_rrm` (incl. multi-channel Beacon Request: Channel 255 + AP Channel Reports); itest PASS 1, 3 (mock parses both forms) | Real STA behaviour only in the OpenWrt procedure: single- and multi-channel requests verified with wpa_supplicant, both channels returned in one report |
-| hostapd parsers (IR-2, FR-MON-2/3) | `test_hapd_parsers` (mock format); itest | Real hostapd output: OpenWrt procedure (T-O) |
-| Discovery, neighbor DB (FR-DSC, FR-NBR) | itest PASS 1, 5 | Peer **timeout** expiry and `boot_id` restart: no test |
-| Policy (FR-POL, FR-TRG-1..3, FR-ADM-1, FR-STR-9) | `test_policy`, `test_policy_tput` (sigmoid table, peak rates, the five SDD §6.5 scenarios, hard gates in both models); itest PASS 3, 4 in both models (`DONGHOA_ITEST_EXTRA="score_model 1"`) | Calibration of the throughput model against real STAs (SDD R12) |
-| Steering flow (FR-STR) | itest PASS 3 (remote RSSI roam), PASS 4 (load), PASS 7 (local band steer, band check, band backoff), PASS 8 (2.4 → 6 GHz, WPA2-PSK kept off 6 GHz, 5 → 6 GHz) | BTM reject, timeouts, WRONG_TARGET, manual steer, band steer: OpenWrt procedure only (manual and band steer verified, BTM reject with status 7 verified; throughput model verified refusing band steering at equal width and steering to a VHT80 BSS) |
-| Reservations (FR-ADM-2/3) | itest PASS 3 (accept) | Expiry and peer-loss release: no test |
-| Reliability (FR-REL) | — | Retransmission, duplicate re-ACK, replay window, path failover: **no automated test** (`peer.cpp` and `msg.cpp` are not linked into the unit tests) |
-| Resilience (FR-MON-6, NFR-REL-1) | — | hostapd restart verified manually on OpenWrt |
-| Air monitor (FR-AMN, IR-13) | `test_air_monitor` (radiotap alignment, extended bitmaps, frame filter, TLV round trip, config); itest PASS 5 (STA without 11k, injected frames, monitor report, steer) in both scoring models | Real monitor path verified on OpenWrt/hwsim (BPF + `AF_PACKET` + parser: −27 dBm, matching the station table); cross-AP over the air not possible with hwsim; BPF program has no unit test |
-| Low-power classification (FR-LPC) | `test_low_power` (integer statistics against known variances, window halving, S per band, θ clamping, hysteresis, a sensor vs a phone trace, STA_CLASS round trip, config keys); itest PASS 10 (sensor classified and phone not, class sent to the peer, kept by a restarted peer, taken over after a roam, no automatic steer) | Real IoT devices: thresholds and α not yet calibrated; STA_CLASS loss beyond the 4 retransmissions is not retried |
-| OpenWrt service and BSSes from UCI (IR-7, IR-12) | — | OpenWrt procedure only: generated `bss` lines (names, `mdid`, `max_sta` from `maxassoc`) verified, and an interface rename via `reload_config` followed within 6 s; no automated test of the init script |
+Three automated levels: **T-U** unit tests (`make test`, pure modules),
+**T-I** integration test (`make itest`: real daemons, mock hostapd, PASS
+1–18), **T-O** the QEMU OpenWrt system test (`openwrt/qemu/systest.sh`: real
+hostapd, `mac80211_hwsim`, `wpa_supplicant`, S1–S16). Details per scenario:
+`docs/features/14-verification.md`.
 
-Recommended additions: a unit test for `acceptPeerSeq` (move it into a pure
-module); itest scenarios for peer timeout, packet loss with retransmission,
-and BTM rejection; a shell test of the init script's `bss` generation against
-fixture `ubus` output and hostapd configs; and, once SDD R11 is fixed, an
-itest check that a steer with an unmeasurable candidate does not wait for the
-measurement timeout.
+| Area | Automated coverage | Gaps |
+|---|---|---|
+| Wire format, HMAC (IR-8/9/10, FR-SEC-1..3) | T-U TLV round trips incl. longer TLVs from newer peers, overflow, HMAC vectors, config; T-I 2; T-O S13 | — |
+| Replay window, duplicates (FR-REL-2) | T-U `test_replay_window` (order, duplicates, late within the window, outside, big jump, restart) | — |
+| Retransmission, path failover, peer timeout (FR-REL-1/3, FR-DSC) | T-I 1, 6 (discovery, BYE), 10 (peer restart, SIGKILL); T-O S13 (wrong key, recovery) | Packet loss with retransmission, wired ↔ Wi-Fi failover: no test |
+| 802.11k/v byte layouts (FR-NBR-2, FR-STR-3/6) | T-U `test_rrm`; T-I 1, 3; T-O S2, S4 (real 11k/11v/11r frames) | — |
+| hostapd and nl80211 parsers (IR-2, FR-MON-2/3, NFR-PRF-4) | T-U hostapd parsers, station-dump parser (synthetic kernel messages, truncation); T-O S3, S16 | Real driver field variants beyond `mac80211_hwsim` |
+| Neighbor database (FR-NBR) | T-I 1, 6; T-O S2, S13 | — |
+| Triggers and policy (FR-TRG, FR-POL, FR-ADM-1) | T-U `test_policy`, `test_policy_tput`, freshness, per-STA threshold, Q-learning; T-I 3, 4, 7, 8, 13, 17, 18 in both models; T-O S5, S7, S8 | Calibration of thresholds on real clients |
+| Steering flow (FR-STR) | T-I 3 (remote RSSI roam), 7, 8 (band, 6 GHz), 11, 12 (12 APs, ranked pool), 16, 17 (BTM reject); T-O S4 (manual), S5 (band), S6 (cross-AP, BTM reject, reservation released) | WRONG_TARGET outcome |
+| Reservations, admission (FR-ADM) | T-I 3, 4; T-O S6 (released on reject) | Expiry and peer-loss release |
+| Load balancing (FR-TRG-3) | T-U overload, admission, feedback rule; T-I 4, 14 (pause when futile) | — |
+| AP-side measurement (FR-AMN, IR-13) | T-U radiotap, filter, monitor TLVs, offset learning; T-I 5 (monitor), 11 (driver API, statuses, early end), 16 (offset learning); T-O S9 (real monitor), S14 (exchange) | Vendor driver API (placeholder) |
+| Low-power classification (FR-LPC) | T-U `test_low_power`; T-I 10; T-O S15 | Calibration on real IoT devices (SDD R16) |
+| MLO (FR-MLO) | T-U `test_mlo`; T-I 9 | Real AP MLD |
+| Capacity (NFR-CAP-1) | T-I 12 (12 APs), 15 (17 BSSes: 16 managed); compile-time check that 16 BSSes fit HELLO/BSS_STATUS | 33 APs; message load at 10+ APs |
+| Resilience (FR-MON-6, NFR-REL-1) | T-O S10 (hostapd restart) | — |
+| OpenWrt service, UCI `bss` lines (IR-7, IR-12) | T-O S11 (interface rename), S12 (strict config); package upgrade with `apk add` | Init script against fixture `ubus` output |
+
+Remaining recommended additions: an itest with packet loss (retransmission,
+duplicate re-ACK) and with two ports (path failover); reservation expiry;
+real hardware runs (survey utilisation source, station dumps, client
+11k/v/r behaviour).
 
 ## Appendix A. Configuration parameters and defaults
 
@@ -459,3 +479,4 @@ measurement timeout.
 | 2.4 | 2026-11-07 | New FR-TRG-7 (per-STA roaming threshold learned from outcomes and own roams, shared over ARCP); FR-TRG-1 uses it; keys `roam_thr_learn`, `roam_thr_min`, `roam_thr_max` |
 | 2.5 | 2026-11-07 | New FR-TRG-8 (Q-learning of when to roam: shadow by default, active on request); IR-3: `RL`; keys `rl_roam`, `rl_epsilon_pct` |
 | 2.6 | 2026-11-07 | FR-TRG-8: Q-learning off by default (`rl_roam` 0); enabled by configuration or `RL mode <n>` |
+| 2.7 | 2026-11-07 | Documentation audit: §2.2 product functions brought up to date; IR-5 lists the `class` module; NFR-CAP-1 lists every table, NFR-CAP-2 re-measured (449,352 bytes); FR-REL-2 now unit-tested; §5.1 measurements updated; §7 verification matrix rewritten for the three test levels |

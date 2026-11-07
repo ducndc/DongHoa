@@ -13,30 +13,15 @@ constexpr LogModule LOG_MODULE{LogModule::PEER};
 
 bool acceptPeerSeq(Peer &p, std::uint32_t bootId, std::uint32_t msgId) noexcept
 {
-	bool accept = false;
-
-	if (bootId != p.bootId) {
-		if (p.bootId != 0U) {
-			logging::info(LOG_MODULE, "peer {} restarted", p.id);
-		}
-		p.bootId = bootId;
-		p.seqHi = msgId;
-		p.seqWin = 1U;
-		accept = true;
-	} else if (msgId > p.seqHi) {
-		const std::uint32_t diff = msgId - p.seqHi;
-		p.seqWin = (diff >= 64U) ? 0U : (p.seqWin << diff);
-		p.seqWin |= 1U;
-		p.seqHi = msgId;
-		accept = true;
-	} else {
-		const std::uint32_t diff = p.seqHi - msgId;
-		const std::uint64_t bit = (diff < 64U) ? (static_cast<std::uint64_t>(1U) << diff) : 0U;
-		if ((bit != 0U) && ((p.seqWin & bit) == 0U)) {
-			p.seqWin |= bit;
-			accept = true;
-		}
+	arcp::ReplayWindow w{p.bootId, p.seqHi, p.seqWin};
+	bool restarted = false;
+	const bool accept = arcp::acceptSeq(w, bootId, msgId, restarted);
+	if (restarted) {
+		logging::info(LOG_MODULE, "peer {} restarted", p.id);
 	}
+	p.bootId = w.bootId;
+	p.seqHi = w.seqHi;
+	p.seqWin = w.seqWin;
 	return accept;
 }
 

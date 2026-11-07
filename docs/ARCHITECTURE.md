@@ -35,12 +35,13 @@ Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 | `msg` | Periodic broadcasts, reliable unicast (ACK_REQ, retransmit), RX dispatch, learning the path to each peer. |
 | `peer` | Peer table, replay window, remote BSS and load, remote STA locations, expiry. |
 | `local` | Polls hostapd (`STATUS`, `GET_CONFIG`; `STA-FIRST/NEXT` every 10 s and for new STAs) and nl80211 (survey, and a station dump per BSS each poll for per-STA metrics); keeps the STA table (EWMA of RSSI, throughput); handles hostapd events; installs local sibling and remote BSSes into hostapd's neighbor database (`SET_NEIGHBOR` / `REMOVE_NEIGHBOR`). |
-| `steer` | Steering state machine on the source AP, and admission/reservations on the target AP. |
-| `devclass` | Low-power (IoT) device classification from each local STA's uplink/downlink traffic variability (arithmetic in `policy`), the device class table shared with peers (STA_CLASS, `PROTOCOL.md` §8), and the restore on (re)association. |
-| `amon` | AP-side STA measurement: radiotap monitor sockets (BPF-filtered to uplink data and probe requests) and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ (multicast) / REPORT with a STATUS from every AP. Lets STAs without 11k measurements be steered. |
+| `steer` | Steering state machine on the source AP (ranked candidate pool, 11k quiet period), admission/reservations on the target AP, load-balancing rounds with feedback, the per-STA roaming threshold and the optional Q-learning of when to roam. |
+| `devclass` | Low-power (IoT) device classification from each local STA's uplink/downlink traffic variability (arithmetic in `policy`), the per-STA record table shared with peers (class: STA_CLASS; learned roaming threshold: STA_ROAM; `PROTOCOL.md` §8–9), and the restore on (re)association. |
+| `amon` | AP-side STA measurement: radiotap monitor sockets (BPF-filtered to uplink data and probe requests) and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ (multicast) / REPORT with a STATUS from every AP. Lets STAs without 11k measurements be steered. The uplink → downlink offset is learned per BSS from STAs measured both ways (`CALIB`). |
 | `vendor_rssi` | Driver per-STA RSSI API (STA MAC in, RSSI out) behind four non-blocking calls. Vendor implementation is a placeholder until the chipset API is documented; a file-backed simulation serves the tests. |
 | `ctrl` | Local control socket used by `donghoa_cli` and the tests. |
 | `rrm_log` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, raw and decoded with the pure decoders in `rrm.cpp`. Called from `hapd::Conn`, so every caller is covered. |
+| `config`, `log`, `text`, `types`, `sha256`, `os` | Support: strict configuration parsing; per-module logging; fixed-size strings, formatting and range-checked parsing; MAC/byte views; SHA-256/HMAC; and `os`, the only file that calls the operating system. |
 
 ## Steering state machine (source AP, one transaction per STA)
 
@@ -218,7 +219,11 @@ A STA busy with its own scan answers report mode `refused`.
 
 - Low-power classification thresholds and α are not calibrated on real IoT
   devices (SDD R16); the class only keeps devices out of automatic steering.
-
+  A STA that only ever sends small uplink frames can drift into the class.
+- Q-learning (off by default) keeps its table in memory per AP: not
+  persisted, not shared (SDD R17).
+- Not yet run on real hardware: real survey utilisation (`util_src` in
+  `STATUS`), station dumps of real drivers, real client 11k/v/r behaviour.
 - Channel utilisation comes from the busy time of the radio's in-use channel,
   smoothed with an EWMA. It does not separate the BSS's own airtime from OBSS
   airtime.

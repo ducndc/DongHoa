@@ -27,6 +27,19 @@ information, and they coordinate:
   survives an AP restart, and keeps such devices out of automatic steering
   (`lp_*` keys; `donghoa_cli DEVCLASS`). Large uploads (`lp_max_mean_bps`)
   and VHT/EHT-capable STAs (`lp_exclude_*`) are not classified low-power.
+- **Per-STA roaming threshold:** each STA's RSSI threshold is learned from
+  the outcomes of its steers (a STA that keeps refusing is asked later, one
+  that gains a lot is moved earlier) and from its own roams, within
+  −82…−65 dBm, and follows the STA to other APs (`roam_thr_*`).
+- **Learning when to roam (optional):** a small Q-table learns from outcomes
+  when to wait and when to steer; off by default, shadow (learn only) or
+  active via `rl_roam` or `donghoa_cli RL mode` (`docs/features/15-rl-roaming.md`).
+- **Calibrated AP-side levels:** the uplink → downlink offset is learned per
+  BSS from STAs measured both ways (`donghoa_cli CALIB`).
+- **Real-time metrics:** per-STA signal, inactivity and counters come from
+  asynchronous nl80211 station dumps, channel utilisation from the nl80211
+  survey; steering ignores stale signal from idle STAs and ends a
+  measurement as soon as the STA's reports stop.
 
 ARCP runs over any interface that carries Ethernet frames, such as wired LAN,
 bridges, 4-address/WDS or 802.11s Wi-Fi backhaul. Messages are authenticated
@@ -72,7 +85,7 @@ rrm: wl0 RX BSS-TM-RESP aa:bb:cc:dd:ee:01 dialog_token=1 status_code=0 bss_termi
 rrm: wl0   11v BTM response <- aa:bb:cc:dd:ee:01: status 0 (accept) target 02:00:00:00:02:00
 ```
 
-Modules: main l2 msg peer hapd local steer policy amon survey ctrl config rrm.
+Modules: main l2 msg peer hapd local steer policy amon survey ctrl config rrm class.
 
 hostapd needs `bss_transition=1`, `rrm_neighbor_report=1`,
 `rrm_beacon_report=1` and an FT configuration whose `mobility_domain` matches

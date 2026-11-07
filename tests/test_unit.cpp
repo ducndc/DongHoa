@@ -1338,6 +1338,28 @@ void testLowPower()
 	CHECK(!parseConfigLine(cfg, "lp_threshold x"));
 }
 
+// Replay window (arcp::acceptSeq, behind acceptPeerSeq)
+void testReplayWindow()
+{
+	arcp::ReplayWindow w;
+	bool rs = false;
+	CHECK(arcp::acceptSeq(w, 7U, 100U, rs) && !rs);      // first frame of a peer
+	CHECK(!arcp::acceptSeq(w, 7U, 100U, rs));            // duplicate (other port / retransmission)
+	CHECK(arcp::acceptSeq(w, 7U, 101U, rs));             // in order
+	CHECK(arcp::acceptSeq(w, 7U, 105U, rs));             // ahead, gap left
+	CHECK(arcp::acceptSeq(w, 7U, 103U, rs));             // late, inside the window, not seen
+	CHECK(!arcp::acceptSeq(w, 7U, 103U, rs));            // ... but only once
+	CHECK(!arcp::acceptSeq(w, 7U, 101U, rs));
+	CHECK(arcp::acceptSeq(w, 7U, 105U + 63U, rs));       // window slides
+	CHECK(arcp::acceptSeq(w, 7U, 106U, rs));             // still inside (62 back), unseen
+	CHECK(!arcp::acceptSeq(w, 7U, 104U, rs));            // 64 back: outside, dropped
+	CHECK(arcp::acceptSeq(w, 7U, 105U + 63U + 200U, rs)); // big jump clears the window
+	CHECK(!arcp::acceptSeq(w, 7U, 105U + 63U, rs));
+	CHECK(arcp::acceptSeq(w, 9U, 1U, rs) && rs);         // new boot_id: peer restarted
+	CHECK(w.seqHi == 1U && w.seqWin == 1U);
+	CHECK(!arcp::acceptSeq(w, 9U, 1U, rs) && !rs);
+}
+
 // nl80211 station dump entry (synthetic kernel message, host byte order)
 namespace {
 
@@ -1456,6 +1478,7 @@ int main()
 	testMlo();
 	testLowPower();
 	testNlParse();
+	testReplayWindow();
 	(void)std::printf("%d/%d checks passed\n", sChecks - sFails, sChecks);
 	return (sFails != 0) ? 1 : 0;
 }

@@ -609,6 +609,34 @@ std::string_view monitorStatusName(std::uint8_t status) noexcept
 	return n;
 }
 
+bool acceptSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId, bool &restarted) noexcept
+{
+	bool accept = false;
+
+	restarted = false;
+	if (bootId != w.bootId) {
+		restarted = w.bootId != 0U;
+		w.bootId = bootId;
+		w.seqHi = msgId;
+		w.seqWin = 1U;
+		accept = true;
+	} else if (msgId > w.seqHi) {
+		const std::uint32_t diff = msgId - w.seqHi;
+		w.seqWin = (diff >= 64U) ? 0U : (w.seqWin << diff);
+		w.seqWin |= 1U;
+		w.seqHi = msgId;
+		accept = true;
+	} else {
+		const std::uint32_t diff = w.seqHi - msgId;
+		const std::uint64_t bit = (diff < 64U) ? (static_cast<std::uint64_t>(1U) << diff) : 0U;
+		if ((bit != 0U) && ((w.seqWin & bit) == 0U)) {
+			w.seqWin |= bit;
+			accept = true;
+		}
+	}
+	return accept;
+}
+
 bool decode(ByteView v, StaRoam &o) noexcept
 {
 	bool ok = v.size() >= 11U;

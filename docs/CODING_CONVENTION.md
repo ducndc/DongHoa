@@ -256,21 +256,23 @@ A commercial MISRA C++:2023 checker (for example Helix QAC, Parasoft
 C/C++test, PC-lint Plus or Polyspace) would turn most of §5 into automatic
 checks. When one is adopted, record its baseline in §8.
 
-## 8. Baseline (2026-11-01)
+## 8. Baseline (2026-11-07)
 
-Version 2.0 (`donghoa-1.0-r9`), the C++17 rewrite:
+Version 2.x (`donghoa-1.0-r21`, commit after `d284ba7`):
 
 - `make` with the §3 flags: 0 warnings (GCC 13, and the OpenWrt 25.12 SDK
   toolchain for x86-64 musl).
-- `make check-deps`: `NEEDED libc` only. On OpenWrt: `donghoa` 151 KB,
-  `donghoa_cli` 33 KB (stripped); `.bss` 242 KB.
-- `make cppcheck`: 0 findings. With `--enable=style`, cppcheck makes
+- `make check-deps`: `NEEDED libc` only. On OpenWrt: `donghoa` 184 KB,
+  `donghoa_cli` 25 KB (installed, stripped), package 99.2 KB; `.bss` 466 KB, of which
+  the static `Daemon` object is 449,352 bytes.
+- `make cppcheck` (2.14): 0 findings. With `--enable=style`, cppcheck makes
   stylistic suggestions (`useStlAlgorithm`, `variableScope`) and reports
   some `knownConditionTrueFalse` false positives on loops over lengths it
   cannot track. These are not tracked.
-- `make test`: 302/302 checks, also under ASan/UBSan. `make itest`: PASS
-  1–6 with the linear and the throughput score model, and under
-  ASan/UBSan. `systest.sh` on two OpenWrt VMs: 13/13.
+- `make test`: 544/544 checks, also under ASan/UBSan. `make itest`: PASS
+  1–18 with the linear and the throughput score model (7–9 skipped under
+  the latter by design), and under ASan/UBSan with 0 reports.
+  `systest.sh` on two OpenWrt VMs: 16/16.
 - Confinement grep (§7): only `src/os.cpp`.
 
 ## 9. Review checklist
