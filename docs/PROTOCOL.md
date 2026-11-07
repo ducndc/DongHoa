@@ -73,8 +73,8 @@ later versions can add fields there.
 | 0x13 | ACK | msg_id u32 |
 | 0x14 | STA_MONITOR_REQ | txn u32, sta 6, duration_ms u16, op_class u8, channel u8 (the STA's current channel, a hint) |
 | 0x15 | STA_MONITOR_RESULT | txn u32, sta 6, bssid 6, rssi i8 (dBm), samples u16, age_ms u16 (since the last sample) |
-| 0x17 | STA_ROAM | sta 6, threshold i8 (dBm, the STA's learned roaming threshold), events u32 (outcomes behind it; it only grows along a STA's history, so the larger value is the newer record) (§9) |
 | 0x16 | STA_MONITOR_STATUS | txn u32, sta 6, status u8: 0 measured (results in the same report), 1 not heard, 2 unsupported (no monitor, no driver API), 3 busy (watch table full), 4 failed (driver API error) |
+| 0x17 | STA_ROAM | sta 6, threshold i8 (dBm, the STA's learned roaming threshold), events u32 (outcomes behind it; it only grows along a STA's history, so the larger value is the newer record) (§9) |
 | 0xFF | AUTH | 16 bytes: HMAC-SHA256 truncated |
 
 `caps` bits: FT 0x01, BTM 0x02, RRM-NR 0x04, RRM-Beacon 0x08, HT 0x10, VHT
@@ -108,8 +108,9 @@ Report (dBm = RCPI/2 − 110). 255 means it is not available.
 | 0x20 | ACK | unicast | ACK | answers any message that has ACK_REQ set |
 | 0x21 | BYE | multicast | — | graceful shutdown |
 
-**Reliability:** a message with ACK_REQ is retransmitted every 300 ms, with
-the same `msg_id`, up to 4 times. The receiver ACKs every copy, duplicates
+**Reliability:** a message with ACK_REQ is sent at most 4 times in total
+(the first transmission and up to 3 retransmissions, 300 ms apart), always
+with the same `msg_id`. The receiver ACKs every copy, duplicates
 included, but processes a message only once.
 
 **Liveness:** a peer is removed if nothing arrives from it within

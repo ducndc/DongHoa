@@ -390,6 +390,17 @@ bool decode(ByteView v, StaMonitorReq &o) noexcept;
 bool decode(ByteView v, StaMonitorResult &o) noexcept;
 bool decode(ByteView v, StaMonitorStatus &o) noexcept;
 bool decode(ByteView v, StaRoam &o) noexcept;
+
+// Per-peer replay window (as in IPsec): accepts (bootId, msgId) once.
+// A new bootId (the peer restarted) resets it; otherwise a msgId above the
+// highest seen, or within the last 64 and not seen yet, is accepted.
+struct ReplayWindow {
+	std::uint32_t bootId{0U};
+	std::uint32_t seqHi{0U};  // highest msgId accepted
+	std::uint64_t seqWin{0U}; // bit i = (seqHi - i) seen
+};
+// True if new (and records it); restarted: the bootId changed from a known one.
+bool acceptSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId, bool &restarted) noexcept;
 std::string_view monitorStatusName(std::uint8_t status) noexcept;
 bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept;
 

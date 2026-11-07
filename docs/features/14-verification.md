@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    U["Unit tests (make test)<br/>pure modules only, 529 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–18"]
+    U["Unit tests (make test)<br/>pure modules only, 544 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–18"]
     I --> Q["System test (openwrt/qemu/systest.sh)<br/>2 OpenWrt VMs: real hostapd, mac80211_hwsim,<br/>wpa_supplicant STA, raw-socket ARCP<br/>~7 min, S1–S16"]
     Q --> H["Real hardware<br/>(AP2: pending)"]
     S["Static and dynamic checks:<br/>strict warnings, cppcheck, ASan/UBSan,<br/>check-deps (libc only)"] -.-> U
@@ -39,6 +39,7 @@ One binary linking only the pure modules (`text`, `proto`, `rrm`, `policy`,
 | `testMlo` | BSS_INFO trailer, `isSameMld`, `peer_addr` parsing |
 | `testLowPower` | Welford statistics, S, θ, hysteresis, traces, gates, PHY exclusion |
 | `testNlParse` | nl80211 station entries: nesting, 64-bit counters, rates, flags, truncated input |
+| `testReplayWindow` | replay window: order, duplicates, late within the window, outside, big jump, restart |
 
 ## Integration test (`tests/itest.py`)
 

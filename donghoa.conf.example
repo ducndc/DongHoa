@@ -7,7 +7,7 @@ name ap-livingroom
 
 # ---- logging ----
 # Level for every module: err, warn, info (default), debug. Modules logged at
-# debug: main l2 msg peer hapd local steer policy amon survey ctrl config
+# debug: main l2 msg peer hapd local steer policy amon survey ctrl config rrm class
 # (msg at debug traces every ARCP frame). -d sets all to debug; levels can
 # also be changed at run time: donghoa_cli <socket> LOG debug steer
 #log_level info
@@ -59,6 +59,8 @@ ctrl_socket /var/run/donghoa.sock
 #rssi_hysteresis 8       # dB the target must beat the current RSSI by
 #rssi_min_target -70     # dBm, minimum STA-measured target level
 #band_steer_rssi -55     # dBm, strong 2.4 GHz STA -> 5/6 GHz
+#band_steer_6g 1         # also steer 5 GHz STAs that support 6 GHz up
+#band_steer_6g_rssi -55  # dBm: 5 GHz STA at or above this -> 6 GHz
 #util_high 70            # %, BSS overloaded
 #util_admit_max 80       # %, target refuses steer-in
 #lb_margin 15            # %, target must be below util_high - lb_margin
@@ -140,3 +142,8 @@ ctrl_socket /var/run/donghoa.sock
 #lp_alpha_2g 100         # alpha x 100 per band
 #lp_alpha_5g 100
 #lp_alpha_6g 100
+
+# ---- test-only keys (not for production) ----
+# sim_port / sim_peer <udp port>   ARCP over UDP on loopback (integration test)
+# air_monitor_sim <udp port>       radiotap frames over UDP (integration test)
+# sta_rssi_sim <file>              simulated driver per-STA RSSI API

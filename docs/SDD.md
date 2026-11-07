@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.6, 2026-11-07 (history in §13) |
+| Document version | 2.7, 2026-11-07 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -89,6 +89,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `amon.cpp` | I/O + coord. | AP-side STA measurement: BPF-filtered radiotap sockets and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ/REPORT/STATUS, results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
 | `vendor_rssi.cpp` | I/O | Driver per-STA RSSI API behind four calls; vendor placeholder (TODO) and a file-backed simulation for tests | `isStaRssiSupported`, `startStaRssi`, `readStaRssi`, `stopStaRssi`, `useSimFile` |
 | `ctrl.cpp` | I/O | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
+| `rrm_log.cpp` | I/O (log only) | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, decoded | `rrmlog::logCommand`, `logEvent` | IR-5 |
 | `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
 | `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
 | `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
@@ -178,7 +179,7 @@ as `std::array` members. Measured sizes on x86-64:
 | `resv[]` — reservations | 32 | 1,280 | |
 | `watch[]` — air monitor watches | 16 | 2,048 | Up to 4 frequencies each |
 | `bss[]`, config, L2 ports, etc. | 16 BSS / 8 ports | remainder | |
-| **Total** `sizeof(Daemon)` | | **391,424** | Re-measured in v2.3 (`nm -S`, x86-64); the per-table figures above date from v1.4 |
+| **Total** `sizeof(Daemon)` | | **449,352** | Re-measured in v2.7 (`nm -S`, x86-64); the per-table figures above date from v1.4 |
 
 Lookups are linear scans. With these sizes a scan costs microseconds, and it
 avoids hash tables and allocation. Each table entry has a `used` flag. Free
@@ -854,9 +855,13 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | D12 | Expected-throughput scoring as an opt-in model (`score_model 1`), sigmoid as an integer lookup table | Replace the linear score; floating-point `exp()` | Physically meaningful ranking (width, load, saturation of RSSI) while the linear model stays the default until the model is calibrated (R12). The table keeps `policy.cpp` integer-only and pure. |
 | D13 | OpenWrt `bss` lines from netifd's runtime view and the generated hostapd config | Read `/etc/config/wireless` only; hard-coded names | UCI often has no `ifname` and may leave `mobility_domain` to a default; netifd and the generated config give the real names and effective values. |
 | D14 | Air monitor on request, per steer, in parallel with 11k; uplink RSSI compared with uplink RSSI | Continuous sniffing and broadcasting of all heard STAs; monitor only when 11k fails | Watching only requested STAs keeps CPU and ARCP traffic low; asking in parallel avoids an extra round when a busy STA ignores the Beacon Request. Monitor and source both measure the STA's transmissions, so the comparison is like for like. A kernel BPF filter drops beacons and downlink before they reach user space. |
-
 | D15 | Low-power class records replicated on every AP, exchanged peer to peer | A master AP that stores the records (as in the classification method's original IEEE 1905.1 design) | ARCP has no master (D2) and 1905 is out of scope (C-1). Replication gives the same result (a roaming or restarted AP gets the class back) without a single point of failure; the table is small (512 × ~40 bytes). |
 | D16 | Departures from the original method: θ bounded to 0..`lp_score_max`, hysteresis on the class, no score change while the STA is idle, long-memory statistics | Unbounded θ, one threshold, idle counting as "not low-power", exact statistics since association | Unbounded θ never lets a device change class again; one threshold flaps (and sends a message each time); an idle sensor is the typical low-power device and must not lose score for sleeping; exact sums overflow 64 bits within days. |
+| D17 | Per-STA metrics from nl80211 station dumps, hostapd for capabilities | A hostapd `STA-NEXT` per STA per poll | One non-blocking dump per BSS; the loop no longer blocks on hostapd per STA (R3) |
+| D18 | Ranked candidate pool when more than 16 BSSes qualify | Peer-table order | A STA next to a peer beyond the first 16 BSSes was never steered (itest PASS 12) |
+| D19 | Uplink → downlink offset learned per BSS from STAs measured both ways | One global `amon_rssi_offset` | Each AP's TX power and antennas differ (R14) |
+| D20 | Per-STA roaming threshold learned from outcomes, shared with the class records | One global `rssi_low` | Sticky clients are not pestered, cooperative ones roam earlier; no new message type |
+| D21 | Tabular, integer Q-learning with a prior equal to the rule, off by default | Deep RL; a bandit for target choice first | Fits a single-threaded, heap-free daemon and tens of decisions a day; starting from the rule makes enabling it safe |
 
 ## 11. Known limitations and risks
 
@@ -864,20 +869,22 @@ root when hostapd runs as another user. hostapd requirements are listed in
 |---|---|---|---|
 | R1 | STA_EVENT is sent multicast without ACK_REQ, but the source detects success from it | A lost event turns a successful remote steer into ROAM_TIMEOUT, with backoff for that STA | Send STA_EVENT(assoc) with ACK_REQ to the AP named in a matching reservation, or confirm from STA_STATUS |
 | R2 | Replay of an earlier boot's messages (NFR-SEC-2) | Stale state or steering commands could be injected by someone who recorded traffic | Persistent boot counter or time window |
-| R3 | hostapd calls block the loop for up to 1 s each | Delayed timers while hostapd hangs (bounded, §4.3) | Asynchronous command queue |
+| R3 | hostapd calls block the loop for up to 1 s each | Delayed timers while hostapd hangs (bounded, §4.3) | Mitigated in v2.2: per-STA metrics come from asynchronous nl80211 station dumps; hostapd is asked per poll only for each BSS's `STATUS`, plus a full listing every 10 s and one `STA <addr>` per new STA. Remaining: an asynchronous command queue for those |
 | R4 | `hapd_parse_status` falls back to entry 0 when the ifname is not among `bss[i]` | On multi-BSS radios, a wrong configured ifname would report the first BSS. On OpenWrt, generated `bss` lines (IR-12) avoid wrong names | Fail instead of falling back |
 | R5 | BTM/RRM/NR capabilities are always advertised | Wrong if hostapd lacks them; hostapd then rejects the commands and steering aborts | Read them from `GET_CONFIG` |
 | R6 | Neighbor reports use 20 MHz op classes and carry no Multi-Link element | Less precise candidate info for wide-channel and Wi-Fi 7 STAs (an MLD STA learns the target AP MLD only from its beacons) | Derive op class from width; Basic Multi-Link element in neighbor reports |
 | R7 | Control replies are limited to 8 KiB | `PEERS`/`STAS` output truncated in large deployments | Multi-datagram replies |
 | R8 | ~~All log lines reach OpenWrt syslog at `daemon.err`~~ **Resolved (1.3):** the OpenWrt service runs `donghoa -s`, which logs through `syslog(3)` with real priorities | — | — |
-| R9 | No automated tests for the replay window, retransmission, path failover or peer timeout | Regressions there would go unnoticed | See SRS §7 |
-| R10 | `PROTOCOL.md` says retransmitted "up to 4 times"; the code sends 4 transmissions in total (1 + 3 retransmissions) | Documentation ambiguity | Align the wording |
-| R11 | Early evaluation waits for a report from *every* candidate (and, with `score_model 1`, the serving BSS). A candidate the STA cannot hear, such as a remote AP out of range, makes every steer wait the full `beacon_req_timeout_ms` (1.5 s) | Slower steering, not wrong steering | Evaluate when the report for the single request is complete (all reports for its token received) |
+| R9 | No automated tests for retransmission, path failover or peer timeout | Regressions there would go unnoticed | The replay window is unit-tested since v2.7 (`arcp::acceptSeq`); packet-loss and two-port itest scenarios remain (SRS §7) |
+| R10 | ~~`PROTOCOL.md` said retransmitted "up to 4 times"~~ **Resolved (2.7):** the text now says 4 transmissions in total, as the code does | — | — |
+| R11 | ~~Early evaluation waits for a report from every candidate, so an unheard remote candidate made every steer wait `beacon_req_timeout_ms`~~ **Resolved (2.1):** a quiet period of 200 ms + 2 measurement durations after the last report ends the 11k part (band steer 1.78 s → 0.80 s on QEMU) | — | — |
 | R12 | Throughput model: peak rate assumes the STA matches the BSS capability with `sta_nss` streams; one sigmoid for all widths and bands | Over-estimates gain for low-end STAs (e.g. 1×1, HT-only) | Read STA HT/VHT/HE capabilities from hostapd `STA` output; calibrate per width from MCS sensitivity tables |
 | R13 | Air monitors hear a STA only on their own channel (uplink data on that channel, probe requests when it scans) | APs on other channels rarely measure an active STA; in 5 GHz plans with one channel per AP the monitor helps mostly via probes | A dedicated scan radio, or a vendor off-channel air-monitor API feeding `amon.cpp` (`addAmonSample()` is the entry point) |
 | R14 | Uplink RSSI stands in for the STA's downlink level | Biased when AP and STA TX power differ widely | Mitigated in v2.4: offset learned per BSS from STAs measured both ways (`amon_offset_learn`). Remaining: STAs of different TX power share one per-BSS offset; offsets are not shared between APs |
 | R15 | Monitor interfaces are created outside DongHoa and lost on reboot or `wifi` restart; the BPF program has no unit test | Monitor silently missing after a restart (logged) | Create them from the OpenWrt init script, re-open on interface events; test the filter with a BPF interpreter |
 | R16 | Low-power thresholds (`lp_threshold`, α per band) are not calibrated against real devices; S compares the variability of uplink and downlink, so a device that uploads steadily (low σ_u) may not qualify, and a phone uploading photos for a long time may | Misclassification: a device kept out of automatic steering, or steered | Collect traces of real IoT devices and phones; tune α per band; add more features (packet size, inactivity). Mitigated in part by `lp_max_mean_bps` (large uploads) and `lp_exclude_vht/eht`; a streaming camera exceeds the default gate and is not classified |
+| R17 | Q-learning (FR-TRG-8): hand-designed rewards, a table per AP that is lost on restart and not shared; shadow mode learns only the rule's actions | Slow or uneven learning; a fresh AP starts from the prior again | Off by default; share tables over ARCP (weighted by visits), persist them, decision log for offline evaluation before active mode |
+| R18 | Per-STA roaming threshold (FR-TRG-7) learns only from RSSI steers and own roams; a STA that only ever sends uplink frames can also drift into the low-power class (R16) and leave automatic steering | A sticky device is left alone (intended); a misclassified idle device is not steered | Range limits (−82..−65), 10 min drift back; magnitude floor or decay for low-power evidence (decision pending) |
 
 ## 12. Traceability (SRS → design)
 
@@ -922,3 +929,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.4 | 2026-11-07 | §6.10: uplink/downlink offset learned per BSS (`pairUlDl`, `mCal`, `policy::addUlDlSample` / `uplinkToDownlink`), `CALIB`; R14 mitigated |
 | 2.5 | 2026-11-07 | §6.6: per-STA roaming threshold (state, update points, sharing via STA_ROAM in the class records); class-record slot reset on eviction |
 | 2.6 | 2026-11-07 | §6.6: Q-learning of when to roam (`policy::rl*`, `mRl`, decision hand-over to the transaction, rewards); `RL` command |
+| 2.7 | 2026-11-07 | Documentation audit: `rrm_log.cpp` in the module catalogue; R3, R9 mitigated, R10, R11 resolved, new R17, R18; decisions D17–D21; data size re-measured (449,352 bytes); replay window moved to `arcp::acceptSeq` (unit-tested) |
