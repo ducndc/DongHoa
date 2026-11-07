@@ -388,13 +388,18 @@ def scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2):
 
 
 def scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2):
-    """S18: Q-learning of when to roam. Shadow mode (default) learns from the
+    """S18: Q-learning of when to roam (off by default, enabled here with the
+    RL command). Shadow mode learns from the
     rule's steers without changing behaviour: a STA refusing BTM at -80 dBm
     makes STEER worth -10 in that state. In active mode a new STA in the
     same state is not steered when the rule would have (~2 s), but once
     waiting at -80 dBm has cost more (~29 fresh polls) it is."""
     mark(logs, "S18 Q-learning: when to roam (shadow, then active)")
+    # Off by default; the configuration (rl_roam) or the command enables it.
+    expect = "mode=shadow" if "rl_roam 1" in EXTRA else "mode=off"
+    assert expect in cli(socks[0], "RL"), cli(socks[0], "RL")
     assert "OK" in cli(socks[0], "RL", "reset")
+    assert "OK mode shadow" in cli(socks[0], "RL", "mode", "1")
     assert "mode=shadow" in cli(socks[0], "RL")
     teacher = Sta(STA23_MAC, -80, {B2: (124, 149, -55)}, rrm={0}, btm_accept=False)
     with world.lock:
@@ -418,7 +423,7 @@ def scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2):
     wait_for(lambda: STA24_MAC + " start: reason rssi" in log1(), 12, "waiting at -80 dBm to cost more than -10")
     took = time.time() - t0
     wait_for(lambda: STA24_MAC in ap2.stas, 5, "STA24 to roam to AP2")
-    assert "OK mode shadow" in cli(socks[0], "RL", "mode", "1")
+    assert "OK mode off" in cli(socks[0], "RL", "mode", "0")
     with world.lock:
         ap2.remove_sta(STA24_MAC)
     print("PASS 18: Q-learning: shadow learned STEER=-10 at -80 dBm from a refusing STA; active mode waited, "
