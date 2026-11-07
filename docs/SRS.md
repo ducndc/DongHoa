@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.1, 2026-11-06 (history in Appendix B) |
+| Document version | 2.2, 2026-11-07 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -328,8 +328,8 @@ because one candidate (a remote AP) could not be heard by the STA (SDD R11).
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| NFR-CAP-1 | Fixed limits: 8 local BSSes, 256 local STAs, 32 peers with 8 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class records. Running out of space in a table shall be logged and handled without crashing. | I |
-| NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 315,808 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
+| NFR-CAP-1 | Fixed limits: 16 local BSSes (valid `bss` lines beyond 16 are ignored with a warning, the daemon still starts), 256 local STAs, 32 peers with 16 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class records. Running out of space in a table shall be logged and handled without crashing. | I |
+| NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 391,424 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
 | NFR-CAP-3 | The OpenWrt package file should stay below 64 KiB (measured: `donghoa-1.0-r5.apk`, 40.8 KB, x86-64). | T-O |
 
 ### 5.3 Reliability and availability
@@ -403,7 +403,7 @@ measurement timeout.
 | `iface` | — | L2 port, repeatable (≤ 8) |
 | `sim_port`, `sim_peer` | — | UDP test transport |
 | `key` | none | `hex:<≥32 hex digits>` or passphrase ≥ 8 characters |
-| `bss <ifname> [mdid=<hex>] [max_sta=<n>] [ft_over_ds=1]` | — | Managed BSS, repeatable (≤ 8). `<ifname>` is hostapd's control socket name: the netdev, or `<netdev>_link<id>` for an AP MLD link (≤ 22 characters) |
+| `bss <ifname> [mdid=<hex>] [max_sta=<n>] [ft_over_ds=1]` | — | Managed BSS, repeatable (≤ 16; further valid lines are ignored with a warning). `<ifname>` is hostapd's control socket name: the netdev, or `<netdev>_link<id>` for an AP MLD link (≤ 22 characters) |
 | `hostapd_ctrl_dir` | `/var/run/hostapd` | |
 | `ctrl_socket` | none | Control socket path |
 | `hello_interval_ms` / `bss_status_interval_ms` / `sta_status_interval_ms` / `rf_status_interval_ms` | 2000 / 5000 / 10000 / 10000 | ms |
@@ -448,3 +448,4 @@ measurement timeout.
 | 1.9 | 2026-11-06 | FR-STR-2: ranked candidate pool when more than 16 BSSes qualify (measured first, then own, then rotating peer order); verified with 12 APs (itest PASS 12) |
 | 2.0 | 2026-11-06 | FR-TRG-1: only fresh signal samples count (idle STA); FR-STR-3: MEASURE's 11k part ends after a quiet period following the last report; STATUS shows each BSS's utilisation source (`util_src`) |
 | 2.1 | 2026-11-06 | FR-TRG-3: load-balancing feedback and pause (`lb_min_drop_pct`, `lb_max_futile`, `lb_hold_ms`); NFR-PRF-4: per-STA metrics from nl80211 station dumps, hostapd listing every 10 s |
+| 2.2 | 2026-11-07 | NFR-CAP-1: 16 local BSSes and 16 per peer (was 8); `bss` lines beyond the limit ignored with a warning instead of a fatal error; NFR-CAP-2 re-measured (391,424 bytes) |

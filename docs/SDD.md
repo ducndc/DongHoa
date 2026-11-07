@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.2, 2026-11-06 (history in §13) |
+| Document version | 2.3, 2026-11-07 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -172,13 +172,13 @@ as `std::array` members. Measured sizes on x86-64:
 |---|---|---|---|
 | `sta[]` — local STAs | 256 | 124,928 | Includes a 16-entry beacon-report cache per STA |
 | `pending[]` — reliable TX queue | 32 | 46,336 | Each holds a full 1400-byte frame for retransmission |
-| `peers[]` | 32 | 27,648 | Each holds 8 remote BSSes and 4 RF entries |
+| `peers[]` | 32 | — | Each holds 16 remote BSSes and 4 RF entries |
 | `txn[]` — steering transactions | 16 | 22,656 | Each holds 16 candidates |
 | `rsta[]` — remote STA locations | 512 | 16,384 | |
 | `resv[]` — reservations | 32 | 1,280 | |
 | `watch[]` — air monitor watches | 16 | 2,048 | Up to 4 frequencies each |
-| `bss[]`, config, L2 ports, etc. | 8 BSS / 8 ports | remainder | |
-| **Total** `sizeof(Daemon)` | | **247,720** | |
+| `bss[]`, config, L2 ports, etc. | 16 BSS / 8 ports | remainder | |
+| **Total** `sizeof(Daemon)` | | **391,424** | Re-measured in v2.3 (`nm -S`, x86-64); the per-table figures above date from v1.4 |
 
 Lookups are linear scans. With these sizes a scan costs microseconds, and it
 avoids hash tables and allocation. Each table entry has a `used` flag. Free
@@ -884,3 +884,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.0 | 2026-11-06 | §6.6: ranked candidate pool and per-STA peer rotation for networks with more than 16 candidate BSSes; 12-AP itest |
 | 2.1 | 2026-11-06 | §6.6: 11k quiet period ends MEASURE; RSSI samples count only when fresh (`policy::isSignalFresh`, `inactive_msec`); `STATUS` util_src per BSS |
 | 2.2 | 2026-11-06 | §6.4: per-STA metrics from nl80211 station dumps (`nlparse.cpp`, `Survey::requestStations`, `processStationDumps`), hostapd listing every 10 s; §6.6: load-balancing feedback and pause |
+| 2.3 | 2026-11-07 | `MAX_BSS` 16 (local and per peer), `Survey::MAX_STA_IFS` 16; compile-time checks that HELLO and BSS_STATUS with 16 worst-case BSSes fit one ARCP message; extra `bss` lines skipped with a warning; data size re-measured |

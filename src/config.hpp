@@ -15,7 +15,7 @@
 
 namespace donghoa {
 
-constexpr std::size_t MAX_BSS = 8U;
+constexpr std::size_t MAX_BSS = 16U; // local BSSes managed (and tracked per peer)
 constexpr std::size_t MAX_MONITORS = 4U;
 constexpr std::size_t MAX_L2_PORTS = 8U;
 constexpr std::size_t MAX_SIM_PEERS = 16U;
@@ -136,6 +136,11 @@ struct Config {
 
 	std::array<BssCfg, MAX_BSS> bss{};
 	std::size_t nBss{0U};
+	// Valid bss lines beyond MAX_BSS: ignored (with a warning at start-up)
+	// rather than refusing to start, since on OpenWrt the lines come from
+	// /etc/config/wireless and the operator did not write them.
+	std::size_t nBssSkipped{0U};
+	IfName bssSkippedFirst{};
 
 	std::array<IfName, MAX_MONITORS> monitors{}; // radiotap monitor interfaces
 	std::size_t nMonitors{0U};

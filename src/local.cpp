@@ -51,6 +51,11 @@ void aggregateLinks(Sta &s) noexcept
 void Daemon::initLocal() noexcept
 {
 	mNBss = mCfg.nBss;
+	if (mCfg.nBssSkipped > 0U) {
+		logging::warn(LOG_MODULE, "{} bss line(s) beyond the limit of {} ignored (first: {}); "
+					  "list the BSSes to manage with bss lines in the configuration",
+			      mCfg.nBssSkipped, MAX_BSS, mCfg.bssSkippedFirst);
+	}
 	for (std::size_t i = 0U; i < mNBss; i++) {
 		LocalBss &b = mBss[i];
 		b.cfg = &mCfg.bss[i];
