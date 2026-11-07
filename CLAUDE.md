@@ -11,6 +11,8 @@ other with **ARCP**, a custom Layer-2 protocol (raw Ethernet, EtherType
 0x88B5). IEEE 1905 is out of scope by requirement. The target STAs support
 802.11k, v and r. The wire spec is `docs/PROTOCOL.md`; the module map,
 state machine and hostapd assumptions are in `docs/ARCHITECTURE.md`.
+Per-feature explanations (data flow, algorithms, diagrams) are in
+`docs/features/`; update the matching document when a feature changes.
 
 ## Commands
 

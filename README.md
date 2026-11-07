@@ -80,6 +80,12 @@ the `mdid=` of each `bss` line. See `docs/ARCHITECTURE.md`.
 
 ## Documentation
 
+- `docs/features/`: **feature guide**, one document per feature (transport,
+  peer discovery, neighbor reports, local monitoring, steering engine, RSSI
+  roaming, band steering, load balancing, AP-side measurement, low-power
+  classification, MLO, control and logging, configuration and OpenWrt,
+  verification), each with data flow, algorithm, diagrams and explanation.
+  Start at `docs/features/README.md`.
 - `docs/PROTOCOL.md`: ARCP wire format, messages, reliability, security,
   steering sequence.
 - `docs/CODING_CONVENTION.md`: coding convention based on MISRA C++:2023,
