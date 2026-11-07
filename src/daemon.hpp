@@ -151,6 +151,11 @@ struct Sta {
 	int roamThr{0};
 	std::uint32_t roamEvents{0U};
 	Millis roamThrTs{0U};
+	// Q-learning (when to roam): trend input and the pending WAIT decision.
+	int rssiPrev{0};          // smoothed RSSI before the last fresh sample
+	bool sampleFresh{false};  // a fresh sample since the last decision
+	bool rlWaiting{false};    // last decision was WAIT in rlState, reward pending
+	std::size_t rlState{0U};
 };
 
 // Device class of a STA, kept by every AP so that it follows the STA
@@ -261,6 +266,8 @@ struct SteerTxn {
 	bool staMld{false};         // MLD STA (kept: its entry may go before the outcome)
 	Mac forcedTarget{};         // manual steer target, zero = any
 	int startRssi{0};           // the STA's RSSI when the steer started
+	bool rlArmed{false};        // started by a recorded RL decision (STEER in rlState)
+	std::size_t rlState{0U};
 };
 
 struct Reservation {
@@ -421,6 +428,12 @@ public:
 	void onStaRoam(const Peer &from, const arcp::StaRoam &r) noexcept;
 	// A roaming-threshold event of a local STA: store, share on change.
 	void noteRoamThr(Sta &s, int thresholdDbm, std::string_view why) noexcept;
+	// Q-learning of when to roam (steer.cpp).
+	policy::RlMode rlMode() const noexcept;
+	void rlLearn(const Mac &sta, std::size_t s, policy::RlAction a, int rewardDb, bool terminal,
+		     std::size_t next) noexcept;
+	void rlEndWait(Sta &s, int rewardDb, std::string_view why) noexcept; // terminal end of a pending WAIT
+	std::uint32_t nextRandom() noexcept;
 	// Own roam of a STA that already left: from its record (leftRssi).
 	void noteOwnRoamFromRecord(const Mac &sta) noexcept;
 	void shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t events, std::string_view why) noexcept;
@@ -488,6 +501,7 @@ private:
 	void storeRoamRec(const Mac &sta, int thresholdDbm, std::uint32_t events, const Mac &source) noexcept;
 	// ctrl.cpp helpers
 	void runCtrlCommand(std::string_view req, FixedString<8192U> &out) noexcept;
+	void cmdRl(FixedString<8192U> &o, std::string_view args) noexcept;
 	// main.cpp helpers
 	bool setupTransport() noexcept;
 	void runTimers() noexcept;
@@ -515,6 +529,19 @@ private:
 	std::array<AmonWatch, MAX_WATCH> mWatch{};
 	std::array<DevClassRec, MAX_DEV_CLASS> mDevClass{};
 	std::array<UlDlCal, MAX_CAL> mCal{};
+	policy::RlTable mRl{};
+	struct RlStats {
+		std::uint32_t decisions{0U};
+		std::uint32_t steers{0U};
+		std::uint32_t explored{0U};
+		std::uint32_t updates{0U};
+	};
+	RlStats mRlStats{};
+	int mRlModeOverride{-1};       // RL mode <n> at run time; -1: config
+	bool mRlNextArmed{false};      // handed to the transaction startSteer creates
+	std::size_t mRlNextState{0U};
+	std::uint32_t mRng{0x9e3779b9U};
+	bool mRlInit{false};
 
 	os::Fd mCtrlFd{};
 

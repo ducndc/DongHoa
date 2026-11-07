@@ -39,6 +39,7 @@ answered in the same loop iteration, so the reply is a consistent snapshot.
 | `STEERS` | running transactions (state, candidate i/n) and reservations |
 | `DEVCLASS` | device class records: class, score, samples, source AP, age, and a learned `roam_thr` / `roam_events` |
 | `CALIB` | learned uplink → downlink offsets per BSS (feature 9) |
+| `RL [mode <0|1|2> \| reset]` | Q-learning of when to roam: mode, counters, learned values per visited state; switch mode or reset to the prior (feature 15) |
 | `STEER <sta> [<bssid>]` | start a manual steer (clears the STA's cooldown), optionally to one BSS |
 | `MONITOR <sta> [<ms>]` | measure a STA with this AP's monitors / driver API; result in the log |
 | `LOG` | each module's level |

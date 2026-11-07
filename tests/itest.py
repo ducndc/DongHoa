@@ -118,6 +118,7 @@ lb_interval_ms 1000
 lp_min_samples 3
 lp_threshold 8
 lp_hysteresis 2
+rl_epsilon_pct 0
 {extra}""")
 
 
@@ -286,6 +287,8 @@ def scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2):
 STA20_MAC = "aa:bb:cc:dd:ee:20"  # S16: 11k STA measured both ways (calibration source)
 STA21_MAC = "aa:bb:cc:dd:ee:21"  # S16: no 11k, scored with the learned offset
 STA22_MAC = "aa:bb:cc:dd:ee:22"  # S17: sticky STA (refuses BTM): learns a lower roaming threshold
+STA23_MAC = "aa:bb:cc:dd:ee:23"  # S18: refuses BTM at -80 dBm (teaches the Q-table in shadow mode)
+STA24_MAC = "aa:bb:cc:dd:ee:24"  # S18: same situation, decided by the learned table (active mode)
 STA18_MAC = "aa:bb:cc:dd:ee:18"  # S13: weak signal, but idle (old frame) until it sends again
 
 
@@ -382,6 +385,44 @@ def scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2):
         ap2.remove_sta(STA22_MAC)
     print("PASS 17: per-STA roaming threshold: BTM refusals lower it (-75 -> -81), shared with AP2, "
           "own roam updates it, AP2 follows")
+
+
+def scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2):
+    """S18: Q-learning of when to roam. Shadow mode (default) learns from the
+    rule's steers without changing behaviour: a STA refusing BTM at -80 dBm
+    makes STEER worth -10 in that state. In active mode a new STA in the
+    same state is not steered when the rule would have (~2 s), but once
+    waiting at -80 dBm has cost more (~29 fresh polls) it is."""
+    mark(logs, "S18 Q-learning: when to roam (shadow, then active)")
+    assert "OK" in cli(socks[0], "RL", "reset")
+    assert "mode=shadow" in cli(socks[0], "RL")
+    teacher = Sta(STA23_MAC, -80, {B2: (124, 149, -55)}, rrm={0}, btm_accept=False)
+    with world.lock:
+        ap1.add_sta(teacher)
+    log1 = lambda: open(logs[0].name).read().split("=== S18")[-1]
+    wait_for(lambda: STA23_MAC + " (rssi) finished: btm-reject" in log1(), 8, "the rule to steer the teacher")
+    rl = cli(socks[0], "RL")
+    row = next((l for l in rl.splitlines()
+                if "rssi=-75..-80" in l and "gap=unknown refusals=0 " in l and "streak=1" in l), "")
+    assert "steer=-10.0" in row and "greedy=wait" in row, rl
+    with world.lock:
+        ap1.remove_sta(STA23_MAC)
+    # Active: the table decides.
+    assert "OK mode active" in cli(socks[0], "RL", "mode", "2")
+    learner = Sta(STA24_MAC, -80, {B2: (124, 149, -55)}, rrm={0})
+    t0 = time.time()
+    with world.lock:
+        ap1.add_sta(learner)
+    time.sleep(4.0)  # the rule would steer after its 1.5 s start cooldown + 3 polls
+    assert STA24_MAC + " start: reason rssi" not in log1(), "steered although the table says wait"
+    wait_for(lambda: STA24_MAC + " start: reason rssi" in log1(), 12, "waiting at -80 dBm to cost more than -10")
+    took = time.time() - t0
+    wait_for(lambda: STA24_MAC in ap2.stas, 5, "STA24 to roam to AP2")
+    assert "OK mode shadow" in cli(socks[0], "RL", "mode", "1")
+    with world.lock:
+        ap2.remove_sta(STA24_MAC)
+    print("PASS 18: Q-learning: shadow learned STEER=-10 at -80 dBm from a refusing STA; active mode waited, "
+          "then steered after %.1f s when staying weak cost more" % took)
 
 
 def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
@@ -701,6 +742,7 @@ def main():
             scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
             scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_many_bss(world, procs, logs, tmp, base)
@@ -805,6 +847,7 @@ def main():
         scenario_driver_rssi(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
         scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_many_bss(world, procs, logs, tmp, base)

@@ -34,6 +34,7 @@ These documents explain. The reference documents they link to define:
 | 12 | [Control interface and logging](12-control-logging.md) | `donghoa_cli` commands and per-module logging |
 | 13 | [Configuration and OpenWrt integration](13-configuration-openwrt.md) | Config file, UCI-generated `bss` lines, procd service, package |
 | 14 | [Verification](14-verification.md) | Unit tests, integration test, QEMU system test, what each one proves |
+| 15 | [Q-learning: when to roam](15-rl-roaming.md) | A small integer Q-table learns from outcomes when to wait and when to steer; shadow by default, active on request |
 
 ## System overview
 

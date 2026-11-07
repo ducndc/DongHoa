@@ -254,6 +254,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 				formatTo(o, "\n");
 			}
 		}
+	} else if ((req == "RL") || startsWith(req, "RL ")) {
+		cmdRl(o, (req.size() > 3U) ? subView(req, 3U) : std::string_view());
 	} else if (req == "CALIB") {
 		// Learned uplink -> downlink offsets used for AP-side levels.
 		formatTo(o, "default amon_rssi_offset={} learn={} min_samples={}\n", mCfg.pol.amonRssiOffset,
@@ -328,6 +330,73 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		cmdLog(o, subView(req, 4U));
 	} else {
 		formatTo(o, "UNKNOWN COMMAND\n");
+	}
+}
+
+namespace {
+
+// Q value x256 as "+12.3" / "-1.0".
+void formatQ(FixedString<16U> &out, int q256) noexcept
+{
+	const int a = (q256 < 0) ? -q256 : q256;
+	const int tenths = ((a * 10) + 128) / 256;
+	formatTo(out, "{}{}.{}", (q256 < 0) ? "-" : "+", tenths / 10, tenths % 10);
+}
+
+} // namespace
+
+void Daemon::cmdRl(Out &o, std::string_view args) noexcept
+{
+	Tokens t(args, " ");
+	std::string_view a;
+	std::string_view b;
+	const bool hasA = t.next(a);
+	const bool hasB = t.next(b);
+	constexpr std::array<std::string_view, 3U> MODES{"off", "shadow", "active"};
+
+	if (hasA && (a == "reset")) {
+		policy::rlInit(mRl);
+		mRlStats = RlStats{};
+		formatTo(o, "OK table reset to the rule-based prior\n");
+		return;
+	}
+	if (hasA && (a == "mode")) {
+		const std::optional<long> m = hasB ? parseLong(b, 10, 0, 2) : std::optional<long>();
+		if (!m.has_value()) {
+			formatTo(o, "FAIL usage: RL mode <0 off|1 shadow|2 active>\n");
+		} else {
+			mRlModeOverride = static_cast<int>(*m);
+			formatTo(o, "OK mode {}\n", MODES[static_cast<std::size_t>(*m)]);
+		}
+		return;
+	}
+	if (hasA) {
+		formatTo(o, "FAIL usage: RL [mode <0|1|2> | reset]\n");
+		return;
+	}
+	const std::size_t mi = static_cast<std::size_t>(rlMode());
+	formatTo(o, "rl mode={} epsilon={}% decisions={} steers={} explored={} updates={}\n", MODES[mi],
+		  mCfg.pol.rlEpsilonPct, mRlStats.decisions, mRlStats.steers, mRlStats.explored, mRlStats.updates);
+	constexpr std::array<std::string_view, 3U> TREND{"falling", "stable", "rising"};
+	constexpr std::array<std::string_view, 4U> GAP{"unknown", "worse", "0..7", ">=8"};
+	for (std::size_t s = 0U; s < policy::RL_STATES; s++) {
+		if ((mRl.n[s][0U] == 0U) && (mRl.n[s][1U] == 0U)) {
+			continue; // never visited: still the prior
+		}
+		const std::size_t streak = s % policy::RL_STREAK_BINS;
+		const std::size_t ref = (s / policy::RL_STREAK_BINS) % policy::RL_REF_BINS;
+		const std::size_t gap = (s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS)) % policy::RL_GAP_BINS;
+		const std::size_t tr =
+			(s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS * policy::RL_GAP_BINS)) % policy::RL_TREND_BINS;
+		const std::size_t rb = s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS * policy::RL_GAP_BINS *
+					    policy::RL_TREND_BINS);
+		FixedString<16U> qw;
+		FixedString<16U> qs;
+		formatQ(qw, mRl.q[s][0U]);
+		formatQ(qs, mRl.q[s][1U]);
+		formatTo(o, "q {} rssi={} trend={} gap={} refusals={}{} streak={} wait={} steer={} n={}/{} greedy={}\n", s,
+			 policy::rlRssiBinName(rb), TREND[tr], GAP[gap], ref, (ref == 2U) ? "+" : "", streak, qw, qs,
+			 mRl.n[s][0U], mRl.n[s][1U], (mRl.q[s][1U] > mRl.q[s][0U]) ? "steer" : "wait");
 	}
 }
 

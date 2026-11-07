@@ -114,6 +114,12 @@ trigger      rssi < threshold(s) and lowCount ≥ rssi_low_count
   backoff). AP2 holds the value. When the STA then roams to AP2 on its own,
   AP1 learns −81 → −80 and AP2's live entry takes it over.
 
+## Learned decision (Q-learning)
+
+With `rl_roam 2` the decision *when* to steer comes from a learned Q-table
+instead of the rule above; by default (`rl_roam 1`) the table only learns
+from the rule's decisions. See [feature 15](15-rl-roaming.md).
+
 ## Choosing the target
 
 The engine (feature 5) measures the candidates. For reason RSSI:
