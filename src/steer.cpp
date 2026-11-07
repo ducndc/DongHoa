@@ -17,9 +17,9 @@ constexpr LogModule LOG_MODULE{LogModule::STEER};
 constexpr Millis MEAS_FRESH_MS = 10000U;
 constexpr Millis POOL_HINT_MS = 120000U; // measurement age that still orders the pool
 constexpr Millis REMOTE_HOLD_SLACK_MS = 1500U; // covers ARCP retransmissions
-constexpr Millis AMON_REPORT_SLACK_MS = 500U;
-constexpr Millis LB_ROAM_MS = 2000U;         // roam time allowed before judging an offload
-constexpr Millis BCN_QUIET_BASE_MS = 200U;   // + 2 channel times: no new beacon report -> 11k over  // monitor report delivery after the watch
+constexpr Millis AMON_REPORT_SLACK_MS = 500U; // monitor report delivery after the watch
+constexpr Millis LB_ROAM_MS = 2000U;          // roam time allowed before judging an offload
+constexpr Millis BCN_QUIET_BASE_MS = 200U;    // + 2 channel times: no new beacon report -> 11k over
 constexpr std::uint8_t NO_STATUS = 0xffU;
 
 std::string_view reasonName(arcp::SteerReason r) noexcept
