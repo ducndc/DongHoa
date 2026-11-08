@@ -227,6 +227,17 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	logging::info(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta, reasonName(t.reason),
 		      outcomeName(raw(outcome)), now - t.started);
 	sendResult(t, outcome, btmStatus);
+	// Contextual bandit: the outcome of the candidate tried last.
+	if ((outcome != arcp::SteerOutcome::ABORTED) && (t.cur < t.nCand) && (t.state >= SteerState::BTM)) {
+		int g = 0;
+		if ((t.cand[t.cur].rcpi <= 220U) && (t.startRssi != 0)) {
+			g = rrm::rcpiToDbm(t.cand[t.cur].rcpi) - t.startRssi;
+		}
+		banditCredit(t.cand[t.cur], policy::rlRewardSteer(outcome, g), outcomeName(raw(outcome)));
+		if (outcome == arcp::SteerOutcome::SUCCESS) {
+			banditWatchPingPong(t);
+		}
+	}
 	if (t.rlArmed && (outcome != arcp::SteerOutcome::ABORTED)) {
 		int g = 0;
 		if ((t.cur < t.nCand) && (t.cand[t.cur].rcpi <= 220U) && (t.startRssi != 0)) {
@@ -456,6 +467,18 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 			continue;
 		}
 		c.score = policy::score(p, ctx, in);
+		if (in.estRssi != policy::RSSI_UNKNOWN) {
+			policy::BanditFeatures bf;
+			bf.levelDbm = in.estRssi;
+			bf.bandDelta = (c.info.band > ctx.curBand) ? 1 : ((c.info.band < ctx.curBand) ? -1 : 0);
+			bf.local = c.local;
+			bf.utilPct = in.utilPct;
+			bf.src = (be == nullptr) ? policy::BanditSrc::UNMEASURED
+						 : ((be->src == MeasSrc::STA_11K) ? policy::BanditSrc::STA_11K
+										  : policy::BanditSrc::AP_SIDE);
+			c.banditCtx = policy::banditCtx(bf);
+			c.banditPrior = policy::banditPriorDb(in.estRssi - ctx.curRssi);
+		}
 		logging::dbg(LOG_MODULE, "steer #{} cand {} rssi {} ({}) util {}% -> {}", t.id, c.bssid, in.estRssi,
 			     (be == nullptr) ? "unmeasured"
 					     : ((be->src == MeasSrc::STA_11K) ? "11k" : "air monitor"),
@@ -467,6 +490,33 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 	}
 	t.nCand = n;
 	sortCandidates(t.cand, n);
+	// Contextual bandit (active): the eligible candidates in order of learned
+	// value instead of score; now and then the top two swapped (exploration).
+	if ((banditMode() == policy::RlMode::ACTIVE) && (n > 1U)) {
+		const Mac first = t.cand[0U].bssid;
+		for (std::size_t i = 1U; i < n; i++) {
+			const Candidate c = t.cand[i];
+			const int v = policy::banditValue(mBandit, c.banditCtx, c.banditPrior);
+			std::size_t j = i;
+			while ((j > 0U) &&
+			       (policy::banditValue(mBandit, t.cand[j - 1U].banditCtx, t.cand[j - 1U].banditPrior) < v)) {
+				t.cand[j] = t.cand[j - 1U];
+				j--;
+			}
+			t.cand[j] = c;
+		}
+		if ((p.banditEpsilonPct > 0) && (static_cast<int>(nextRandom() % 100U) < p.banditEpsilonPct)) {
+			const Candidate c = t.cand[0U];
+			t.cand[0U] = t.cand[1U];
+			t.cand[1U] = c;
+			mBanditStats.explored++;
+		}
+		if (t.cand[0U].bssid != first) {
+			mBanditStats.reordered++;
+			logging::info(LOG_MODULE, "steer #{}: bandit puts {} first (score order: {})", t.id, t.cand[0U].bssid,
+				      first);
+		}
+	}
 	t.cur = 0U;
 	advance(t);
 }
@@ -1014,6 +1064,7 @@ void Daemon::onBtmResp(const hapd::BtmResp &r) noexcept
 		logging::info(LOG_MODULE, "steer #{} {}: BTM rejected, status {}", t->id, r.addr, r.status);
 		if ((t->cur + 1U) < t->nCand) {
 			// This candidate said no; try the next one before giving up.
+			banditCredit(t->cand[t->cur], policy::RL_R_REFUSED, "BTM rejected");
 			sendResult(*t, arcp::SteerOutcome::BTM_REJECT, static_cast<std::uint8_t>(r.status));
 			t->cur++;
 			advance(*t);
@@ -1104,6 +1155,7 @@ void Daemon::onSteerResp(const Peer &from, const arcp::SteerResp &r) noexcept
 		return;
 	}
 	logging::info(LOG_MODULE, "steer #{}: AP {} refused (status {})", t->id, from.id, r.status);
+	banditCredit(t->cand[t->cur], policy::BANDIT_R_TARGET_REFUSED, "target refused");
 	t->cur++;
 	advance(*t);
 }
@@ -1216,6 +1268,9 @@ void Daemon::tickSteer(Millis now) noexcept
 			logging::info(LOG_MODULE, "steer #{}: no STEER_RESP from {}", t.id,
 				      (t.cur < t.nCand) ? t.cand[t.cur].ap : Mac{});
 			// It may have accepted (its answer lost): release that slot.
+			if (t.cur < t.nCand) {
+				banditCredit(t.cand[t.cur], policy::BANDIT_R_TARGET_REFUSED, "no answer from the target");
+			}
 			sendResult(t, arcp::SteerOutcome::ABORTED, NO_STATUS);
 			t.cur++;
 			advance(t);
@@ -1226,6 +1281,7 @@ void Daemon::tickSteer(Millis now) noexcept
 				// before giving up on the whole steer.
 				logging::info(LOG_MODULE, "steer #{}: no BTM response from {}, trying next candidate",
 					      t.id, t.cand[t.cur].bssid);
+				banditCredit(t.cand[t.cur], policy::RL_R_REFUSED, "no BTM response");
 				sendResult(t, arcp::SteerOutcome::BTM_TIMEOUT, NO_STATUS);
 				t.cur++;
 				advance(t);
@@ -1286,6 +1342,62 @@ void Daemon::rlEndWait(Sta &s, int rewardDb, std::string_view why) noexcept
 		logging::dbg(LOG_MODULE, "rl sta {}: waiting ended ({})", s.addr, why);
 		rlLearn(s.addr, s.rlState, policy::RlAction::WAIT, rewardDb, true, 0U);
 		s.rlWaiting = false;
+	}
+}
+
+// ---- contextual bandit: target choice ----
+
+policy::RlMode Daemon::banditMode() const noexcept
+{
+	const int m = (mBanditModeOverride >= 0) ? mBanditModeOverride : mCfg.pol.banditTarget;
+	return (m == 2) ? policy::RlMode::ACTIVE : ((m == 1) ? policy::RlMode::SHADOW : policy::RlMode::OFF);
+}
+
+void Daemon::banditCredit(const Candidate &c, int rewardDb, std::string_view why) noexcept
+{
+	if (banditMode() == policy::RlMode::OFF) {
+		return;
+	}
+	const int before = mBandit.q[c.banditCtx];
+	policy::banditUpdate(mBandit, c.banditCtx, rewardDb);
+	mBanditStats.updates++;
+	logging::dbg(LOG_MODULE, "bandit {}: context {} reward {} ({}) -> mean {} -> {} (x256)", c.bssid, c.banditCtx,
+		     rewardDb, why, before, mBandit.q[c.banditCtx]);
+}
+
+void Daemon::banditWatchPingPong(const SteerTxn &t) noexcept
+{
+	PingPongWatch *w = nullptr;
+	PingPongWatch *oldest = nullptr;
+	for (PingPongWatch &x : mPingPong) {
+		if ((w == nullptr) && (!x.used || (x.sta == t.sta))) {
+			w = &x;
+		}
+		if ((oldest == nullptr) || (x.ts < oldest->ts)) {
+			oldest = &x;
+		}
+	}
+	w = (w != nullptr) ? w : oldest;
+	w->used = true;
+	w->sta = t.sta;
+	w->srcBss = t.bss;
+	w->ctx = t.cand[t.cur].banditCtx;
+	w->ts = os::nowMs();
+}
+
+void Daemon::banditCheckPingPong(std::size_t bss, const Mac &sta) noexcept
+{
+	for (PingPongWatch &w : mPingPong) {
+		if (!w.used || (w.sta != sta)) {
+			continue;
+		}
+		if ((w.srcBss == bss) && ((os::nowMs() - w.ts) < policy::BANDIT_PING_PONG_MS) &&
+		    (banditMode() != policy::RlMode::OFF)) {
+			policy::banditUpdate(mBandit, w.ctx, policy::BANDIT_R_PING_PONG);
+			mBanditStats.updates++;
+			logging::info(LOG_MODULE, "sta {} back on the BSS it was steered away from: ping-pong", sta);
+		}
+		w.used = false;
 	}
 }
 

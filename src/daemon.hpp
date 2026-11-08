@@ -235,6 +235,8 @@ struct Candidate {
 	std::uint8_t rcpi{255U};
 	arcp::BssInfo info{};
 	int poolRank{0};           // policy::candidatePoolRank
+	std::size_t banditCtx{0U}; // policy::banditCtx of this candidate
+	int banditPrior{0};        // policy::banditPriorDb (dB)
 	std::size_t poolPos{0U};   // peer visit order in buildPool (rotation)
 };
 
@@ -435,6 +437,10 @@ public:
 		     std::size_t next) noexcept;
 	void rlEndWait(Sta &s, int rewardDb, std::string_view why) noexcept; // terminal end of a pending WAIT
 	std::uint32_t nextRandom() noexcept;
+	policy::RlMode banditMode() const noexcept;
+	void banditCredit(const Candidate &c, int rewardDb, std::string_view why) noexcept;
+	void banditWatchPingPong(const SteerTxn &t) noexcept;
+	void banditCheckPingPong(std::size_t bss, const Mac &sta) noexcept;
 	// Own roam of a STA that already left: from its record (leftRssi).
 	void noteOwnRoamFromRecord(const Mac &sta) noexcept;
 	void shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t events, std::string_view why) noexcept;
@@ -504,6 +510,7 @@ private:
 	void runCtrlCommand(std::string_view req, FixedString<8192U> &out) noexcept;
 	void cmdRl(FixedString<8192U> &o, std::string_view args) noexcept;
 	void cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept;
+	void cmdBandit(FixedString<8192U> &o, std::string_view args) noexcept;
 	// main.cpp helpers
 	bool setupTransport() noexcept;
 	void runTimers() noexcept;
@@ -545,6 +552,23 @@ private:
 	std::uint32_t mRng{0x9e3779b9U};
 	// Fault injection (DROPRX): drop the next mDropCount received messages
 	// of type mDropType, before ACK and processing, as if lost.
+	// Contextual bandit for the target choice (steer.cpp).
+	policy::BanditTable mBandit{};
+	struct BanditStats {
+		std::uint32_t reordered{0U};
+		std::uint32_t explored{0U};
+		std::uint32_t updates{0U};
+	};
+	BanditStats mBanditStats{};
+	int mBanditModeOverride{-1};
+	struct PingPongWatch {
+		bool used{false};
+		Mac sta{};
+		std::size_t srcBss{0U};   // local BSS the STA was steered away from
+		std::size_t ctx{0U};      // context of the successful target
+		Millis ts{0U};
+	};
+	std::array<PingPongWatch, 32U> mPingPong{};
 	std::uint8_t mDropType{0U};
 	std::uint32_t mDropCount{0U};
 	bool mRlInit{false};

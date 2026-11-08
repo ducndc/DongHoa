@@ -568,5 +568,53 @@ std::string_view rlRssiBinName(std::size_t bin) noexcept
 	return (bin < NAMES.size()) ? NAMES[bin] : std::string_view("?");
 }
 
+// ---- contextual bandit ----
+
+std::size_t banditCtx(const BanditFeatures &f) noexcept
+{
+	std::size_t lv = 3U;
+	if (f.levelDbm >= -55) {
+		lv = 0U;
+	} else if (f.levelDbm >= -62) {
+		lv = 1U;
+	} else if (f.levelDbm >= -70) {
+		lv = 2U;
+	} else {
+		// weaker
+	}
+	const std::size_t bd = (f.bandDelta < 0) ? 0U : ((f.bandDelta > 0) ? 2U : 1U);
+	const std::size_t lo = f.local ? 1U : 0U;
+	const std::size_t ut = ((f.utilPct < 30) || (f.utilPct < 0)) ? 0U : ((f.utilPct <= 55) ? 1U : 2U);
+	const std::size_t sr = static_cast<std::size_t>(f.src);
+	return ((((((lv * BANDIT_BAND_BINS) + bd) * BANDIT_LOCAL_BINS) + lo) * BANDIT_UTIL_BINS + ut) *
+		BANDIT_SRC_BINS) + sr;
+}
+
+int banditPriorDb(int gainDb) noexcept
+{
+	const int g = (gainDb < 0) ? 0 : ((gainDb > RL_R_GAIN_MAX) ? RL_R_GAIN_MAX : gainDb);
+	return RL_R_SUCCESS + g;
+}
+
+int banditValue(const BanditTable &t, std::size_t ctx, int priorDb) noexcept
+{
+	const std::int64_t n = static_cast<std::int64_t>((ctx < BANDIT_CTX) ? t.n[ctx] : 0U);
+	const std::int64_t q = (ctx < BANDIT_CTX) ? t.q[ctx] : 0;
+	const std::int64_t prior = static_cast<std::int64_t>(priorDb) * RL_ONE;
+	return static_cast<int>(((q * n) + (prior * BANDIT_PRIOR_WEIGHT)) / (n + BANDIT_PRIOR_WEIGHT));
+}
+
+void banditUpdate(BanditTable &t, std::size_t ctx, int rewardDb) noexcept
+{
+	if (ctx >= BANDIT_CTX) {
+		return;
+	}
+	const std::uint32_t n = t.n[ctx];
+	const std::int64_t div = static_cast<std::int64_t>((n < RL_ALPHA_N) ? (n + 1U) : RL_ALPHA_N);
+	const std::int64_t q = t.q[ctx];
+	t.q[ctx] = static_cast<int>(q + (((static_cast<std::int64_t>(rewardDb) * RL_ONE) - q) / div));
+	t.n[ctx] = (n < 0xffffffffU) ? (n + 1U) : n;
+}
+
 } // namespace policy
 } // namespace donghoa

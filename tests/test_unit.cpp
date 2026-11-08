@@ -438,6 +438,56 @@ void testPolicy()
 	CHECK(!policy::isRssiTriggered(p, -80, 5, -82)); // a STA with a lower threshold hangs on
 	CHECK(policy::isRssiTriggered(p, -70, 5, -65));  // a higher one roams earlier
 
+	// contextual bandit for the target choice
+	{
+		std::array<bool, policy::BANDIT_CTX> seen{};
+		bool unique = true;
+		const std::array<int, 4U> lv{{-50, -58, -66, -75}};
+		const std::array<int, 3U> ut{{10, 40, 70}};
+		for (const int l : lv) {
+			for (int bd = -1; bd <= 1; bd++) {
+				for (int lo = 0; lo < 2; lo++) {
+					for (const int u : ut) {
+						for (int sr = 0; sr < 3; sr++) {
+							policy::BanditFeatures f;
+							f.levelDbm = l;
+							f.bandDelta = bd;
+							f.local = lo == 1;
+							f.utilPct = u;
+							f.src = static_cast<policy::BanditSrc>(sr);
+							const std::size_t c = policy::banditCtx(f);
+							unique = unique && (c < policy::BANDIT_CTX) && !seen[c];
+							if (c < policy::BANDIT_CTX) {
+								seen[c] = true;
+							}
+						}
+					}
+				}
+			}
+		}
+		CHECK(unique);
+		policy::BanditFeatures unk;
+		unk.utilPct = -1;
+		policy::BanditFeatures low;
+		low.utilPct = 10;
+		CHECK(policy::banditCtx(unk) == policy::banditCtx(low)); // unknown load counts as light
+		// prior: what a success would earn
+		CHECK((policy::banditPriorDb(10) == 18) && (policy::banditPriorDb(40) == 32) && (policy::banditPriorDb(-5) == 8));
+		policy::BanditTable t;
+		CHECK(policy::banditValue(t, 7U, 20) == (20 * policy::RL_ONE)); // nothing learned: the prior
+		policy::banditUpdate(t, 7U, policy::RL_R_REFUSED);
+		CHECK((t.n[7] == 1U) && (t.q[7] == (policy::RL_R_REFUSED * policy::RL_ONE)));
+		CHECK(policy::banditValue(t, 7U, 20) == ((-10 + (20 * 3)) * policy::RL_ONE) / 4); // 1 sample vs prior x3
+		for (int i = 0; i < 30; i++) {
+			policy::banditUpdate(t, 7U, policy::RL_R_REFUSED);
+		}
+		CHECK(policy::banditValue(t, 7U, 20) < 0); // evidence outweighs the prior
+		CHECK(policy::banditValue(t, policy::BANDIT_CTX, 5) == (5 * policy::RL_ONE)); // out of range: prior
+		Config c;
+		CHECK(c.pol.banditTarget == 0); // off by default
+		CHECK(parseConfigLine(c, "bandit_target 2") && (c.pol.banditTarget == 2) && !parseConfigLine(c, "bandit_target 3"));
+		CHECK(parseConfigLine(c, "bandit_epsilon_pct 0") && (c.pol.banditEpsilonPct == 0));
+	}
 	// Q-learning of when to roam
 	{
 		// state encoding: every combination maps to a distinct index

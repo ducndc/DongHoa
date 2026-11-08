@@ -119,6 +119,7 @@ lp_min_samples 3
 lp_threshold 8
 lp_hysteresis 2
 rl_epsilon_pct 0
+bandit_epsilon_pct 0
 {extra}""")
 
 
@@ -293,6 +294,8 @@ STA26_MAC = "aa:bb:cc:dd:ee:26"  # S19a: STEER_REQ lost once, retransmitted
 STA27_MAC = "aa:bb:cc:dd:ee:27"  # S19b: every STEER_RESP lost
 STA28_MAC = "aa:bb:cc:dd:ee:28"  # S19c: disconnects during NEGOTIATE
 STA29_MAC = "aa:bb:cc:dd:ee:29"  # S20: chosen for offloading, disconnects instead
+STA30_MAC = "aa:bb:cc:dd:ee:30"  # S21: refuses AP2's BSS, accepts AP1's 2.4 GHz (teaches the bandit)
+STA31_MAC = "aa:bb:cc:dd:ee:31"  # S21: same situation, target chosen by the learned values
 STA18_MAC = "aa:bb:cc:dd:ee:18"  # S13: weak signal, but idle (old frame) until it sends again
 
 
@@ -511,6 +514,61 @@ def scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2):
     wait_for(lambda: STA29_MAC + " disconnected instead of moving: no verdict" in log2(), 8, "no verdict")
     assert "offloading " + STA29_MAC + " did not lower" not in log2(), "a disconnect counted as a futile move"
     print("PASS 20: an offloaded STA that disconnects gives no verdict on the offload")
+
+
+def scenario_bandit_target(world, procs, logs, socks, tmp, ap1, ap2):
+    """S21: contextual bandit for the target choice. The score prefers AP2's
+    BSS (-55 dBm) over AP1's own 2.4 GHz BSS (-58 dBm), but these STAs
+    refuse AP2. Shadow mode learns that from one steer (AP2 rejected, then
+    2.4 GHz accepted); in active mode the next STA in the same situation is
+    sent to 2.4 GHz first, without the wasted request. A STA returning to
+    the BSS it was steered away from within 60 s counts as ping-pong."""
+    if "score_model 1" in EXTRA:
+        # The throughput model ranks AP1's wide (unmeasured) MLO link first,
+        # so "the score prefers AP2" does not hold; like 7-9, linear only.
+        print("SKIP 21: bandit scenario assumes score_model 0")
+        return
+    mark(logs, "S21 contextual bandit: which target")
+    log1 = lambda: open(logs[0].name).read().split("=== S21")[-1]
+    tracked = lambda mac: "flags=kvr" in next((l for l in cli(socks[0], "STAS").splitlines()
+                                               if l.startswith("sta " + mac)), "")
+    view = {B2: (124, 149, -55), B1G: (81, 6, -58)}
+    assert ("mode=shadow" if "bandit_target 1" in EXTRA else "mode=off") in cli(socks[0], "BANDIT")
+    assert "OK" in cli(socks[0], "BANDIT", "reset")  # earlier scenarios may have taught it
+    assert "OK mode shadow" in cli(socks[0], "BANDIT", "mode", "1")
+    teacher = Sta(STA30_MAC, -82, dict(view), rrm={0}, btm_reject={B2})
+    with world.lock:
+        ap1.add_sta(teacher)
+    wait_for(lambda: tracked(STA30_MAC), 3, "STA30 tracked")
+    assert "OK" in cli(socks[0], "STEER", STA30_MAC)
+    wait_for(lambda: STA30_MAC + " (manual) finished: success" in log1(), 10, "the score's choice, then 2.4 GHz")
+    tries = [t[2] for t in world.btm_log if t[1] == STA30_MAC]
+    assert tries[:2] == [B2, B1G], tries
+    bandit = cli(socks[0], "BANDIT")
+    assert "mean=-10.0 n=1" in bandit and "mean=+32.0 n=1" in bandit, bandit
+    # Active: the learned values order the candidates.
+    assert "OK mode active" in cli(socks[0], "BANDIT", "mode", "2")
+    learner = Sta(STA31_MAC, -82, dict(view), rrm={0}, btm_reject={B2})
+    with world.lock:
+        ap1.add_sta(learner)
+    wait_for(lambda: tracked(STA31_MAC), 3, "STA31 tracked")
+    assert "OK" in cli(socks[0], "STEER", STA31_MAC)
+    wait_for(lambda: STA31_MAC + " (manual) finished: success" in log1(), 10, "STA31 steered")
+    tries = [t[2] for t in world.btm_log if t[1] == STA31_MAC]
+    assert tries == [B1G], "first request straight to 2.4 GHz: %s" % tries
+    assert "bandit puts " + B1G + " first (score order: " + B2 + ")" in log1()
+    # Ping-pong: the teacher returns to the BSS it was steered away from.
+    world.move(STA30_MAC, B1G, B1)
+    wait_for(lambda: "sta " + STA30_MAC + " back on the BSS it was steered away from: ping-pong" in log1(), 3,
+             "ping-pong detected")
+    assert "OK mode off" in cli(socks[0], "BANDIT", "mode", "0")
+    with world.lock:
+        for m in (STA30_MAC, STA31_MAC):
+            for b in (ap1, ap1g := world.bss_by_bssid[B1G]):
+                if m in b.stas:
+                    b.remove_sta(m)
+    print("PASS 21: contextual bandit: shadow learned AP2 refused (-10) / 2.4 GHz ok (+32); active sent the next "
+          "STA to 2.4 GHz first; ping-pong detected")
 
 
 def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
@@ -832,6 +890,7 @@ def main():
             scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_bandit_target(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
@@ -939,6 +998,7 @@ def main():
         scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_bandit_target(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)

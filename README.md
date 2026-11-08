@@ -34,6 +34,10 @@ information, and they coordinate:
 - **Learning when to roam (optional):** a small Q-table learns from outcomes
   when to wait and when to steer; off by default, shadow (learn only) or
   active via `rl_roam` or `donghoa_cli RL mode` (`docs/features/15-rl-roaming.md`).
+- **Learning which target (optional):** a contextual bandit learns from
+  outcomes which kind of eligible candidate works (refused, bounced back,
+  or a good roam) and orders candidates by it; off by default, enable with
+  `bandit_target` or `donghoa_cli BANDIT mode` (`docs/features/16-target-bandit.md`).
 - **Calibrated AP-side levels:** the uplink → downlink offset is learned per
   BSS from STAs measured both ways (`donghoa_cli CALIB`).
 - **Real-time metrics:** per-STA signal, inactivity and counters come from

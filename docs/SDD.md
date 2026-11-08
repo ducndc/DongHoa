@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.8, 2026-11-08 (history in §13) |
+| Document version | 2.9, 2026-11-08 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -429,6 +429,16 @@ NEGOTIATE left the target's reservation until `reserve_hold_ms`. In
 (another local BSS, `away`, or `findRemoteSta`); a STA that just
 disconnected gives no verdict. Fault injection for tests: `DROPRX` drops
 received messages of one type in `receiveMsg`, before the ACK.
+
+Contextual bandit for the target (FR-STR-11, feature guide 16): `evaluate`
+stores each candidate's `banditCtx` and `banditPrior`; in active mode the
+sorted list is re-sorted by `policy::banditValue` and, with
+`bandit_epsilon_pct`, its top two swapped. `banditCredit` updates
+`mBandit` at each end of a candidate's attempt: `onBtmResp` reject and the
+BTM timeout with candidates left (−10), `onSteerResp` refusal and the
+NEGOTIATE timeout (−2), and `endTxn` for the last candidate tried (outcome
+reward). A success arms a `PingPongWatch`; `onHapdConnected` on the source
+BSS within 60 s adds −10. Not persisted or shared.
 
 #### 6.6.2 Steps
 
@@ -870,6 +880,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | D19 | Uplink → downlink offset learned per BSS from STAs measured both ways | One global `amon_rssi_offset` | Each AP's TX power and antennas differ (R14) |
 | D20 | Per-STA roaming threshold learned from outcomes, shared with the class records | One global `rssi_low` | Sticky clients are not pestered, cooperative ones roam earlier; no new message type |
 | D21 | Tabular, integer Q-learning with a prior equal to the rule, off by default | Deep RL; a bandit for target choice first | Fits a single-threaded, heap-free daemon and tens of decisions a day; starting from the rule makes enabling it safe |
+| D22 | Contextual bandit for the target: tabular contexts per candidate, value shrunk towards a gain-based prior, only reorders eligible candidates, off by default | LinUCB / Thompson sampling with features | Integer only, explainable (`BANDIT` shows every context), safe: never relaxes a gate |
 
 ## 11. Known limitations and risks
 
@@ -893,6 +904,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | R16 | Low-power thresholds (`lp_threshold`, α per band) are not calibrated against real devices; S compares the variability of uplink and downlink, so a device that uploads steadily (low σ_u) may not qualify, and a phone uploading photos for a long time may | Misclassification: a device kept out of automatic steering, or steered | Collect traces of real IoT devices and phones; tune α per band; add more features (packet size, inactivity). Mitigated in part by `lp_max_mean_bps` (large uploads) and `lp_exclude_vht/eht`; a streaming camera exceeds the default gate and is not classified |
 | R17 | Q-learning (FR-TRG-8): hand-designed rewards, a table per AP that is lost on restart and not shared; shadow mode learns only the rule's actions | Slow or uneven learning; a fresh AP starts from the prior again | Off by default; share tables over ARCP (weighted by visits), persist them, decision log for offline evaluation before active mode |
 | R18 | Per-STA roaming threshold (FR-TRG-7) learns only from RSSI steers and own roams; a STA that only ever sends uplink frames can also drift into the low-power class (R16) and leave automatic steering | A sticky device is left alone (intended); a misclassified idle device is not steered | Range limits (−82..−65), 10 min drift back; magnitude floor or decay for low-power evidence (decision pending) |
+| R19 | Target bandit (FR-STR-11): contexts describe candidates, not clients; the table is per AP, lost on restart | A single client's aversion to one AP is generalised to that kind of candidate; a fresh AP starts from the prior | Off by default; share/persist tables; per-STA exceptions if needed |
 
 ## 12. Traceability (SRS → design)
 
@@ -939,3 +951,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.6 | 2026-11-07 | §6.6: Q-learning of when to roam (`policy::rl*`, `mRl`, decision hand-over to the transaction, rewards); `RL` command |
 | 2.7 | 2026-11-07 | Documentation audit: `rrm_log.cpp` in the module catalogue; R3, R9 mitigated, R10, R11 resolved, new R17, R18; decisions D17–D21; data size re-measured (449,352 bytes); replay window moved to `arcp::acceptSeq` (unit-tested) |
 | 2.8 | 2026-11-08 | §6.6: STEER_RESULT from NEGOTIATE on and on the NEGOTIATE timeout; load-balancing verdict only for a STA seen elsewhere; `DROPRX` fault injection |
+| 2.9 | 2026-11-08 | §6.6: contextual bandit for the target (contexts, prior, credits, ping-pong watch); D22, R19 |

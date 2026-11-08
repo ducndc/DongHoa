@@ -56,6 +56,9 @@ ctrl_socket /var/run/donghoa.sock
                          # (learn only), 2 active (the learned table decides);
                          # also at run time: donghoa_cli <sock> RL mode 0|1|2
 #rl_epsilon_pct 1        # active mode: exploration in safe states
+#bandit_target 0         # contextual bandit for the target choice: 0 off (default),
+                         # 1 shadow (learn only), 2 active; donghoa_cli BANDIT mode 0|1|2
+#bandit_epsilon_pct 5    # active mode: % of steers that swap the top two candidates
 #rssi_hysteresis 8       # dB the target must beat the current RSSI by
 #rssi_min_target -70     # dBm, minimum STA-measured target level
 #band_steer_rssi -55     # dBm, strong 2.4 GHz STA -> 5/6 GHz

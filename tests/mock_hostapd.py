@@ -14,8 +14,10 @@ import time
 class Sta:
     def __init__(self, mac, signal, view, btm_accept=True, tput_bytes=0, rrm=True,
                  op_classes=None, akm="00-0f-ac-4", mld_links=None, link_signal=None,
-                 traffic=None, phy_caps=None, inactive_ms=100):
+                 traffic=None, phy_caps=None, inactive_ms=100, btm_reject=None):
         self.mac = mac
+        # BSSIDs this STA refuses in a BTM request (status 1), others accepted.
+        self.btm_reject = set(btm_reject or ())
         # inactive_msec: time since the STA's last frame (its signal is that
         # frame's); large = an idle STA whose signal value is old.
         self.inactive_ms = inactive_ms
@@ -206,7 +208,7 @@ class MockBss:
         self.world.btm_log.append((self.bssid, mac, target, " ".join(w)))
 
         def respond():
-            if not sta.btm_accept or target not in self.world.bss_by_bssid:
+            if not sta.btm_accept or target not in self.world.bss_by_bssid or target in sta.btm_reject:
                 self.event("BSS-TM-RESP %s dialog_token=1 status_code=1 "
                            "bss_termination_delay=0" % mac)
                 return

@@ -39,6 +39,7 @@ answered in the same loop iteration, so the reply is a consistent snapshot.
 | `STEERS` | running transactions (state, candidate i/n) and reservations |
 | `DEVCLASS` | device class records: class, score, samples, source AP, age, and a learned `roam_thr` / `roam_events` |
 | `CALIB` | learned uplink → downlink offsets per BSS (feature 9) |
+| `BANDIT [mode <0|1|2> \| reset]` | contextual bandit for the target choice: mode, counters, learned mean per visited context; switch mode or clear (feature 16) |
 | `DROPRX [<MESSAGE> <n>]` | fault injection: drop the next *n* received ARCP messages of that type (e.g. `STEER_RESP`) before ACK and processing, as a lossy link would; logged on every drop; `DROPRX` shows what is pending, `n = 0` cancels. For tests and diagnosis |
 | `RL [mode <0|1|2> \| reset]` | Q-learning of when to roam: mode, counters, learned values per visited state; switch mode or reset to the prior (feature 15) |
 | `STEER <sta> [<bssid>]` | start a manual steer (clears the STA's cooldown), optionally to one BSS |
