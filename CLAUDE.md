@@ -28,6 +28,8 @@ DONGHOA_KEEP_LOGS=1 python3 tests/itest.py   # keep per-AP debug logs in /tmp/do
 #   DONGHOA_BIN="$LD $B/donghoa" DONGHOA_CLI_BIN="$LD $B/donghoa_cli" python3 tests/itest.py
 make check-deps      # binaries must need libc only (no libstdc++.so)
 make cppcheck        # static analysis (run in a container if cppcheck is missing)
+make style           # convention rules the compiler misses: 110 columns, tabs, braces,
+                     # else/switch/for structure, naming, macros, heap, DEV-05 state
 make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli && make itest
 ```
 

@@ -6,7 +6,7 @@
 | Baseline standard | MISRA C++:2023 (guidelines for C++17) |
 | Language | ISO C++17, `-fno-exceptions -fno-rtti`, no dynamic memory |
 | Document version | 2.1, 2026-11-01 (2.1: naming conventions in §4; 1.x covered the C11 code base and MISRA C:2012) |
-| Check | Compiler warnings (§7), `make check-deps`, `make cppcheck`, review checklist (§9) |
+| Check | Compiler warnings (§7), `make check-deps`, `make cppcheck`, `make style`, review checklist (§9) |
 
 ## 1. Purpose and status
 
@@ -242,6 +242,7 @@ A departure from a Required rule outside §6.2 needs:
 | Compiler | `make`; `make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli` | Zero warnings with the flags in §3 |
 | Dependencies | `make check-deps` | `libc` only: no `libstdc++.so`, no `libgcc_s.so` |
 | Static analysis | `make cppcheck` (`--enable=warning,portability`; in a container if needed) | No findings |
+| Style | `make style` (`tools/style_check.py`): line width ≤ 110, indentation starting with tabs, trailing whitespace, `/*` comments, macros and include guards, braces on every body (9.3.1), final `else` (9.4.1), `switch` `default` (9.4.2), `for` with `<` (9.5.1), `UPPER_CASE` constants, local `static` (6.7.1), heap / allocating types, `NULL`, `goto`, `union`, exceptions, throwing calls, C stdio outside `os.cpp`, namespace-scope variables outside the DEV-05 list | No findings |
 | Confinement | `grep -lE '^#include <(cstring\|csignal)>\|reinterpret_cast\|::socket\|const_cast' src/* tools/*` | Only `src/os.cpp` |
 | Tests | `make test`, `make itest`, and `openwrt/qemu/systest.sh` for releases | All pass; no sanitizer report |
 | Review | §9 checklist | Each item checked |
@@ -265,6 +266,7 @@ Version 2.x (`donghoa-1.0-r24`), after a convention audit of `src/` and
   (`-O1 -fsanitize=address,undefined`), including `tests/test_unit`: 0
   warnings.
 - `make check-deps`: `NEEDED libc` only. `make cppcheck` (2.14): 0 findings.
+  `make style`: 0 findings.
 - Confinement grep (§7): only `src/os.cpp`.
 - Layout (§4): no line over 110 columns (158 were reflowed in this audit,
   71 of them older than the features added since 2026-11-06), tab
@@ -304,3 +306,5 @@ Version 2.x (`donghoa-1.0-r24`), after a convention audit of `src/` and
 - [ ] New wire values only in `src/proto.hpp`, with `docs/PROTOCOL.md` and
       the round-trip tests updated together.
 - [ ] A new deviation is recorded in §6.2 in the same change.
+- [ ] `make style` reports no finding (a new DEV-05 variable is added to its list in
+      `tools/style_check.py` together with the §6.2 row).
