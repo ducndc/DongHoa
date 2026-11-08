@@ -164,31 +164,82 @@ bool parseBss(Config &c, std::string_view args) noexcept
 	return ok;
 }
 
-// "hex:<32..128 hex digits>", or a passphrase (>= 8 characters) hashed to
-// 32 bytes: SHA256("arcp-key:" || passphrase).
+// "hex:<32..128 hex digits>", or a passphrase (8..KEY_PASSPHRASE_MAX
+// characters) stretched to 32 bytes with PBKDF2-HMAC-SHA256 (KEY_KDF_SALT,
+// KEY_KDF_ITERATIONS), so a captured frame does not allow fast offline
+// guessing of the passphrase.
 bool parseKey(Config &c, std::string_view v) noexcept
 {
 	bool ok = false;
-	if (startsWith(v, "hex:")) {
+	if (v == KEY_PLACEHOLDER) {
+		c.keyPlaceholder = true;
+	} else if (startsWith(v, "hex:")) {
 		const std::optional<std::size_t> n = hexDecode(subView(v, 4U), spanOf(c.key));
 		ok = n.has_value() && (*n >= 16U);
 		c.keyLen = ok ? *n : 0U;
-	} else if (v.size() >= 8U) {
-		Sha256 h;
-		FixedString<200U> material{"arcp-key:"};
-		ok = material.append(v);
-		if (ok) {
-			std::array<std::uint8_t, 200U> bytes{};
-			const std::string_view m = material.view();
-			for (std::size_t i = 0U; i < m.size(); i++) {
-				bytes[i] = static_cast<std::uint8_t>(m[i]);
-			}
-			h.update(viewOf(bytes).first(m.size()));
-			const Digest d = h.finish();
-			c.keyLen = copyBytes(spanOf(c.key), viewOf(d));
+	} else if ((v.size() >= 8U) && (v.size() <= KEY_PASSPHRASE_MAX)) {
+		std::array<std::uint8_t, KEY_PASSPHRASE_MAX> pw{};
+		std::array<std::uint8_t, KEY_KDF_SALT.size()> salt{};
+		for (std::size_t i = 0U; i < v.size(); i++) {
+			pw[i] = static_cast<std::uint8_t>(v[i]);
 		}
+		for (std::size_t i = 0U; i < salt.size(); i++) {
+			salt[i] = static_cast<std::uint8_t>(KEY_KDF_SALT[i]);
+		}
+		const Digest d = pbkdf2Sha256(viewOf(pw).first(v.size()), viewOf(salt), KEY_KDF_ITERATIONS);
+		c.keyLen = copyBytes(spanOf(c.key), viewOf(d));
+		ok = true;
 	} else {
 		// too short
+	}
+	return ok;
+}
+
+// "hex:<64 hex digits>" -> exactly 32 bytes
+bool parseHex32(std::string_view v, std::array<std::uint8_t, 32U> &out) noexcept
+{
+	bool ok = startsWith(v, "hex:");
+	if (ok) {
+		std::array<std::uint8_t, 33U> tmp{};
+		const std::optional<std::size_t> n = hexDecode(subView(v, 4U), spanOf(tmp));
+		ok = n.has_value() && (*n == 32U);
+		for (std::size_t i = 0U; ok && (i < 32U); i++) {
+			out[i] = tmp[i];
+		}
+	}
+	return ok;
+}
+
+// "sign_seed hex:<64>": this AP's Ed25519 private seed
+bool parseSignSeed(Config &c, std::string_view v) noexcept
+{
+	ed25519::Seed seed{};
+	const bool ok = parseHex32(v, seed);
+	if (ok) {
+		c.signKey = ed25519::keyPairFromSeed(seed);
+		c.signing = true;
+	}
+	return ok;
+}
+
+// "peer_key <ap_id> hex:<64>": a trusted AP and its public key (once each)
+bool parsePeerKey(Config &c, std::string_view v) noexcept
+{
+	Tokens t(v, " \t");
+	std::string_view macTok;
+	std::string_view keyTok;
+	std::string_view extra;
+	TrustedKey k;
+	bool ok = t.next(macTok) && t.next(keyTok) && !t.next(extra);
+	if (ok) {
+		const std::optional<Mac> m = parseMac(macTok);
+		ok = m.has_value() && parseHex32(keyTok, k.pub) && ed25519::isValidPublicKey(k.pub);
+		k.apId = m.has_value() ? *m : Mac{};
+	}
+	ok = ok && (c.findTrusted(k.apId) == nullptr) && (c.nTrusted < c.trusted.size());
+	if (ok) {
+		c.trusted[c.nTrusted] = k;
+		c.nTrusted++;
 	}
 	return ok;
 }
@@ -326,6 +377,22 @@ bool parseConfigLine(Config &c, std::string_view line) noexcept
 		ok = parseBss(c, v);
 	} else if (k == "key") {
 		ok = parseKey(c, v);
+	} else if (k == "sign_seed") {
+		ok = parseSignSeed(c, v);
+	} else if (k == "peer_key") {
+		ok = parsePeerKey(c, v);
+	} else if (k == "liveness_check") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		c.livenessCheck = ok && (*n == 1);
+	} else if (k == "enroll") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		c.enroll = ok && (*n == 1);
+	} else if (k == "seed_file") {
+		ok = !v.empty() && c.seedFile.assign(v);
+	} else if (k == "trust_file") {
+		ok = !v.empty() && c.trustFile.assign(v);
 	} else if (k == "bandit_target") {
 		const std::optional<long> n = parseLong(v, 10, 0, 2);
 		ok = n.has_value();
@@ -386,10 +453,19 @@ bool loadConfig(Config &c, const char *path) noexcept
 
 		lineno++;
 		if (!parseConfigLine(c, line)) {
-			logging::err(LOG_MODULE, "{}:{}: invalid line", path, lineno);
+			if (c.keyPlaceholder) {
+				logging::err(LOG_MODULE, "{}:{}: 'key' is the public example value: "
+					     "set a secret of your own (the same on every AP)", path, lineno);
+			} else {
+				logging::err(LOG_MODULE, "{}:{}: invalid line", path, lineno);
+			}
 			ok = false;
 		}
 		rest = (eol == std::string_view::npos) ? std::string_view() : subView(rest, eol + 1U);
+	}
+	if (ok && !c.enroll && (c.signing != (c.nTrusted > 0U))) {
+		logging::err(LOG_MODULE, "'sign_seed' and 'peer_key' go together: set both or neither");
+		ok = false;
 	}
 	if (ok && (c.nBss == 0U)) {
 		logging::err(LOG_MODULE, "no 'bss' configured");

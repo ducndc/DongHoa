@@ -10,6 +10,7 @@ namespace donghoa {
 namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::MAIN};
+
 constexpr int LOOP_TICK_MS = 100;
 
 // Owner of each polled descriptor.
@@ -36,6 +37,23 @@ bool Daemon::setupTransport() noexcept
 	}
 	if (ok && (mCfg.simPort != 0U)) {
 		ok = mL2.addSim(mCfg.simPort, mCfg.simPeers, mCfg.nSimPeers, mApId);
+	}
+	if (ok) {
+		ok = initEnroll();
+	}
+	if (ok && mCfg.signing && !mCfg.enroll) {
+		// Peers list our public key under our ap_id: a mismatch here means
+		// they would drop everything we send.
+		FixedString<64U> pub;
+		(void)hexEncode(viewOf(mCfg.signKey.pub), pub);
+		const ed25519::PublicKey *const own = mCfg.findTrusted(mApId);
+		if ((own != nullptr) && (*own != mCfg.signKey.pub)) {
+			logging::err(LOG_MODULE, "peer_key for this AP ({}) does not match sign_seed "
+				     "(public key {})", mApId, pub);
+			ok = false;
+		} else {
+			logging::info(LOG_MODULE, "signing as {}: peer_key {} hex:{}", mApId, mApId, pub);
+		}
 	}
 	return ok;
 }
@@ -71,8 +89,10 @@ bool Daemon::init(const char *cfgPath, bool debugAll) noexcept
 	if (ok) {
 		initAmon();
 		os::installSignalHandlers();
-		const std::string_view auth = mCfg.keyView().empty() ? " (NO authentication)"
-									    : " (authenticated)";
+		std::string_view auth = mCfg.keyView().empty() ? " (NO authentication)" : " (authenticated)";
+		if (mCfg.signing) {
+			auth = mCfg.keyView().empty() ? " (Ed25519 signed)" : " (Ed25519 signed + HMAC)";
+		}
 		logging::info(LOG_MODULE, "DongHoa '{}' ap_id {} boot {}{}", mCfg.name, mApId,
 			      hex(mBootId, 8U), auth);
 	}
@@ -110,6 +130,7 @@ void Daemon::runTimers() noexcept
 	}
 	tickSteer(now);
 	tickAmon(now);
+	tickEnroll(now);
 	mSurvey.tick(now);
 	retransmit(now);
 	expirePeers(now);
@@ -205,15 +226,42 @@ namespace {
 
 donghoa::Daemon sDaemon;
 
+// -g: new random seed; prints the configuration lines for it.
+int generateKey() noexcept
+{
+	donghoa::ed25519::Seed seed{};
+	if (!donghoa::os::randomBytes(donghoa::spanOf(seed))) {
+		donghoa::os::writeStderr("no randomness available\n");
+		return 1;
+	}
+	const donghoa::ed25519::KeyPair kp = donghoa::ed25519::keyPairFromSeed(seed);
+	donghoa::FixedString<64U> s;
+	donghoa::FixedString<64U> p;
+	(void)donghoa::hexEncode(donghoa::viewOf(seed), s);
+	(void)donghoa::hexEncode(donghoa::viewOf(kp.pub), p);
+	donghoa::FixedString<400U> out;
+	donghoa::formatTo(out,
+			   "# this AP only (keep secret, like the config file):\n"
+			   "sign_seed hex:{}\n"
+			   "# on every AP, with this AP's ap_id:\n"
+			   "peer_key <ap_id> hex:{}\n", s, p);
+	donghoa::os::writeStdout(out.view());
+	return 0;
+}
+
 void usage(std::string_view prog) noexcept
 {
 	donghoa::Line u;
 	donghoa::formatTo(u,
 			   "usage: {} -c <config> [-d] [-s]\n"
+			   "       {} -g\n"
 			   "  -c  configuration file\n"
 			   "  -d  debug logging for every module (overrides log_level/log_debug)\n"
 			   "  -s  log to syslog (daemon facility) instead of stderr\n"
-			   "Log levels can also be changed at run time: donghoa_cli <socket> LOG\n", prog);
+			   "  -g  generate an Ed25519 key pair: a sign_seed line for this AP and the\n"
+			   "      peer_key line to add on every AP\n"
+			   "Log levels can also be changed at run time: donghoa_cli <socket> LOG\n",
+			   prog, prog);
 	donghoa::os::writeStderr(u.view());
 }
 
@@ -239,6 +287,8 @@ int main(int argc, char **argv)
 		} else if (a == "-h") {
 			usage(prog);
 			return 0;
+		} else if (a == "-g") {
+			return generateKey();
 		} else {
 			rc = 1;
 		}

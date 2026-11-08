@@ -9,10 +9,11 @@ DH_CXXFLAGS := -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
 LDFLAGS ?=
 DH_LDFLAGS := -Wl,--as-needed
 
-CORE := src/text.cpp src/log.cpp src/os.cpp src/sha256.cpp src/proto.cpp src/rrm.cpp \
+CORE := src/text.cpp src/log.cpp src/os.cpp src/sha256.cpp src/sha512.cpp src/ed25519.cpp src/trust.cpp src/proto.cpp src/rrm.cpp \
         src/config.cpp src/policy.cpp src/hapd_parse.cpp src/nlparse.cpp
 DAEMON := $(CORE) src/l2.cpp src/hapd.cpp src/survey.cpp src/peer.cpp src/local.cpp \
           src/msg.cpp src/steer.cpp src/amon.cpp src/ctrl.cpp src/rrm_log.cpp src/devclass.cpp src/vendor_rssi.cpp \
+          src/enroll.cpp \
           src/main.cpp
 CLI := src/text.cpp src/os.cpp tools/donghoa_cli.cpp
 TESTS := tests/test_unit

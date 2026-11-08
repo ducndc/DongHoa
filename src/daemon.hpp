@@ -21,11 +21,14 @@
 #include "proto.hpp"
 #include "rrm.hpp"
 #include "survey.hpp"
+#include "trust.hpp"
 
 namespace donghoa {
 
 constexpr std::size_t MAX_STA = 256U;
 constexpr std::size_t MAX_PEERS = 32U;
+constexpr std::size_t MAX_CHALLENGES = 8U; // outstanding liveness challenges
+constexpr std::size_t MAX_ENROLL_PENDING = 8U; // enrollment requests awaiting approval
 constexpr std::size_t MAX_REMOTE_STA = 512U;
 constexpr std::size_t MAX_MEAS = 16U;
 constexpr std::size_t MAX_TXN = 16U;
@@ -333,7 +336,27 @@ struct UlDlCal {
 	Millis ts{0U}; // last sample
 };
 
-// Replay window: true if (bootId, msgId) is new for p, and records it.
+// Liveness CHALLENGE sent to an origin whose current boot is not verified
+// (an unknown origin, or a known one with another boot_id).
+struct Challenge {
+	bool used{false};
+	Mac origin{};
+	arcp::Nonce nonce{};
+	Millis sent{0U};
+};
+
+// An AP asking to be enrolled (ENROLL_REQ), until approved or quiet.
+struct EnrollPending {
+	bool used{false};
+	Mac apId{};
+	ed25519::PublicKey pub{};
+	bool keyChange{false}; // the trust table has another key for this ap_id
+	Millis first{0U};
+	Millis last{0U};
+};
+
+// Replay window: true if (bootId, msgId) is new for p's verified boot, and
+// records it.
 bool acceptPeerSeq(Peer &p, std::uint32_t bootId, std::uint32_t msgId) noexcept;
 
 class Daemon {
@@ -460,6 +483,29 @@ private:
 	// msg.cpp helpers
 	bool finish(arcp::Message &m) noexcept;
 	void sendAck(const Mac &peer, std::uint32_t id) noexcept;
+	// With peer_key configured: the origin is trusted and signed the message.
+	bool isSignatureOk(ByteView frame, const arcp::Header &h) noexcept;
+	// Key the origin must sign with: enrollment trust table, else peer_key.
+	const ed25519::PublicKey *trustedKeyFor(const Mac &origin) const noexcept;
+	// Automatic enrollment (enroll.cpp)
+	bool initEnroll() noexcept;
+	void tickEnroll(Millis now) noexcept;
+	void saveTrust() noexcept;
+	void sendTrust() noexcept;
+	void sendWelcome(const Mac &apId) noexcept;
+	void onUntrusted(ByteView frame, const arcp::Header &h) noexcept;
+	void onTrust(ByteView frame, const arcp::Header &h) noexcept;
+	void onTrustRecord(const arcp::TrustRecord &r, bool &changed) noexcept;
+	void afterTrustChange() noexcept;
+	void cmdEnroll(FixedString<8192U> &o, std::string_view args) noexcept;
+	// Liveness check (msg.cpp): a message of an unverified (origin, boot_id)
+	// is answered with a CHALLENGE; only a RESPONSE carrying its nonce, from
+	// the boot it names, adopts that boot. Replayed frames cannot answer.
+	void sendDirect(std::size_t port, const Mac &dst, arcp::Message &m) noexcept;
+	void sendChallenge(std::size_t port, const Mac &dst, const Mac &origin) noexcept;
+	void answerChallenge(std::size_t port, const Mac &dst, ByteView frame,
+			     const arcp::Header &h) noexcept;
+	bool isResponseValid(ByteView frame, const arcp::Header &h) noexcept;
 	void onAckReceived(const Mac &peer, std::uint32_t id) noexcept;
 	void handleTlvs(Peer &p, ByteView frame, const arcp::Header &h) noexcept;
 	void trace(std::string_view dir, ByteView frame, const Mac *peer, std::string_view port,
@@ -577,6 +623,13 @@ private:
 	bool mRlInit{false};
 
 	os::Fd mCtrlFd{};
+
+	std::array<Challenge, MAX_CHALLENGES> mChal{};
+	trust::Table mTrust{};
+	std::array<EnrollPending, MAX_ENROLL_PENDING> mEnrollPend{};
+	Millis mNextEnrollReq{0U};
+	Millis mNextTrustSync{0U};
+	Millis mLastResync{0U}; // last HELLO/BSS_STATUS sent early for a CHALLENGE
 
 	Millis mNextHello{0U};
 	Millis mNextBssStatus{0U};

@@ -50,7 +50,8 @@ throwing function. Every key, its default and unit is listed in
 
 | Group | Keys (examples) | Feature |
 |---|---|---|
-| Identity and transport | `name`, `ap_id`, `iface`, `key`, `sim_port`, `sim_peer` | 1, 2 |
+| Identity and transport | `name`, `ap_id`, `iface`, `sim_port`, `sim_peer` | 1, 2 |
+| Security (all off by default) | `key`, `liveness_check`, `sign_seed`, `peer_key`, `enroll`, `seed_file`, `trust_file` | 1, 17 |
 | hostapd | `bss`, `hostapd_ctrl_dir` | 4 |
 | Timers | `*_interval_ms`, `peer_timeout_ms`, `*_timeout_ms` | 2, 5 |
 | Triggers | `rssi_*`, `band_steer*`, `load_balancing`, `util_high` | 6, 7, 8 |
@@ -97,6 +98,7 @@ flowchart TB
 |---|---|
 | Build | `openwrt/build.sh [target/subtarget] [release]`: official SDK in Docker, prints the `.apk` (25.x) or `.ipk` (24.x) path |
 | Contents | `/usr/sbin/donghoa`, `/usr/sbin/donghoa_cli`, `/etc/init.d/donghoa`, `/etc/donghoa.conf` (conffile, kept on upgrade) |
+| Keys (enrollment) | `/etc/donghoa.seed` and `/etc/donghoa.trust`, created by the daemon with `enroll 1`; listed in `/lib/upgrade/keep.d/donghoa`, so a sysupgrade keeps them (feature 17) |
 | Dependencies | libc only (`make check-deps`: no `libstdc++.so`; no heap, exceptions or RTTI) |
 | Release | `PKG_RELEASE` in `openwrt/donghoa/Makefile` must change for every build installed over an older one: `apk add` keeps an installed package of the same version |
 

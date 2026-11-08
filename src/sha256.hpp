@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// FIPS 180-4 SHA-256 and RFC 2104 HMAC-SHA256.
+// FIPS 180-4 SHA-256, RFC 2104 HMAC-SHA256 and RFC 8018 PBKDF2-HMAC-SHA256.
 #ifndef DONGHOA_SHA256_HPP
 #define DONGHOA_SHA256_HPP
 
@@ -31,6 +31,9 @@ private:
 
 Digest computeSha256(ByteView data) noexcept;
 Digest computeHmacSha256(ByteView key, ByteView msg) noexcept;
+// RFC 8018 PBKDF2 with HMAC-SHA256: the first 32-byte block of the derived
+// key (iterations >= 1).
+Digest pbkdf2Sha256(ByteView password, ByteView salt, std::uint32_t iterations) noexcept;
 
 } // namespace donghoa
 

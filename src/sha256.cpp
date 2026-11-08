@@ -146,4 +146,51 @@ Digest computeHmacSha256(ByteView key, ByteView msg) noexcept
 	return outer.finish();
 }
 
+Digest pbkdf2Sha256(ByteView password, ByteView salt, std::uint32_t iterations) noexcept
+{
+	std::array<std::uint8_t, 64U> k{};
+	std::array<std::uint8_t, 64U> pad{};
+
+	if (password.size() > k.size()) {
+		const Digest kd = computeSha256(password);
+		(void)copyBytes(spanOf(k), viewOf(kd));
+	} else {
+		(void)copyBytes(spanOf(k), password);
+	}
+	// HMAC states after the key pads, reused for every iteration.
+	for (std::size_t i = 0U; i < pad.size(); i++) {
+		pad[i] = static_cast<std::uint8_t>(k[i] ^ 0x36U);
+	}
+	Sha256 inner0;
+	inner0.update(viewOf(pad));
+	for (std::size_t i = 0U; i < pad.size(); i++) {
+		pad[i] = static_cast<std::uint8_t>(k[i] ^ 0x5cU);
+	}
+	Sha256 outer0;
+	outer0.update(viewOf(pad));
+
+	// U1 = HMAC(P, S || INT(1)); Ui = HMAC(P, Ui-1); T = U1 ^ ... ^ Uc
+	constexpr std::array<std::uint8_t, 4U> BLOCK1{0U, 0U, 0U, 1U};
+	Sha256 inner = inner0;
+	inner.update(salt);
+	inner.update(viewOf(BLOCK1));
+	Digest u = inner.finish();
+	Sha256 outer = outer0;
+	outer.update(viewOf(u));
+	u = outer.finish();
+	Digest t = u;
+	for (std::uint32_t n = 1U; n < iterations; n++) {
+		inner = inner0;
+		inner.update(viewOf(u));
+		u = inner.finish();
+		outer = outer0;
+		outer.update(viewOf(u));
+		u = outer.finish();
+		for (std::size_t i = 0U; i < t.size(); i++) {
+			t[i] = static_cast<std::uint8_t>(t[i] ^ u[i]);
+		}
+	}
+	return t;
+}
+
 } // namespace donghoa

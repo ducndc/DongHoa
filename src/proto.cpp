@@ -13,6 +13,7 @@ namespace arcp {
 namespace {
 
 constexpr std::size_t AUTH_TLV_TOTAL = TLV_HDR_LEN + AUTH_LEN;
+constexpr std::size_t SIG_TLV_TOTAL = TLV_HDR_LEN + SIG_LEN;
 
 void putMac(const ByteSpan &s, std::size_t off, const Mac &m) noexcept
 {
@@ -40,6 +41,8 @@ std::int8_t asS8(std::uint8_t v) noexcept
 	return static_cast<std::int8_t>(v);
 }
 
+} // namespace
+
 // Constant-time comparison of two equally long byte ranges.
 bool ctEqual(ByteView a, ByteView b) noexcept
 {
@@ -49,8 +52,6 @@ bool ctEqual(ByteView a, ByteView b) noexcept
 	}
 	return d == 0U;
 }
-
-} // namespace
 
 bool operator==(const BssInfo &a, const BssInfo &b) noexcept
 {
@@ -95,7 +96,7 @@ void Message::begin(MsgType type, std::uint8_t flags, const Mac &origin, std::ui
 
 std::size_t Message::room() const noexcept
 {
-	const std::size_t used = mLen + AUTH_TLV_TOTAL;
+	const std::size_t used = mLen + SIG_TLV_TOTAL + AUTH_TLV_TOTAL; // room for both, always
 	return (used >= MAX_PAYLOAD) ? 0U : (MAX_PAYLOAD - used);
 }
 
@@ -296,6 +297,25 @@ bool Message::add(const StaMonitorStatus &v) noexcept
 	return putTlv(Tlv::STA_MONITOR_STATUS, viewOf(b));
 }
 
+bool Message::add(const TrustRecord &v) noexcept
+{
+	std::array<std::uint8_t, TRUST_REC_LEN> b{};
+	const ByteSpan s = spanOf(b);
+
+	putMac(s, 0U, v.apId);
+	for (std::size_t i = 0U; i < v.pub.size(); i++) {
+		b[6U + i] = v.pub[i];
+	}
+	b[38U] = v.revoked ? 0U : 1U;
+	putBe32(s, 39U, v.gen);
+	return putTlv(Tlv::TRUST_REC, viewOf(b));
+}
+
+bool Message::addEnrollKey(const ed25519::PublicKey &pub) noexcept
+{
+	return putTlv(Tlv::ENROLL_KEY, viewOf(pub));
+}
+
 bool Message::add(const StaRoam &v) noexcept
 {
 	std::array<std::uint8_t, 11U> b{};
@@ -327,14 +347,39 @@ bool Message::addAck(std::uint32_t msgId) noexcept
 	return putTlv(Tlv::ACK, viewOf(b));
 }
 
-bool Message::finish(ByteView key) noexcept
+bool Message::addNonce(Tlv type, const Nonce &n) noexcept
+{
+	return putTlv(type, viewOf(n));
+}
+
+bool Message::finish(ByteView key, const ed25519::KeyPair *signer) noexcept
 {
 	const ByteSpan b = spanOf(mBuf);
 	bool ok = !mOverflow;
+	const std::size_t sigLen = (signer != nullptr) ? SIG_TLV_TOTAL : 0U;
+	const std::size_t authLen = key.empty() ? 0U : AUTH_TLV_TOTAL;
 
+	if (ok) {
+		// The header is final before anything is signed: body_len counts
+		// the trailers and the flags announce them.
+		putBe16(b, 20U, static_cast<std::uint16_t>((mLen - HDR_LEN) + sigLen + authLen));
+		if (signer != nullptr) {
+			b[4U] = static_cast<std::uint8_t>(b[4U] | FLAG_SIG);
+		}
+		if (!key.empty()) {
+			b[4U] = static_cast<std::uint8_t>(b[4U] | FLAG_AUTH);
+		}
+	}
+	if (ok && (signer != nullptr)) {
+		const ed25519::Signature sig = ed25519::sign(*signer, bytes());
+		b[mLen] = raw(Tlv::SIG);
+		putBe16(b, mLen + 1U, static_cast<std::uint16_t>(SIG_LEN));
+		for (std::size_t i = 0U; i < SIG_LEN; i++) {
+			b[mLen + TLV_HDR_LEN + i] = sig[i];
+		}
+		mLen += SIG_TLV_TOTAL;
+	}
 	if (ok && !key.empty()) {
-		b[4U] = static_cast<std::uint8_t>(b[4U] | FLAG_AUTH);
-		putBe16(b, 20U, static_cast<std::uint16_t>((mLen - HDR_LEN) + AUTH_TLV_TOTAL));
 		const Digest mac = computeHmacSha256(key, bytes());
 		b[mLen] = raw(Tlv::AUTH);
 		putBe16(b, mLen + 1U, static_cast<std::uint16_t>(AUTH_LEN));
@@ -343,7 +388,7 @@ bool Message::finish(ByteView key) noexcept
 		}
 		mLen += AUTH_TLV_TOTAL;
 	} else if (ok) {
-		putBe16(b, 20U, static_cast<std::uint16_t>(mLen - HDR_LEN));
+		// no HMAC (a signature alone, or nothing)
 	} else {
 		// overflowed: never sent
 	}
@@ -390,6 +435,26 @@ bool verify(ByteView frame, const Header &h, ByteView key) noexcept
 		}
 	} else {
 		// key configured but no valid AUTH TLV
+	}
+	return ok;
+}
+
+bool verifySig(ByteView frame, const Header &h, const ed25519::PublicKey &pub) noexcept
+{
+	const bool hasSig = (h.flags & FLAG_SIG) != 0U;
+	const std::size_t authLen = ((h.flags & FLAG_AUTH) != 0U) ? AUTH_TLV_TOTAL : 0U;
+	const std::size_t total = HDR_LEN + h.bodyLen;
+	bool ok = false;
+
+	if (hasSig && (h.bodyLen >= (SIG_TLV_TOTAL + authLen)) && (total <= frame.size())) {
+		const std::size_t t = total - authLen - SIG_TLV_TOTAL;
+		if ((frame[t] == raw(Tlv::SIG)) && (getBe16(frame, t + 1U) == SIG_LEN)) {
+			ed25519::Signature sig{};
+			for (std::size_t i = 0U; i < SIG_LEN; i++) {
+				sig[i] = frame[t + TLV_HDR_LEN + i];
+			}
+			ok = ed25519::verify(pub, frame.first(t), sig);
+		}
 	}
 	return ok;
 }
@@ -609,30 +674,39 @@ std::string_view monitorStatusName(std::uint8_t status) noexcept
 	return n;
 }
 
-bool acceptSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId, bool &restarted) noexcept
+void resetSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId) noexcept
 {
-	bool accept = false;
+	w.bootId = bootId;
+	w.seqHi = msgId;
+	w.seqWin = 1U;
+}
 
-	restarted = false;
-	if (bootId != w.bootId) {
-		restarted = w.bootId != 0U;
-		w.bootId = bootId;
-		w.seqHi = msgId;
-		w.seqWin = 1U;
-		accept = true;
+bool isSeqNew(const ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId) noexcept
+{
+	bool isNew = false;
+	if ((bootId != w.bootId) || (bootId == 0U)) {
+		// another boot (or none verified yet): needs a CHALLENGE first
 	} else if (msgId > w.seqHi) {
+		isNew = true;
+	} else {
+		const std::uint32_t diff = w.seqHi - msgId;
+		isNew = (diff < 64U) && ((w.seqWin & (static_cast<std::uint64_t>(1U) << diff)) == 0U);
+	}
+	return isNew;
+}
+
+bool acceptSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId) noexcept
+{
+	const bool accept = isSeqNew(w, bootId, msgId);
+	if (accept && (msgId > w.seqHi)) {
 		const std::uint32_t diff = msgId - w.seqHi;
 		w.seqWin = (diff >= 64U) ? 0U : (w.seqWin << diff);
 		w.seqWin |= 1U;
 		w.seqHi = msgId;
-		accept = true;
+	} else if (accept) {
+		w.seqWin |= static_cast<std::uint64_t>(1U) << (w.seqHi - msgId);
 	} else {
-		const std::uint32_t diff = w.seqHi - msgId;
-		const std::uint64_t bit = (diff < 64U) ? (static_cast<std::uint64_t>(1U) << diff) : 0U;
-		if ((bit != 0U) && ((w.seqWin & bit) == 0U)) {
-			w.seqWin |= bit;
-			accept = true;
-		}
+		// duplicate, too old, or another boot
 	}
 	return accept;
 }
@@ -656,6 +730,40 @@ bool decode(ByteView v, StaClass &o) noexcept
 		o.devClass = v[6U];
 		o.score = static_cast<std::int32_t>(getBe32(v, 7U));
 		o.samples = getBe32(v, 11U);
+	}
+	return ok;
+}
+
+bool decode(ByteView v, TrustRecord &o) noexcept
+{
+	const bool ok = (v.size() >= TRUST_REC_LEN) && (v[38U] <= 1U);
+	if (ok) {
+		o.apId = getMac(v, 0U);
+		for (std::size_t i = 0U; i < o.pub.size(); i++) {
+			o.pub[i] = v[6U + i];
+		}
+		o.revoked = v[38U] == 0U;
+		o.gen = getBe32(v, 39U);
+	}
+	return ok;
+}
+
+bool decodeEnrollKey(ByteView v, ed25519::PublicKey &pub) noexcept
+{
+	const bool ok = v.size() >= pub.size();
+	for (std::size_t i = 0U; ok && (i < pub.size()); i++) {
+		pub[i] = v[i];
+	}
+	return ok;
+}
+
+bool decodeNonce(ByteView v, Nonce &n) noexcept
+{
+	const bool ok = v.size() >= NONCE_LEN;
+	if (ok) {
+		for (std::size_t i = 0U; i < NONCE_LEN; i++) {
+			n[i] = v[i];
+		}
 	}
 	return ok;
 }
@@ -686,6 +794,10 @@ std::string_view msgName(std::uint8_t type) noexcept
 	case raw(MsgType::STA_MONITOR_REPORT): n = "STA_MONITOR_REPORT"; break;
 	case raw(MsgType::ACK): n = "ACK"; break;
 	case raw(MsgType::BYE): n = "BYE"; break;
+	case raw(MsgType::CHALLENGE): n = "CHALLENGE"; break;
+	case raw(MsgType::RESPONSE): n = "RESPONSE"; break;
+	case raw(MsgType::ENROLL_REQ): n = "ENROLL_REQ"; break;
+	case raw(MsgType::TRUST): n = "TRUST"; break;
 	default: break;
 	}
 	return n;
@@ -710,6 +822,11 @@ std::string_view tlvName(std::uint8_t type) noexcept
 	case raw(Tlv::STA_MONITOR_RESULT): n = "STA_MONITOR_RESULT"; break;
 	case raw(Tlv::STA_MONITOR_STATUS): n = "STA_MONITOR_STATUS"; break;
 	case raw(Tlv::STA_ROAM): n = "STA_ROAM"; break;
+	case raw(Tlv::CHALLENGE): n = "CHALLENGE"; break;
+	case raw(Tlv::RESPONSE): n = "RESPONSE"; break;
+	case raw(Tlv::SIG): n = "SIG"; break;
+	case raw(Tlv::ENROLL_KEY): n = "ENROLL_KEY"; break;
+	case raw(Tlv::TRUST_REC): n = "TRUST_REC"; break;
 	case raw(Tlv::AUTH): n = "AUTH"; break;
 	default: break;
 	}

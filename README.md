@@ -67,6 +67,9 @@ package, an SDK build script and QEMU test APs; see `openwrt/README.md`.
 
 ```sh
 cp donghoa.conf.example /etc/donghoa.conf  # edit iface, key, bss lines
+donghoa -g                                 # optional: per-AP signing key (sign_seed / peer_key lines)
+# or 'enroll 1' in the config: keys created automatically, admit a new AP with
+donghoa_cli /var/run/donghoa.sock ENROLL approve <ap_id>   # after checking its fingerprint
 donghoa -c /etc/donghoa.conf               # needs CAP_NET_RAW; -d all debug, -s syslog
 donghoa_cli /var/run/donghoa.sock PEERS    # STATUS | PEERS | STAS | STEERS | DEVCLASS | PING
 donghoa_cli /var/run/donghoa.sock LOG debug steer msg   # debug two modules, no restart

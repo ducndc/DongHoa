@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=donghoa
 PKG_VERSION:=1.0
-PKG_RELEASE:=24
+PKG_RELEASE:=29
 PKG_LICENSE:=MIT
 
 # The feed is a symlink to <repo>/openwrt, and make's CURDIR is the
@@ -50,10 +50,12 @@ define Build/Compile
 endef
 
 define Package/donghoa/install
-	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d $(1)/lib/upgrade/keep.d
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/donghoa $(PKG_BUILD_DIR)/donghoa_cli $(1)/usr/sbin/
 	$(INSTALL_BIN) ./files/donghoa.init $(1)/etc/init.d/donghoa
 	$(INSTALL_CONF) ./files/donghoa.conf $(1)/etc/donghoa.conf
+	# automatic enrollment: key and trust table survive a sysupgrade
+	$(INSTALL_DATA) ./files/donghoa.keep $(1)/lib/upgrade/keep.d/donghoa
 endef
 
 $(eval $(call BuildPackage,donghoa))

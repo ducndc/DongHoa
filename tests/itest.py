@@ -24,6 +24,19 @@ Scenarios:
      MLD STA on both links: one STA entry with per-link RSSI, no band
      steering onto its own link, no roam while one link is still good, and
      when every link is weak a roam to another BSS, never to its own AP MLD
+  22. replay protection: a boot is adopted only after a fresh CHALLENGE
+     is answered; authenticated frames of an earlier boot, of an unseen
+     boot, or of a removed peer are refused
+  23. per-AP Ed25519 signatures: two APs with peer_key lists peer; a third
+     box holding the group key but not listed is never accepted; a BYE
+     with a valid HMAC but signed with the wrong key, or unsigned, does
+     not remove a peer, while one signed with the peer's key does;
+     inconsistent signing configurations refuse to start
+  24. automatic enrollment: APs with empty key / trust files create keys
+     and ask to be enrolled; approval by fingerprint on one AP welcomes the
+     new AP and spreads to the others; an unapproved box with the group key
+     stays out; a revocation spreads and drops the AP; the trust table and
+     key survive a restart
 
 Environment:
   DONGHOA_BIN, DONGHOA_CLI_BIN  commands to run instead of ./donghoa and
@@ -38,8 +51,11 @@ Environment:
 Each AP log gets "=== Sn" markers at the start of every scenario, and
 merged.log interleaves the three AP logs by their monotonic timestamps.
 """
+import hashlib
+import hmac
 import os
 import random
+import re
 import shlex
 import shutil
 import signal
@@ -52,6 +68,7 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ed25519_ref  # noqa: E402
 from mock_hostapd import Sta, World  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -120,6 +137,7 @@ lp_threshold 8
 lp_hysteresis 2
 rl_epsilon_pct 0
 bandit_epsilon_pct 0
+liveness_check 1
 {extra}""")
 
 
@@ -571,6 +589,77 @@ def scenario_bandit_target(world, procs, logs, socks, tmp, ap1, ap2):
           "STA to 2.4 GHz first; ping-pong detected")
 
 
+def arcp_frame(passphrase, mtype, msg_id, boot_id, origin):
+    """An ARCP message with no TLV but AUTH, as a peer holding the key sends
+    it, wrapped in the Ethernet frame the sim transport carries. Stands for a
+    frame an attacker recorded earlier: valid MAC, old boot_id / msg_id."""
+    key = hashlib.pbkdf2_hmac("sha256", passphrase.encode(), b"donghoa-arcp-key", 100000)
+    hdr = struct.pack(">HBBBBII6sHH", 0x4152, 1, mtype, 0x02, 0, msg_id, boot_id,
+                      bytes.fromhex(origin.replace(":", "")), 19, 0)
+    tag = hmac.new(key, hdr, hashlib.sha256).digest()[:16]
+    eth = bytes.fromhex("034152435000") + bytes.fromhex("02aa000000ff") + struct.pack(">H", 0x88B5)
+    return eth + hdr + bytes([0xFF]) + struct.pack(">H", 16) + tag
+
+
+def scenario_replay(world, procs, logs, socks, tmp, port1, passphrase):
+    """S22: a boot is adopted only after a fresh CHALLENGE is answered.
+    AP2 restarting is picked up at once; authenticated frames replayed from
+    AP2's earlier boot, from a boot_id AP1 has never seen, or after AP2 was
+    removed, are all refused (none can answer the nonce)."""
+    mark(logs, "S22 replay refused: liveness challenge")
+    ap2_id = "02:00:00:00:00:02"
+    hello, bye = 0x01, 0x21
+    ap1_log = os.path.join(tmp, "ap1.log")
+    ap2_log = os.path.join(tmp, "ap2.log")
+    ap2_cfg = os.path.join(tmp, "ap2.conf")
+
+    def ap1_count(text):
+        with open(ap1_log) as f:
+            return f.read().count(text)
+
+    def ap2_boot():
+        with open(ap2_log) as f:
+            return int(re.findall(r"ap_id \S+ boot ([0-9a-f]{8})", f.read())[-1], 16)
+
+    def inject(frame):
+        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        tx.sendto(frame, ("127.0.0.1", port1))
+        tx.close()
+
+    wait_for(lambda: ap2_id in cli(socks[0], "PEERS"), 5, "AP1 to know AP2")
+    old_boot = ap2_boot()
+    restarts = ap1_count(f"peer {ap2_id} restarted")
+    procs[1].kill()
+    procs[1].wait(timeout=3)
+    procs[1] = subprocess.Popen(DONGHOA + ["-c", ap2_cfg, "-d"], stderr=logs[1])
+    t0 = time.monotonic()
+    wait_for(lambda: ap1_count(f"peer {ap2_id} restarted") > restarts, 5,
+             "AP1 to verify AP2's new boot while it still knew AP2")
+    t_restart = time.monotonic() - t0
+    new_boot = ap2_boot()
+    assert new_boot != old_boot
+
+    lost = ap1_count(f"peer {ap2_id} (ap2) lost")
+    inject(arcp_frame(passphrase, bye, 1000000, old_boot, ap2_id))                 # earlier boot
+    inject(arcp_frame(passphrase, bye, 7, (new_boot + 12345) & 0xffffffff, ap2_id))  # unseen boot
+    time.sleep(1.0)
+    assert ap1_count(f"peer {ap2_id} (ap2) lost") == lost, "a replayed / unverified BYE removed AP2"
+    assert ap2_id in cli(socks[0], "PEERS")
+
+    # AP2 goes away; frames recorded from it must not bring it back.
+    procs[1].kill()
+    procs[1].wait(timeout=3)
+    wait_for(lambda: ap2_id not in cli(socks[0], "PEERS"), 5, "AP1 to drop the silent AP2")
+    for i in range(3):
+        inject(arcp_frame(passphrase, hello, 1000 + i, new_boot, ap2_id))
+        time.sleep(0.6)  # past the per-origin challenge interval
+    assert ap2_id not in cli(socks[0], "PEERS"), "replayed HELLO resurrected the removed AP2"
+    procs[1] = subprocess.Popen(DONGHOA + ["-c", ap2_cfg, "-d"], stderr=logs[1])
+    wait_for(lambda: ap2_id in cli(socks[0], "PEERS"), 5, "the real AP2 to rejoin")
+    print(f"PASS 22: liveness challenge: AP2 restart verified in {t_restart:.2f} s; replayed BYE "
+          "(earlier and unseen boot) and replayed HELLO after removal refused; real AP2 rejoined")
+
+
 def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
     """S13: hostapd's signal is that of the STA's last frame. An idle STA
     (large inactive_msec) keeps an old weak value: it must not count on
@@ -645,7 +734,7 @@ def scenario_many_bss(world, procs, logs, tmp, base):
     socks, mlogs = [], []
     for i in (0, 1):
         cfg, sock = os.path.join(tmp, "mb%d.conf" % i), os.path.join(tmp, "mbctrl%d" % i)
-        extra = "\n".join(lines) + "\n" if i == 0 else ""
+        extra = ("\n".join(lines) + "\n" if i == 0 else "") + "liveness_check 0\n"  # the default
         write_cfg(cfg, "02:00:00:00:00:%02x" % (0x60 + i), "mb%d" % i, hdirs[i], sock, ports[i],
                   [ports[1 - i]], "many-bss-key", extra=extra)
         path = os.path.join(tmp, "mb%d.log" % i)
@@ -672,6 +761,214 @@ def scenario_many_bss(world, procs, logs, tmp, base):
     print("PASS 15: AP with 17 BSSes starts, manages 16 (warning), peer receives all 16 with load")
 
 
+def tlv(t, value):
+    return bytes([t]) + struct.pack(">H", len(value)) + value
+
+
+def signed_frame(passphrase, seed, mtype, msg_id, boot_id, origin, tlvs=b""):
+    """An ARCP message: payload TLVs, SIG (Ed25519 by seed, if any), then
+    AUTH (HMAC with the group key), in a sim-transport Ethernet frame."""
+    key = hashlib.pbkdf2_hmac("sha256", passphrase.encode(), b"donghoa-arcp-key", 100000)
+    sig_len = 67 if seed is not None else 0
+    flags = 0x02 | (0x04 if seed is not None else 0)
+    hdr = struct.pack(">HBBBBII6sHH", 0x4152, 1, mtype, flags, 0, msg_id, boot_id,
+                      bytes.fromhex(origin.replace(":", "")), len(tlvs) + sig_len + 19, 0)
+    body = tlvs
+    if seed is not None:
+        body = tlvs + tlv(0xFE, ed25519_ref.sign(seed, hdr + tlvs))
+    tag = hmac.new(key, hdr + body, hashlib.sha256).digest()[:16]
+    eth = bytes.fromhex("034152435000") + bytes.fromhex("02aa000000fe") + struct.pack(">H", 0x88B5)
+    return eth + hdr + body + bytes([0xFF]) + struct.pack(">H", 16) + tag
+
+
+def scenario_signatures(world, procs, logs, tmp, base):
+    """S23: per-AP signatures. A and B sign and list each other; C has the
+    group key (as a stolen AP config would) and a key of its own, but is not
+    in A's and B's peer_key lists."""
+    ids = ["02:00:00:00:00:%02x" % (0x70 + i) for i in range(3)]
+    names = ["sa", "sb", "sc"]
+    seeds = [os.urandom(32) for _ in range(3)]
+    pubs = [ed25519_ref.public_key(s) for s in seeds]
+    ports = [base + 60 + i for i in range(3)]
+    passphrase = "sig-mesh-key"
+    socks, slogs, paths = [], [], []
+    for i in range(3):
+        hdir = os.path.join(tmp, "sighapd%d" % i)
+        os.makedirs(hdir, exist_ok=True)
+        world.add_bss(hdir, "%s-wl0" % names[i], "02:00:00:00:70:%02x" % i, "sig", 5180 + 20 * i, 36 + 4 * i)
+        listed = [0, 1, 2] if i == 2 else [0, 1]  # C lists everyone, nobody lists C
+        extra = "sign_seed hex:%s\n" % seeds[i].hex() + "".join(
+            "peer_key %s hex:%s\n" % (ids[j], pubs[j].hex()) for j in listed)
+        cfg, sock = os.path.join(tmp, "sig%d.conf" % i), os.path.join(tmp, "sigctrl%d" % i)
+        write_cfg(cfg, ids[i], names[i], hdir, sock, ports[i], [q for q in ports if q != ports[i]],
+                  passphrase, extra=extra)
+        path = os.path.join(tmp, "sig%d.log" % i)
+        log = open(path, "a")
+        slogs.append(log)
+        paths.append(path)
+        socks.append(sock)
+        procs.append(subprocess.Popen(DONGHOA + ["-c", cfg, "-d"], stderr=log))
+    mark(logs + slogs, "S23 per-AP Ed25519 signatures")
+
+    def text(i):
+        with open(paths[i]) as f:
+            return f.read()
+
+    def boot(i):
+        return int(re.findall(r"ap_id \S+ boot ([0-9a-f]{8})", text(i))[-1], 16)
+
+    def inject(frame):
+        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        tx.sendto(frame, ("127.0.0.1", ports[0]))
+        tx.close()
+
+    wait_for(lambda: ids[1] in cli(socks[0], "PEERS") and ids[0] in cli(socks[1], "PEERS"), 6,
+             "A and B to peer with signed messages")
+    assert "(Ed25519 signed + HMAC)" in text(0)
+    time.sleep(1.0)
+    assert ids[2] not in cli(socks[0], "PEERS"), "C (group key, not listed) must not be a peer of A"
+    assert "%s: origin not in peer_key" % ids[2] in text(0)
+
+    b_boot = boot(1)
+    lost = lambda: text(0).count("peer %s (sb) lost" % ids[1])
+    n_lost = lost()
+    inject(signed_frame(passphrase, seeds[2], 0x21, 0x7fff0000, b_boot, ids[1]))  # C's key, as B
+    inject(signed_frame(passphrase, None, 0x21, 0x7fff0001, b_boot, ids[1]))      # HMAC only
+    time.sleep(1.0)
+    assert lost() == n_lost, "a BYE forged with the group key removed B"
+    assert "BYE from %s: bad or missing signature" % ids[1] in text(0)
+    inject(signed_frame(passphrase, seeds[1], 0x21, 0x7fff0002, b_boot, ids[1]))  # B's own key
+    wait_for(lambda: lost() > n_lost, 3, "a BYE signed with B's key to remove B")
+    wait_for(lambda: ids[1] in cli(socks[0], "PEERS"), 6, "B to rejoin")
+    for pr in procs[-3:]:
+        pr.send_signal(signal.SIGTERM)
+    for pr in procs[-3:]:
+        try:
+            pr.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pr.kill()
+
+    # Inconsistent configurations refuse to start.
+    def start_fails(extra, expect):
+        cfg = os.path.join(tmp, "sigbad.conf")
+        write_cfg(cfg, ids[0], "bad", os.path.join(tmp, "sighapd0"), os.path.join(tmp, "sigbadctrl"),
+                  base + 69, [ports[1]], passphrase, extra=extra)
+        r = subprocess.run(DONGHOA + ["-c", cfg], capture_output=True, text=True, timeout=10)
+        assert r.returncode != 0 and expect in r.stderr, (r.returncode, r.stderr[-300:])
+
+    start_fails("sign_seed hex:%s\n" % seeds[0].hex(), "'sign_seed' and 'peer_key' go together")
+    start_fails("sign_seed hex:%s\npeer_key %s hex:%s\n" % (seeds[0].hex(), ids[0], pubs[1].hex()),
+                "does not match sign_seed")
+    print("PASS 23: Ed25519: A/B peer signed; C with the group key but unlisted refused; BYE with valid HMAC "
+          "but wrong / no signature refused, signed by B accepted; bad signing configs refused")
+
+
+def scenario_enroll(world, procs, logs, tmp, base):
+    """S24: E1..E3 enroll by approval; E4 has the group key but is never
+    approved."""
+    ids = ["02:00:00:00:00:%02x" % (0x80 + i) for i in range(4)]
+    names = ["e1", "e2", "e3", "e4"]
+    ports = [base + 70 + i for i in range(4)]
+    socks, paths, cfgs, elogs = [], [], [], []
+    for i in range(4):
+        hdir = os.path.join(tmp, "enhapd%d" % i)
+        os.makedirs(hdir, exist_ok=True)
+        world.add_bss(hdir, "%s-wl0" % names[i], "02:00:00:00:80:%02x" % i, "enr", 5180 + 20 * i, 36 + 4 * i)
+        extra = "enroll 1\nseed_file %s\ntrust_file %s\n" % (os.path.join(tmp, "e%d.seed" % i),
+                                                             os.path.join(tmp, "e%d.trust" % i))
+        cfg, sock = os.path.join(tmp, "en%d.conf" % i), os.path.join(tmp, "enctrl%d" % i)
+        write_cfg(cfg, ids[i], names[i], hdir, sock, ports[i], [q for q in ports if q != ports[i]],
+                  "enroll-mesh-key", extra=extra)
+        path = os.path.join(tmp, "en%d.log" % i)
+        log = open(path, "a")
+        elogs.append(log)
+        paths.append(path)
+        socks.append(sock)
+        cfgs.append(cfg)
+        procs.append(subprocess.Popen(DONGHOA + ["-c", cfg, "-d"], stderr=log))
+    first = len(procs) - 4
+    mark(logs + elogs, "S24 automatic enrollment by fingerprint")
+
+    def fp(i):
+        m = re.search(r"fingerprint=(\S+)", cli(socks[i], "STATUS"))
+        return m.group(1) if m else None
+
+    def pending(i, j):
+        return ("pending %s fingerprint=%s" % (ids[j], fp(j))) in cli(socks[i], "ENROLL")
+
+    def peers(i, j):
+        return ids[j] in cli(socks[i], "PEERS")
+
+    wait_for(lambda: all(fp(i) for i in range(4)), 5, "keys created and fingerprints shown")
+    assert "enroll=pending" in cli(socks[1], "STATUS")
+    wait_for(lambda: pending(0, 1) and pending(0, 2) and pending(0, 3), 8,
+             "E1 to list E2, E3, E4 as pending with their fingerprints")
+    assert not peers(0, 1), "no peering before approval"
+
+    out = cli(socks[0], "ENROLL", "approve", ids[1])
+    assert out.startswith("OK approved"), out
+    wait_for(lambda: peers(0, 1) and peers(1, 0), 8, "E1 and E2 to peer after approving E2")
+    assert "enroll=enrolled" in cli(socks[1], "STATUS")
+    with open(paths[1]) as f:
+        assert "enrolled: welcomed by %s" % ids[0] in f.read()
+
+    wait_for(lambda: pending(1, 2), 8, "E2 to list E3 as pending")
+    assert cli(socks[1], "ENROLL", "approve", ids[2]).startswith("OK approved")
+    wait_for(lambda: peers(2, 1) and peers(0, 2) and peers(2, 0), 10,
+             "E3 approved on E2 to reach E1 through the trust sync")
+    assert ("trusted %s" % ids[2]) in cli(socks[0], "ENROLL")
+
+    time.sleep(1.0)
+    assert not peers(0, 3) and not peers(1, 3), "E4 (group key, never approved) must stay out"
+    assert pending(0, 3), "E4 still pending"
+
+    # Forgeries with the group key, injected into E1.
+    def inject(frame):
+        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        tx.sendto(frame, ("127.0.0.1", ports[0]))
+        tx.close()
+
+    def trust_rec(ap, pub, gen):
+        return tlv(0x1B, bytes.fromhex(ap.replace(":", "")) + pub + bytes([1]) + struct.pack(">I", gen))
+
+    xs, ys, zs = os.urandom(32), os.urandom(32), os.urandom(32)
+    x_id, y_id, z_id = "02:00:00:00:00:9a", "02:00:00:00:00:9b", "02:00:00:00:00:9c"
+    xp = ed25519_ref.public_key(xs)
+    # an untrusted AP pushing itself into the trust table
+    inject(signed_frame("enroll-mesh-key", xs, 0x07, 1, 7, x_id, trust_rec(x_id, xp, 99)))
+    # an enrollment request whose signature is not made with the announced key
+    inject(signed_frame("enroll-mesh-key", xs, 0x24, 1, 8, y_id, tlv(0x1A, ed25519_ref.public_key(ys))))
+    # control: a well-formed, self-signed request
+    inject(signed_frame("enroll-mesh-key", zs, 0x24, 1, 9, z_id, tlv(0x1A, ed25519_ref.public_key(zs))))
+    time.sleep(0.5)
+    table = cli(socks[0], "ENROLL")
+    assert x_id not in table, "TRUST from an untrusted origin was merged"
+    assert y_id not in table, "ENROLL_REQ with a mismatched signature listed"
+    assert ("pending %s" % z_id) in table, "a valid ENROLL_REQ must be listed"
+
+    assert cli(socks[0], "ENROLL", "revoke", ids[2]).startswith("OK revoked")
+    wait_for(lambda: not peers(0, 2) and not peers(1, 2), 6, "the revocation of E3 to drop it on E1 and E2")
+    assert ("revoked %s" % ids[2]) in cli(socks[1], "ENROLL")
+
+    fp1 = fp(1)
+    procs[first + 1].kill()
+    procs[first + 1].wait(timeout=3)
+    procs[first + 1] = subprocess.Popen(DONGHOA + ["-c", cfgs[1], "-d"], stderr=elogs[1])
+    wait_for(lambda: fp(1) == fp1, 5, "E2 to restart with the same key")
+    assert "enroll=enrolled" in cli(socks[1], "STATUS"), "trust table kept across the restart"
+    wait_for(lambda: peers(0, 1) and peers(1, 0), 8, "E2 to rejoin E1 after its restart")
+    assert ("revoked %s" % ids[2]) in cli(socks[1], "ENROLL")
+    for pr in procs[first:]:
+        pr.send_signal(signal.SIGTERM)
+    for pr in procs[first:]:
+        try:
+            pr.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pr.kill()
+    print("PASS 24: enrollment: keys created, E2 approved on E1 by fingerprint and welcomed, E3 approved "
+          "on E2 reached E1, unapproved E4 out, revocation spread, trust kept across restart")
+
+
 SCALE_APS = 12
 STA17_MAC = "aa:bb:cc:dd:ee:17"  # S12: hears only the BSS of the last peer in the pool order
 
@@ -692,7 +989,8 @@ def scenario_scale(world, procs, logs, tmp, base):
         bss.append((b5, b2))
         cfg, sock = os.path.join(tmp, name + ".conf"), os.path.join(tmp, "sctrl%d" % i)
         write_cfg(cfg, "02:00:00:00:00:%02x" % (0x40 + i), name, hdir, sock, ports[i],
-                  [q for q in ports if q != ports[i]], "scale-mesh-key", extra="bss %s-wl1 mdid=a1b2\n" % name)
+                  [q for q in ports if q != ports[i]], "scale-mesh-key",
+                  extra="bss %s-wl1 mdid=a1b2\nliveness_check 0\n" % name)  # the default
         path = os.path.join(tmp, name + ".log")
         log = open(path, "a")
         scale_logs.append(log)
@@ -891,9 +1189,12 @@ def main():
             scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_bandit_target(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_replay(world, procs, logs, socks, tmp, ports[0], "s3cret-mesh-key")
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_signatures(world, procs, logs, tmp, base)
+            scenario_enroll(world, procs, logs, tmp, base)
             scenario_many_bss(world, procs, logs, tmp, base)
             scenario_scale(world, procs, logs, tmp, base)
             ok = True
@@ -999,9 +1300,12 @@ def main():
         scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_bandit_target(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_replay(world, procs, logs, socks, tmp, ports[0], "s3cret-mesh-key")
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_signatures(world, procs, logs, tmp, base)
+        scenario_enroll(world, procs, logs, tmp, base)
         scenario_many_bss(world, procs, logs, tmp, base)
         scenario_scale(world, procs, logs, tmp, base)
         ok = True

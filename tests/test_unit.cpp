@@ -17,8 +17,11 @@
 #include "policy.hpp"
 #include "proto.hpp"
 #include "rrm.hpp"
+#include "ed25519.hpp"
 #include "sha256.hpp"
+#include "sha512.hpp"
 #include "text.hpp"
+#include "trust.hpp"
 
 using namespace donghoa;
 
@@ -74,6 +77,234 @@ void testSha256()
 	const auto msg = bytesOf("what do ya want for nothing?");
 	CHECK(hexs(computeHmacSha256(viewOf(key), viewOf(msg))).view() ==
 	      "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+
+	// PBKDF2-HMAC-SHA256 (RFC 7914 §11 / widely published vectors)
+	const auto pw = bytesOf("password");
+	const auto salt = bytesOf("salt");
+	CHECK(hexs(pbkdf2Sha256(viewOf(pw), viewOf(salt), 1U)).view() ==
+	      "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+	CHECK(hexs(pbkdf2Sha256(viewOf(pw), viewOf(salt), 2U)).view() ==
+	      "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+	CHECK(hexs(pbkdf2Sha256(viewOf(pw), viewOf(salt), 4096U)).view() ==
+	      "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a");
+}
+
+template <std::size_t N>
+std::array<std::uint8_t, N> unhex(std::string_view h)
+{
+	std::array<std::uint8_t, N> b{};
+	(void)hexDecode(h, spanOf(b));
+	return b;
+}
+
+void testSha512()
+{
+	const auto abc = bytesOf("abc");
+	CHECK(hexs(computeSha512(viewOf(abc))).view() ==
+	      "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
+	      "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
+	CHECK(hexs(computeSha512(ByteView())).view() ==
+	      "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
+	      "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
+	// 112 bytes: the length no longer fits the first block
+	const auto two = bytesOf("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnop"
+				 "jklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu");
+	CHECK(hexs(computeSha512(viewOf(two))).view() ==
+	      "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018"
+	      "501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909");
+}
+
+// RFC 8032 §7.1 tests 1-3, then rejections. These also check the curve
+// constants of ed25519.cpp: a wrong D, base point or sqrt(-1) breaks them.
+void testEd25519()
+{
+	struct Vec {
+		std::string_view seed;
+		std::string_view msg;
+		std::string_view pub;
+		std::string_view sig;
+	};
+	const std::array<Vec, 3U> vecs{{
+		{"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60", "",
+		 "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		 "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
+		 "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"},
+		{"4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb", "72",
+		 "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+		 "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da"
+		 "085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"},
+		{"c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7", "af82",
+		 "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+		 "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac"
+		 "18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"},
+	}};
+	for (const Vec &v : vecs) {
+		const ed25519::KeyPair kp = ed25519::keyPairFromSeed(unhex<32U>(v.seed));
+		std::array<std::uint8_t, 2U> msg{};
+		const std::optional<std::size_t> n = hexDecode(v.msg, spanOf(msg));
+		const ByteView m = viewOf(msg).first(n.has_value() ? *n : 0U);
+		const ed25519::Signature sig = ed25519::sign(kp, m);
+		CHECK(hexs(kp.pub).view() == v.pub);
+		CHECK(hexs(sig).view() == v.sig);
+		CHECK(ed25519::verify(kp.pub, m, sig));
+	}
+	const ed25519::KeyPair kp = ed25519::keyPairFromSeed(unhex<32U>(vecs[1U].seed));
+	const ed25519::KeyPair other = ed25519::keyPairFromSeed(unhex<32U>(vecs[2U].seed));
+	auto msg = bytesOf("ARCP HELLO");
+	const ed25519::Signature sig = ed25519::sign(kp, viewOf(msg));
+	CHECK(ed25519::verify(kp.pub, viewOf(msg), sig));
+	CHECK(!ed25519::verify(other.pub, viewOf(msg), sig));     // another AP's key
+	ed25519::Signature bad = sig;
+	bad[3U] = static_cast<std::uint8_t>(bad[3U] ^ 0x10U);     // R changed
+	CHECK(!ed25519::verify(kp.pub, viewOf(msg), bad));
+	bad = sig;
+	bad[40U] = static_cast<std::uint8_t>(bad[40U] ^ 0x01U);   // S changed
+	CHECK(!ed25519::verify(kp.pub, viewOf(msg), bad));
+	// S + L: same value mod L, but not canonical (malleability)
+	constexpr std::array<std::uint8_t, 32U> L{
+		0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+	};
+	bad = sig;
+	unsigned carry = 0U;
+	for (std::size_t i = 0U; i < 32U; i++) {
+		const unsigned v = static_cast<unsigned>(bad[32U + i]) + L[i] + carry;
+		bad[32U + i] = static_cast<std::uint8_t>(v & 0xffU);
+		carry = v >> 8U;
+	}
+	CHECK(carry == 0U && !ed25519::verify(kp.pub, viewOf(msg), bad));
+	msg[0U] = static_cast<std::uint8_t>(msg[0U] ^ 1U);              // message changed
+	CHECK(!ed25519::verify(kp.pub, viewOf(msg), sig));
+	CHECK(ed25519::isValidPublicKey(kp.pub));
+	ed25519::PublicKey notOnCurve{};
+	notOnCurve[0U] = 2U; // y = 2 has no x on the curve
+	CHECK(!ed25519::isValidPublicKey(notOnCurve));
+	CHECK(!ed25519::verify(notOnCurve, viewOf(msg), sig));
+}
+
+// SIG TLV: signed by finish(), checked by verifySig(), alone or with AUTH.
+void testSignedMessage()
+{
+	const Mac origin{{2U}};
+	const ed25519::KeyPair kp = ed25519::keyPairFromSeed(unhex<32U>(
+		"4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"));
+	const ed25519::KeyPair other = ed25519::keyPairFromSeed(unhex<32U>(
+		"c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7"));
+	const auto key = bytesOf("0123456789abcdef");
+	arcp::StaEvent e;
+	e.sta = mac("aa:bb:cc:dd:ee:ff");
+	for (int withKey = 0; withKey < 2; withKey++) {
+		const ByteView k = (withKey == 1) ? viewOf(key) : ByteView();
+		arcp::Message m;
+		m.begin(arcp::MsgType::STA_EVENT, 0U, origin, 7U, 3U);
+		CHECK(m.add(e));
+		CHECK(m.finish(k, &kp));
+		std::array<std::uint8_t, arcp::MAX_PAYLOAD> f{};
+		const std::size_t len = copyBytes(spanOf(f), m.bytes());
+		const std::optional<arcp::Header> h = arcp::parseHeader(viewOf(f).first(len));
+		CHECK(h.has_value());
+		if (!h.has_value()) {
+			return;
+		}
+		CHECK((h->flags & arcp::FLAG_SIG) != 0U);
+		CHECK(arcp::verify(viewOf(f).first(len), *h, k));
+		CHECK(arcp::verifySig(viewOf(f).first(len), *h, kp.pub));
+		CHECK(!arcp::verifySig(viewOf(f).first(len), *h, other.pub));
+		// the TLV reader still sees the payload TLV first
+		arcp::TlvReader rd(viewOf(f).first(len), *h);
+		std::uint8_t t = 0U;
+		ByteView v;
+		CHECK(rd.next(t, v) && t == arcp::raw(arcp::Tlv::STA_EVENT));
+		CHECK(rd.next(t, v) && t == arcp::raw(arcp::Tlv::SIG) && v.size() == arcp::SIG_LEN);
+		// a changed TLV byte breaks the signature
+		f[arcp::HDR_LEN + 5U] = static_cast<std::uint8_t>(f[arcp::HDR_LEN + 5U] ^ 1U);
+		CHECK(!arcp::verifySig(viewOf(f).first(len), *h, kp.pub));
+	}
+	// unsigned message: no SIG TLV to check
+	arcp::Message u;
+	u.begin(arcp::MsgType::STA_EVENT, 0U, origin, 7U, 4U);
+	CHECK(u.add(e) && u.finish(viewOf(key)));
+	const std::optional<arcp::Header> hu = arcp::parseHeader(u.bytes());
+	CHECK(hu.has_value() && !arcp::verifySig(u.bytes(), *hu, kp.pub));
+}
+
+// Enrollment trust table: last-writer-wins merge, approve / revoke, file form.
+void testTrust()
+{
+	const Mac a = mac("02:00:00:00:00:01");
+	const Mac b = mac("02:00:00:00:00:02");
+	const ed25519::PublicKey ka = ed25519::keyPairFromSeed(unhex<32U>(
+		"4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")).pub;
+	const ed25519::PublicKey kb = ed25519::keyPairFromSeed(unhex<32U>(
+		"c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7")).pub;
+	const ed25519::PublicKey kb2 = ed25519::keyPairFromSeed(unhex<32U>(
+		"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")).pub;
+	trust::Table t;
+	trust::Record self;
+	self.used = true;
+	self.apId = a;
+	self.pub = ka;
+	CHECK(trust::merge(t, self) && !trust::merge(t, self));         // added once
+	CHECK(trust::trustedKey(t, a) != nullptr && trust::trustedKey(t, b) == nullptr);
+	CHECK(trust::countTrustedOthers(t, a) == 0U);
+	CHECK(trust::approve(t, b, kb));                                 // generation 1
+	CHECK(trust::find(t, b)->gen == 1U && trust::countTrustedOthers(t, a) == 1U);
+	trust::Table other = t;                                          // a peer's copy
+	CHECK(trust::revoke(t, b));                                      // generation 2, revoked
+	CHECK(trust::trustedKey(t, b) == nullptr && trust::find(t, b)->gen == 2U);
+	// the stale copy cannot undo the revocation; the revocation reaches it
+	CHECK(!trust::merge(t, *trust::find(other, b)));
+	CHECK(trust::merge(other, *trust::find(t, b)) && trust::trustedKey(other, b) == nullptr);
+	// a re-flashed AP: approving its new key wins over the revocation
+	CHECK(trust::approve(t, b, kb2) && trust::find(t, b)->gen == 3U);
+	CHECK(trust::trustedKey(t, b) != nullptr && *trust::trustedKey(t, b) == kb2);
+	CHECK(trust::merge(other, *trust::find(t, b)) && *trust::trustedKey(other, b) == kb2);
+	// same generation: revoked wins, then the larger key (deterministic)
+	trust::Record r1 = *trust::find(t, b);
+	r1.revoked = true;
+	CHECK(trust::merge(t, r1) && trust::trustedKey(t, b) == nullptr);
+	trust::Record r2 = r1;
+	r2.revoked = false;
+	CHECK(!trust::merge(t, r2));
+	CHECK(!trust::revoke(t, mac("02:00:00:00:00:09")));              // unknown
+	// file form round trip
+	t.enrolled = true;
+	trust::Text text;
+	trust::saveText(t, text);
+	trust::Table back;
+	CHECK(trust::loadText(back, text.view()) && back.enrolled);
+	CHECK(trust::find(back, b) != nullptr && trust::find(back, b)->revoked && trust::find(back, b)->gen == 3U);
+	CHECK(trust::trustedKey(back, a) != nullptr && *trust::trustedKey(back, a) == ka);
+	trust::Table bad;
+	CHECK(!trust::loadText(bad, "trusted 02:00:00:00:00:01 abcd 1\n"));
+	CHECK(!trust::loadText(bad, "bogus line\n"));
+	CHECK(trust::loadText(bad, "# comment only\n\n"));
+	// fingerprint: 4 groups of 4 hex digits, differs between keys
+	const trust::Fingerprint fa = trust::fingerprint(ka);
+	CHECK(fa.view().size() == 19U && fa.view()[4] == '-' && fa.view() != trust::fingerprint(kb).view());
+	// TRUST_REC / ENROLL_KEY TLVs
+	arcp::TrustRecord w;
+	w.apId = b;
+	w.pub = kb;
+	w.revoked = true;
+	w.gen = 0x01020304U;
+	arcp::Message m;
+	m.begin(arcp::MsgType::TRUST, 0U, a, 1U, 1U);
+	CHECK(m.add(w) && m.addEnrollKey(ka) && m.finish(ByteView()));
+	const std::optional<arcp::Header> h = arcp::parseHeader(m.bytes());
+	CHECK(h.has_value());
+	if (!h.has_value()) {
+		return;
+	}
+	arcp::TlvReader rd(m.bytes(), *h);
+	std::uint8_t tt = 0U;
+	ByteView v;
+	arcp::TrustRecord wo;
+	CHECK(rd.next(tt, v) && tt == arcp::raw(arcp::Tlv::TRUST_REC) && arcp::decode(v, wo));
+	CHECK(wo.apId == b && wo.pub == kb && wo.revoked && wo.gen == 0x01020304U);
+	ed25519::PublicKey ko{};
+	CHECK(rd.next(tt, v) && tt == arcp::raw(arcp::Tlv::ENROLL_KEY) && arcp::decodeEnrollKey(v, ko) && ko == ka);
+	CHECK(arcp::msgName(arcp::raw(arcp::MsgType::ENROLL_REQ)) == "ENROLL_REQ");
 }
 
 void testProtoRoundtrip()
@@ -209,6 +440,39 @@ void testSteerTlvs()
 	CHECK(arcp::decode(v, ro));
 	CHECK(ro.txn == 77U && ro.rcpi == 140U && ro.curRssi == -80 && ro.sta == r.sta);
 	CHECK(!rd.next(t, v));
+}
+
+// Liveness CHALLENGE / RESPONSE: nonce TLVs round trip, short ones refused.
+void testChallengeTlvs()
+{
+	const Mac origin{{2U}};
+	arcp::Nonce n{};
+	for (std::size_t i = 0U; i < n.size(); i++) {
+		n[i] = static_cast<std::uint8_t>(0xa0U + i);
+	}
+	arcp::Message m;
+	m.begin(arcp::MsgType::CHALLENGE, 0U, origin, 5U, 9U);
+	CHECK(m.addNonce(arcp::Tlv::CHALLENGE, n));
+	const auto key = bytesOf("0123456789abcdef");
+	CHECK(m.finish(viewOf(key)));
+	const std::optional<arcp::Header> h = arcp::parseHeader(m.bytes());
+	CHECK(h.has_value() && arcp::verify(m.bytes(), *h, viewOf(key)));
+	if (!h.has_value()) {
+		return;
+	}
+	CHECK(arcp::msgName(h->type) == "CHALLENGE");
+	arcp::TlvReader rd(m.bytes(), *h);
+	std::uint8_t t = 0U;
+	ByteView v;
+	CHECK(rd.next(t, v) && t == arcp::raw(arcp::Tlv::CHALLENGE) && v.size() == arcp::NONCE_LEN);
+	arcp::Nonce o{};
+	CHECK(arcp::decodeNonce(v, o) && arcp::ctEqual(viewOf(o), viewOf(n)));
+	CHECK(!arcp::decodeNonce(v.first(15U), o));
+	CHECK(arcp::tlvName(arcp::raw(arcp::Tlv::RESPONSE)) == "RESPONSE");
+	CHECK(arcp::msgName(arcp::raw(arcp::MsgType::RESPONSE)) == "RESPONSE");
+	o[3] = static_cast<std::uint8_t>(o[3] ^ 1U);
+	CHECK(!arcp::ctEqual(viewOf(o), viewOf(n)));
+	CHECK(!arcp::ctEqual(viewOf(n).first(8U), viewOf(n)));
 }
 
 void testRrm()
@@ -1036,6 +1300,49 @@ void testConfig()
 	CHECK(parseConfigLine(c, "key hex:00112233445566778899aabbccddeeff") && c.keyLen == 16U);
 	CHECK(!parseConfigLine(c, "bogus 1"));
 	CHECK(!parseConfigLine(c, "key short"));
+	{
+		// the public example key is refused, whatever its length
+		Config pc;
+		CHECK(!parseConfigLine(pc, "key change-me-to-a-long-random-secret") && pc.keyPlaceholder &&
+		      pc.keyLen == 0U);
+		// passphrase: PBKDF2-HMAC-SHA256 with the fixed salt
+		CHECK(parseConfigLine(pc, "key a-long-passphrase") && pc.keyLen == 32U);
+		const auto pw = bytesOf("a-long-passphrase");
+		const auto salt = bytesOf("donghoa-arcp-key");
+		const Digest d = pbkdf2Sha256(viewOf(pw), viewOf(salt), KEY_KDF_ITERATIONS);
+		CHECK(arcp::ctEqual(pc.keyView(), viewOf(d)));
+		// security is off by default
+		Config dc;
+		CHECK(dc.keyLen == 0U && !dc.livenessCheck && !dc.signing && !dc.enroll);
+		CHECK(parseConfigLine(dc, "liveness_check 1") && dc.livenessCheck);
+		CHECK(!parseConfigLine(dc, "liveness_check 2"));
+		CHECK(parseConfigLine(dc, "enroll 1") && dc.enroll && !parseConfigLine(dc, "enroll 3"));
+		// Ed25519: own seed, trusted peers (once each, valid points only)
+		Config sc;
+		CHECK(parseConfigLine(sc, "sign_seed hex:4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"));
+		CHECK(sc.signing && hexs(sc.signKey.pub).view() ==
+				    "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
+		CHECK(!parseConfigLine(sc, "sign_seed 4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"));
+		CHECK(!parseConfigLine(sc, "sign_seed hex:4ccd089b"));
+		CHECK(parseConfigLine(sc, "peer_key 02:00:00:00:00:01 "
+					  "hex:3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"));
+		CHECK(sc.nTrusted == 1U && sc.findTrusted(mac("02:00:00:00:00:01")) != nullptr);
+		CHECK(sc.findTrusted(mac("02:00:00:00:00:02")) == nullptr);
+		CHECK(!parseConfigLine(sc, "peer_key 02:00:00:00:00:01 "        // listed twice
+					   "hex:fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"));
+		CHECK(!parseConfigLine(sc, "peer_key 02:00:00:00:00:03 "        // not a curve point
+					   "hex:0200000000000000000000000000000000000000000000000000000000000000"));
+		CHECK(!parseConfigLine(sc, "peer_key 02:00:00:00:00:03"));
+		CHECK(!parseConfigLine(sc, "peer_key 02:00:00:00:00:03 "
+					   "hex:fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025 x"));
+		CHECK(sc.nTrusted == 1U);
+		Config lc;
+		std::array<char, 129U> longKey{};
+		longKey.fill('x');
+		FixedString<160U> line{"key "};
+		CHECK(line.append(std::string_view(longKey.data(), longKey.size())));
+		CHECK(!parseConfigLine(lc, line.view())); // over KEY_PASSPHRASE_MAX
+	}
 	CHECK(parseConfigLine(c, "ap_id 02:00:00:00:00:01") && c.apIdSet && c.apId.b[5] == 1U);
 	CHECK(c.pol.scoreModel == ScoreModel::LINEAR && c.pol.staNss == 2);
 	CHECK(parseConfigLine(c, "score_model 1") && c.pol.scoreModel == ScoreModel::TPUT);
@@ -1392,22 +1699,31 @@ void testLowPower()
 void testReplayWindow()
 {
 	arcp::ReplayWindow w;
-	bool rs = false;
-	CHECK(arcp::acceptSeq(w, 7U, 100U, rs) && !rs);      // first frame of a peer
-	CHECK(!arcp::acceptSeq(w, 7U, 100U, rs));            // duplicate (other port / retransmission)
-	CHECK(arcp::acceptSeq(w, 7U, 101U, rs));             // in order
-	CHECK(arcp::acceptSeq(w, 7U, 105U, rs));             // ahead, gap left
-	CHECK(arcp::acceptSeq(w, 7U, 103U, rs));             // late, inside the window, not seen
-	CHECK(!arcp::acceptSeq(w, 7U, 103U, rs));            // ... but only once
-	CHECK(!arcp::acceptSeq(w, 7U, 101U, rs));
-	CHECK(arcp::acceptSeq(w, 7U, 105U + 63U, rs));       // window slides
-	CHECK(arcp::acceptSeq(w, 7U, 106U, rs));             // still inside (62 back), unseen
-	CHECK(!arcp::acceptSeq(w, 7U, 104U, rs));            // 64 back: outside, dropped
-	CHECK(arcp::acceptSeq(w, 7U, 105U + 63U + 200U, rs)); // big jump clears the window
-	CHECK(!arcp::acceptSeq(w, 7U, 105U + 63U, rs));
-	CHECK(arcp::acceptSeq(w, 9U, 1U, rs) && rs);         // new boot_id: peer restarted
-	CHECK(w.seqHi == 1U && w.seqWin == 1U);
-	CHECK(!arcp::acceptSeq(w, 9U, 1U, rs) && !rs);
+	arcp::resetSeq(w, 7U, 100U);                    // boot verified by CHALLENGE / RESPONSE
+	CHECK(!arcp::acceptSeq(w, 7U, 100U));            // duplicate (other port / retransmission)
+	CHECK(arcp::acceptSeq(w, 7U, 101U));             // in order
+	CHECK(arcp::acceptSeq(w, 7U, 105U));             // ahead, gap left
+	CHECK(arcp::acceptSeq(w, 7U, 103U));             // late, inside the window, not seen
+	CHECK(!arcp::acceptSeq(w, 7U, 103U));            // ... but only once
+	CHECK(!arcp::acceptSeq(w, 7U, 101U));
+	CHECK(arcp::acceptSeq(w, 7U, 105U + 63U));       // window slides
+	CHECK(arcp::acceptSeq(w, 7U, 106U));             // still inside (62 back), unseen
+	CHECK(!arcp::acceptSeq(w, 7U, 104U));            // 64 back: outside, dropped
+	CHECK(arcp::acceptSeq(w, 7U, 105U + 63U + 200U)); // big jump clears the window
+	CHECK(!arcp::acceptSeq(w, 7U, 105U + 63U));
+	// Any other boot_id, earlier or later, is refused and leaves the window
+	// alone: only a verified RESPONSE adopts a boot (resetSeq).
+	CHECK(!arcp::acceptSeq(w, 6U, 500U) && w.bootId == 7U);
+	CHECK(!arcp::acceptSeq(w, 9U, 1U) && w.bootId == 7U);
+	CHECK(!arcp::acceptSeq(w, 7U, 105U + 63U));      // still a duplicate
+	arcp::resetSeq(w, 9U, 1U);                      // the peer restarted, verified
+	CHECK(w.bootId == 9U && w.seqHi == 1U && w.seqWin == 1U);
+	CHECK(!arcp::acceptSeq(w, 9U, 1U) && arcp::acceptSeq(w, 9U, 2U));
+	CHECK(!arcp::acceptSeq(w, 7U, 1000U));           // the old boot is gone
+	CHECK(arcp::isSeqNew(w, 9U, 3U) && !arcp::isSeqNew(w, 9U, 2U) && !arcp::isSeqNew(w, 8U, 3U));
+	CHECK(arcp::acceptSeq(w, 9U, 3U));               // isSeqNew changed nothing
+	arcp::ReplayWindow fresh;                        // nothing verified yet
+	CHECK(!arcp::acceptSeq(fresh, 0U, 1U) && !arcp::acceptSeq(fresh, 5U, 1U));
 }
 
 // nl80211 station dump entry (synthetic kernel message, host byte order)
@@ -1514,6 +1830,10 @@ void testNlParse()
 int main()
 {
 	testSha256();
+	testSha512();
+	testEd25519();
+	testSignedMessage();
+	testTrust();
 	testProtoRoundtrip();
 	testProtoOverflow();
 	testSteerTlvs();
@@ -1529,6 +1849,7 @@ int main()
 	testLowPower();
 	testNlParse();
 	testReplayWindow();
+	testChallengeTlvs();
 	(void)std::printf("%d/%d checks passed\n", sChecks - sFails, sChecks);
 	return (sFails != 0) ? 1 : 0;
 }
