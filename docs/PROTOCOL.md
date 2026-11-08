@@ -102,7 +102,7 @@ Report (dBm = RCPI/2 − 110). 255 means it is not available.
 | 0x06 | STA_CLASS | unicast, ACK_REQ | STA_CLASS*, STA_ROAM* | device class (§8) and learned roaming threshold (§9) of STAs: to every peer when a local STA's class changes; to the AP a STA just associated to (its STA_EVENT) when this AP knows the STA's class; all low-power records to a peer that appeared or restarted (several messages if needed) |
 | 0x10 | STEER_REQ | unicast, ACK_REQ | STEER_REQ | source AP asks the target AP to accept a STA |
 | 0x11 | STEER_RESP | unicast, ACK_REQ | STEER_RESP | target AP's admission decision |
-| 0x12 | STEER_RESULT | unicast, ACK_REQ | STEER_RESULT | source AP reports the outcome so the target frees its reservation |
+| 0x12 | STEER_RESULT | unicast, ACK_REQ | STEER_RESULT | source AP reports the outcome so the target frees its reservation: sent once a STEER_REQ went out, whatever the outcome (aborted included, e.g. the STA disconnected while the source waited for STEER_RESP, or that answer never arrived) |
 | 0x13 | STA_MONITOR_REQ | multicast | STA_MONITOR_REQ | source AP asks every AP to measure a STA (§7) |
 | 0x14 | STA_MONITOR_REPORT | unicast, ACK_REQ | STA_MONITOR_RESULT*, STA_MONITOR_STATUS | every AP that got the request answers once: at once if it cannot measure, else after the watch with one result per BSS that heard the STA; the status comes last |
 | 0x20 | ACK | unicast | ACK | answers any message that has ACK_REQ set |

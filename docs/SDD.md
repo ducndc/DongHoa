@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.7, 2026-11-07 (history in §13) |
+| Document version | 2.8, 2026-11-08 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -420,7 +420,15 @@ policy::backoff_ms(failures) = min(steer_cooldown_ms * 2^failures, steer_backoff
 
 In BTM and ROAM, an association reported back at the source BSS is ignored.
 A local disassociation aborts only in MEASURE and NEGOTIATE; in BTM and ROAM
-the STA leaving is expected.
+the STA leaving is expected. `sendResult` sends STEER_RESULT from NEGOTIATE
+on (a STEER_REQ went out, so the target may hold a slot), and the NEGOTIATE
+timeout sends one (aborted) before moving to the next candidate, because a
+lost STEER_RESP may hide an acceptance. Without these, a STA dropping during
+NEGOTIATE left the target's reservation until `reserve_hold_ms`. In
+`runLbRound`, an offload is judged only when the STA is seen elsewhere
+(another local BSS, `away`, or `findRemoteSta`); a STA that just
+disconnected gives no verdict. Fault injection for tests: `DROPRX` drops
+received messages of one type in `receiveMsg`, before the ACK.
 
 #### 6.6.2 Steps
 
@@ -930,3 +938,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.5 | 2026-11-07 | §6.6: per-STA roaming threshold (state, update points, sharing via STA_ROAM in the class records); class-record slot reset on eviction |
 | 2.6 | 2026-11-07 | §6.6: Q-learning of when to roam (`policy::rl*`, `mRl`, decision hand-over to the transaction, rewards); `RL` command |
 | 2.7 | 2026-11-07 | Documentation audit: `rrm_log.cpp` in the module catalogue; R3, R9 mitigated, R10, R11 resolved, new R17, R18; decisions D17–D21; data size re-measured (449,352 bytes); replay window moved to `arcp::acceptSeq` (unit-tested) |
+| 2.8 | 2026-11-08 | §6.6: STEER_RESULT from NEGOTIATE on and on the NEGOTIATE timeout; load-balancing verdict only for a STA seen elsewhere; `DROPRX` fault injection |

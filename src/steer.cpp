@@ -203,7 +203,9 @@ Measurement &Daemon::storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std
 
 void Daemon::sendResult(const SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmStatus) noexcept
 {
-	if ((t.cur < t.nCand) && !t.cand[t.cur].local && (t.state >= SteerState::BTM)) {
+	// Once a STEER_REQ went out (NEGOTIATE on), the target may hold a
+	// reservation: tell it how the steer ended, aborted included.
+	if ((t.cur < t.nCand) && !t.cand[t.cur].local && (t.state >= SteerState::NEGOTIATE)) {
 		arcp::SteerResult r;
 		arcp::Message m;
 		r.txn = t.id;
@@ -879,13 +881,23 @@ void Daemon::runLbRound() noexcept
 		}
 		if (lb.lbCheck) {
 			// Judge the last offload before starting another one.
+			// Moved = seen associated elsewhere: on another local BSS, or
+			// reported by a peer. A STA that just disconnected left no
+			// evidence about the offload: no verdict either way.
 			const Sta *const prev = findSta(lb.lbSta);
-			const bool moved = (prev == nullptr) || (prev->bss != b) || prev->away;
+			const bool elsewhere = (prev != nullptr) ? ((prev->bss != b) || prev->away)
+								 : (findRemoteSta(lb.lbSta) != nullptr);
+			const bool gone = (prev == nullptr) && !elsewhere;
+			const bool moved = elsewhere;
 			const bool running = findTxnBySta(lb.lbSta) != nullptr;
 			if (running || (moved && (now < (lb.lbStartMs + settle)))) {
 				continue; // too early to tell
 			}
 			lb.lbCheck = false;
+			if (gone) {
+				logging::info(LOG_MODULE, "bss {}: {} disconnected instead of moving: no verdict on the offload",
+					      lb.cfg->ifname, lb.lbSta);
+			}
 			if (moved && lb.lbByUtil) {
 				if (policy::isLbMoveEffective(p, lb.lbUtilBefore, utilPct)) {
 					lb.lbFutile = 0;
@@ -1203,6 +1215,8 @@ void Daemon::tickSteer(Millis now) noexcept
 		case SteerState::NEGOTIATE:
 			logging::info(LOG_MODULE, "steer #{}: no STEER_RESP from {}", t.id,
 				      (t.cur < t.nCand) ? t.cand[t.cur].ap : Mac{});
+			// It may have accepted (its answer lost): release that slot.
+			sendResult(t, arcp::SteerOutcome::ABORTED, NO_STATUS);
 			t.cur++;
 			advance(t);
 			break;

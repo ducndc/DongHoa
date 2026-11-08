@@ -120,6 +120,14 @@ judge an offload when its steer is over and (STA gone and now ≥ start + settle
 
 Overload by STA count is exempt: one STA leaving always fixes the count.
 
+**Moved, or just gone?** An offload is judged only when the STA was seen
+associated elsewhere: on another local BSS, marked away by a peer's
+STA_EVENT, or present in the remote STA table. A STA that simply
+disconnected says nothing about whether offloading helps: it gets no
+verdict (`… disconnected instead of moving: no verdict on the offload`), so
+a disconnect never counts towards the futile moves that pause the BSS
+(itest PASS 20).
+
 ## Reaction time
 
 | Delay | Typical |

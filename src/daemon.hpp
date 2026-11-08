@@ -357,6 +357,7 @@ public:
 
 	// ---- peer.cpp ----
 	Peer *findPeer(const Mac &id) noexcept;
+	const RemoteSta *findRemoteSta(const Mac &sta) const noexcept;
 	Peer *getPeer(const Mac &id) noexcept;
 	RemoteBss *updatePeerBss(Peer &p, const arcp::BssInfo &bi) noexcept;
 	static RemoteBss *findPeerBss(Peer &p, const Mac &bssid) noexcept;
@@ -502,6 +503,7 @@ private:
 	// ctrl.cpp helpers
 	void runCtrlCommand(std::string_view req, FixedString<8192U> &out) noexcept;
 	void cmdRl(FixedString<8192U> &o, std::string_view args) noexcept;
+	void cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept;
 	// main.cpp helpers
 	bool setupTransport() noexcept;
 	void runTimers() noexcept;
@@ -541,6 +543,10 @@ private:
 	bool mRlNextArmed{false};      // handed to the transaction startSteer creates
 	std::size_t mRlNextState{0U};
 	std::uint32_t mRng{0x9e3779b9U};
+	// Fault injection (DROPRX): drop the next mDropCount received messages
+	// of type mDropType, before ACK and processing, as if lost.
+	std::uint8_t mDropType{0U};
+	std::uint32_t mDropCount{0U};
 	bool mRlInit{false};
 
 	os::Fd mCtrlFd{};

@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=donghoa
 PKG_VERSION:=1.0
-PKG_RELEASE:=21
+PKG_RELEASE:=22
 PKG_LICENSE:=MIT
 
 # The feed is a symlink to <repo>/openwrt, and make's CURDIR is the
