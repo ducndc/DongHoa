@@ -132,7 +132,9 @@ std::string_view trim(std::string_view s) noexcept;
 constexpr std::string_view subView(std::string_view s, std::size_t pos,
 				    std::size_t n = std::string_view::npos) noexcept
 {
-	return (pos > s.size()) ? std::string_view() : std::string_view(s.data() + pos, ((s.size() - pos) < n) ? (s.size() - pos) : n);
+	const std::size_t left = (pos > s.size()) ? 0U : (s.size() - pos);
+	return (pos > s.size()) ? std::string_view()
+				 : std::string_view(s.data() + pos, (left < n) ? left : n);
 }
 bool startsWith(std::string_view s, std::string_view prefix) noexcept;
 

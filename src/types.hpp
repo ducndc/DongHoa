@@ -149,7 +149,8 @@ constexpr std::uint16_t getLe16(ByteView v, std::size_t off) noexcept
 constexpr std::uint32_t getLe32(ByteView v, std::size_t off) noexcept
 {
 	return static_cast<std::uint32_t>(v[off]) | (static_cast<std::uint32_t>(v[off + 1U]) << 8U) |
-	       (static_cast<std::uint32_t>(v[off + 2U]) << 16U) | (static_cast<std::uint32_t>(v[off + 3U]) << 24U);
+	       (static_cast<std::uint32_t>(v[off + 2U]) << 16U) | (static_cast<std::uint32_t>(v[off + 3U]) <<
+								   24U);
 }
 
 constexpr void putBe16(const ByteSpan &s, std::size_t off, std::uint16_t v) noexcept

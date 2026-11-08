@@ -224,7 +224,7 @@ call, no `reinterpret_cast` and no `<cstring>` include. A new use goes into
 | DEV-02 | 8.2.5 | `os.cpp`: `reinterpret_cast` from `sockaddr_un`/`sockaddr_ll`/`sockaddr_in`/`sockaddr_nl` to `sockaddr *` | The POSIX socket interface takes `struct sockaddr *` | One helper (`asSockaddr`) per direction; the address structs are value-initialized (`{}`) and filled field by field |
 | DEV-03 | 21.10.3 | `os.cpp`: `sigaction` for SIGINT/SIGTERM, SIGPIPE ignored | A service must stop cleanly (to send BYE) when procd stops it | The handler only writes a `volatile sig_atomic_t` flag, read through `os::stopRequested()` |
 | DEV-04 | 21.2.2 | `os.cpp`: `std::memcpy`/`std::strlen` for `ifreq`, socket paths and native-endian netlink fields (`load_ne*`/`store_ne*`) | Kernel structures and host-order netlink integers have no portable byte-wise alternative | Lengths checked against the destination's `sizeof` first; netlink offsets checked against the received length |
-| DEV-05 | 6.7.2 (and 6.7.1) | Namespace-scope state: the `Daemon` object (`main.cpp`), log levels (`log.cpp`), the hostapd reply-socket counter (`hapd.cpp`), the signal flag and the BPF program (`os.cpp`; `SO_ATTACH_FILTER` takes a non-`const` pointer) | Without a heap, the daemon's 240 KB of tables must have static storage: on the stack they would depend on the process stack limit. Putting them in `.bss` makes memory use known at link time (`size donghoa`) | Each object is in an unnamed namespace (internal linkage) and reached only through its module's functions; one thread, so no data races |
+| DEV-05 | 6.7.2 (and 6.7.1) | Namespace-scope state: the `Daemon` object (`main.cpp`), log levels and the syslog output flag (`log.cpp`), the hostapd reply-socket counter (`hapd.cpp`), the signal flag and the BPF program (`os.cpp`; `SO_ATTACH_FILTER` takes a non-`const` pointer), and the simulated driver's file path, flag and read buffer (`vendor_rssi.cpp`, test input only) | Without a heap, the daemon's 240 KB of tables must have static storage: on the stack they would depend on the process stack limit. Putting them in `.bss` makes memory use known at link time (`size donghoa`) | Each object is in an unnamed namespace (internal linkage) and reached only through its module's functions; one thread, so no data races |
 
 ### 6.3 Case deviations
 
@@ -256,24 +256,34 @@ A commercial MISRA C++:2023 checker (for example Helix QAC, Parasoft
 C/C++test, PC-lint Plus or Polyspace) would turn most of §5 into automatic
 checks. When one is adopted, record its baseline in §8.
 
-## 8. Baseline (2026-11-07)
+## 8. Baseline (2026-11-08)
 
-Version 2.x (`donghoa-1.0-r21`, commit after `d284ba7`):
+Version 2.x (`donghoa-1.0-r24`), after a convention audit of `src/` and
+`tools/`:
 
-- `make` with the §3 flags: 0 warnings (GCC 13, and the OpenWrt 25.12 SDK
-  toolchain for x86-64 musl).
-- `make check-deps`: `NEEDED libc` only. On OpenWrt: `donghoa` 184 KB,
-  `donghoa_cli` 25 KB (installed, stripped), package 99.2 KB; `.bss` 466 KB, of which
-  the static `Daemon` object is 449,352 bytes.
-- `make cppcheck` (2.14): 0 findings. With `--enable=style`, cppcheck makes
-  stylistic suggestions (`useStlAlgorithm`, `variableScope`) and reports
-  some `knownConditionTrueFalse` false positives on loops over lengths it
-  cannot track. These are not tracked.
-- `make test`: 544/544 checks, also under ASan/UBSan. `make itest`: PASS
-  1–18 with the linear and the throughput score model (7–9 skipped under
-  the latter by design), and under ASan/UBSan with 0 reports.
-  `systest.sh` on two OpenWrt VMs: 16/16.
+- `make` with the §3 flags: 0 warnings; the sanitizer build
+  (`-O1 -fsanitize=address,undefined`), including `tests/test_unit`: 0
+  warnings.
+- `make check-deps`: `NEEDED libc` only. `make cppcheck` (2.14): 0 findings.
 - Confinement grep (§7): only `src/os.cpp`.
+- Layout (§4): no line over 110 columns (158 were reflowed in this audit,
+  71 of them older than the features added since 2026-11-06), tab
+  indentation, no trailing whitespace, no `/*` comments, include guards
+  `DONGHOA_<FILE>_HPP`, no macros besides them.
+- Rules checked by script and review: braces on every body (9.3.1), every
+  `if … else if` chain ends with `else` (9.4.1; one fixed in `steer.cpp`),
+  every `switch` has `default` (9.4.2), classic `for` loops compare with `<`
+  (9.5.1; one bit-iteration loop rewritten in `ctrl.cpp`), constants
+  `UPPER_CASE` (one fixed in `survey.cpp`), no parameter modified (13.3.x;
+  `isqrt` fixed), no heap, no exceptions, no throwing library call, no C
+  stdio, no `NULL`, no `goto`, no `union`, floating point only in
+  `policy.cpp`, no recursion, namespace-scope state only as listed in
+  DEV-05 (list completed: the syslog flag in `log.cpp`, the simulated driver
+  state in `vendor_rssi.cpp`).
+- `make test`: 555/555 checks, also under ASan/UBSan. `make itest`: PASS
+  1–21 with the linear model, and under ASan/UBSan with 0 reports; with
+  `score_model 1` 7–9 and 21 are skipped by design. `systest.sh` on two
+  OpenWrt VMs: 16/16.
 
 ## 9. Review checklist
 

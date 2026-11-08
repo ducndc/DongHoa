@@ -33,7 +33,8 @@ void Daemon::initAmon() noexcept
 {
 	vendor::useSimFile(mCfg.staRssiSim.view());
 	if (mCfg.staRssiApi) {
-		logging::info(LOG_MODULE, "driver per-STA RSSI API {}", mCfg.staRssiSim.view().empty() ? "on" : "simulated");
+		logging::info(LOG_MODULE, "driver per-STA RSSI API {}",
+			      mCfg.staRssiSim.view().empty() ? "on" : "simulated");
 	}
 	mNAmon = 0U;
 	for (std::size_t i = 0U; i < mCfg.nMonitors; i++) {
@@ -46,8 +47,9 @@ void Daemon::initAmon() noexcept
 			mNAmon++;
 		} else {
 			// A missing monitor is not fatal: this AP just cannot measure.
-			logging::err(LOG_MODULE, "{}: {} (a monitor interface: iw phy <phy> interface add {} type monitor)",
-				     mCfg.monitors[i], os::lastError(), mCfg.monitors[i]);
+			logging::err(LOG_MODULE,
+				     "{}: {} (a monitor interface: iw phy <phy> interface add {} type "
+				     "monitor)", mCfg.monitors[i], os::lastError(), mCfg.monitors[i]);
 		}
 	}
 	if (mCfg.monitorSimPort != 0U) {
@@ -117,7 +119,8 @@ bool Daemon::canMeasureStas() const noexcept
 }
 
 arcp::MonitorStatus Daemon::startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn,
-					   int durationMs, std::uint8_t opClass, std::uint8_t channel) noexcept
+					   int durationMs, std::uint8_t opClass,
+					   std::uint8_t channel) noexcept
 {
 	AmonWatch *w = nullptr;
 	const int dur = ((durationMs <= 0) || (durationMs > MAX_DURATION_MS)) ? mCfg.pol.amonDurationMs
@@ -144,7 +147,8 @@ arcp::MonitorStatus Daemon::startAmonWatch(const Mac &sta, const Mac &requester,
 				continue;
 			}
 			const vendor::RssiStatus st =
-				vendor::startStaRssi(ifn, sta, opClass, channel, static_cast<std::uint16_t>(dur));
+				vendor::startStaRssi(ifn, sta, opClass, channel,
+						     static_cast<std::uint16_t>(dur));
 			if (st == vendor::RssiStatus::OK) {
 				vendorBss |= 1U << b;
 			} else {
@@ -154,7 +158,8 @@ arcp::MonitorStatus Daemon::startAmonWatch(const Mac &sta, const Mac &requester,
 		}
 	}
 	if ((mNAmon == 0U) && (vendorBss == 0U)) {
-		logging::dbg(LOG_MODULE, "{}: driver RSSI API {}", sta, vendorFailed ? "failed" : "not available");
+		logging::dbg(LOG_MODULE, "{}: driver RSSI API {}", sta,
+			     vendorFailed ? "failed" : "not available");
 		return vendorFailed ? arcp::MonitorStatus::FAILED : arcp::MonitorStatus::UNSUPPORTED;
 	}
 	*w = AmonWatch{};
@@ -187,7 +192,8 @@ void Daemon::onAmonReq(const Peer &from, const arcp::StaMonitorReq &r) noexcept
 	beginMsg(m, arcp::MsgType::STA_MONITOR_REPORT, arcp::FLAG_ACK_REQ);
 	(void)m.add(ms);
 	(void)unicast(from.id, m);
-	logging::info(LOG_MODULE, "{} asks to measure {}: {}", from.id, r.sta, arcp::monitorStatusName(ms.status));
+	logging::info(LOG_MODULE, "{} asks to measure {}: {}", from.id, r.sta,
+		      arcp::monitorStatusName(ms.status));
 }
 
 // Watch over: one result per local BSS that heard the STA (the driver API's
@@ -278,16 +284,18 @@ void Daemon::onAmonResult(const Mac &from, const arcp::StaMonitorResult &r) noex
 	Sta *const s = findSta(r.sta);
 	const RemoteBss *const rb = lookupRemoteBss(r.bssid, nullptr);
 	const std::optional<std::size_t> b = findLocalBss(r.bssid);
-	const arcp::BssInfo *const bi = (rb != nullptr) ? &rb->info : (b.has_value() ? &mBss[*b].info : nullptr);
+	const arcp::BssInfo *const bi = (rb != nullptr) ? &rb->info : (b.has_value() ? &mBss[*b].info :
+								       nullptr);
 
-	logging::info(LOG_MODULE, "{} heard by {} (AP {}): {} dBm, {} samples", r.sta, r.bssid, from, r.rssi, r.samples);
+	logging::info(LOG_MODULE, "{} heard by {} (AP {}): {} dBm, {} samples", r.sta, r.bssid, from, r.rssi,
+		      r.samples);
 	if ((s != nullptr) && (bi != nullptr)) {
 		// Uplink -> downlink: this BSS's learned offset, else amon_rssi_offset.
 		const UlDlCal *const cal = findCal(r.bssid);
 		const int dl = policy::uplinkToDownlink(mCfg.pol, (cal != nullptr) ? &cal->off : nullptr,
 							static_cast<int>(r.rssi));
-		Measurement &m = storeMeasurement(*s, r.bssid, MeasSrc::AIR_MONITOR, rrm::dbmToRcpi(dl), bi->opClass,
-						  bi->channel, os::nowMs() - r.ageMs);
+		Measurement &m = storeMeasurement(*s, r.bssid, MeasSrc::AIR_MONITOR, rrm::dbmToRcpi(dl),
+						  bi->opClass, bi->channel, os::nowMs() - r.ageMs);
 		m.ulDbm = r.rssi;
 		pairUlDl(*s, r.bssid);
 		onMonitorResult(*s);
@@ -361,11 +369,15 @@ void Daemon::pairUlDl(Sta &s, const Mac &bssid) noexcept
 	c->ts = now;
 	FixedString<16U> off;
 	formatOffset16(off, c->off.offset16);
-	logging::dbg(LOG_MODULE, "ul/dl sample {} sta {}: downlink {} uplink {} -> {} dB{}, offset {} ({} samples)", bssid,
-		     s.addr, down, ul->ulDbm, down - static_cast<int>(ul->ulDbm), ok ? "" : " (outlier, dropped)", off,
+	logging::dbg(LOG_MODULE,
+		     "ul/dl sample {} sta {}: downlink {} uplink {} -> {} dB{}, offset {} ({} samples)",
+		     bssid,
+		     s.addr, down, ul->ulDbm, down - static_cast<int>(ul->ulDbm), ok ? "" : " (outlier, "
+											    "dropped)", off,
 		     c->off.n);
 	if (!wasCal && policy::isUlDlCalibrated(mCfg.pol, c->off)) {
-		logging::info(LOG_MODULE, "{}: uplink/downlink offset learned: {} dB ({} samples)", bssid, off, c->off.n);
+		logging::info(LOG_MODULE, "{}: uplink/downlink offset learned: {} dB ({} samples)", bssid,
+			      off, c->off.n);
 	}
 }
 

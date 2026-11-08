@@ -92,7 +92,8 @@ ByteView genlAttrs(ByteView msg) noexcept
 	ByteView r;
 	if (msg.size() >= (NL_HDR + GENL_HDR)) {
 		const std::size_t len = os::loadNe32(msg, 0U);
-		const std::size_t end = ((len <= msg.size()) && (len >= (NL_HDR + GENL_HDR))) ? len : msg.size();
+		const std::size_t end = ((len <= msg.size()) &&
+					 (len >= (NL_HDR + GENL_HDR))) ? len : msg.size();
 		r = msg.sub(NL_HDR + GENL_HDR, end - (NL_HDR + GENL_HDR));
 	}
 	return r;
@@ -114,7 +115,9 @@ std::optional<Station> parseStation(ByteView msg) noexcept
 		if (fl.size() >= 8U) {
 			// struct nl80211_sta_flag_update { u32 mask; u32 set; }
 			const std::uint32_t bit = 1U << static_cast<unsigned>(NL80211_STA_FLAG_AUTHORIZED);
-			s.authorized = ((os::loadNe32(fl, 0U) & bit) != 0U) && ((os::loadNe32(fl, 4U) & bit) != 0U);
+			const bool inMask = (os::loadNe32(fl, 0U) & bit) != 0U;
+			const bool isSet = (os::loadNe32(fl, 4U) & bit) != 0U;
+			s.authorized = inMask && isSet;
 		}
 		s.signal = toDbm(findAttr(info, u16(NL80211_STA_INFO_SIGNAL)));
 		s.signalAvg = toDbm(findAttr(info, u16(NL80211_STA_INFO_SIGNAL_AVG)));

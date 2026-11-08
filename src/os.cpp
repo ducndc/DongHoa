@@ -125,7 +125,8 @@ std::uint64_t nowUs() noexcept
 {
 	timespec ts{};
 	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (static_cast<std::uint64_t>(ts.tv_sec) * 1000000U) + (static_cast<std::uint64_t>(ts.tv_nsec) / 1000U);
+	return (static_cast<std::uint64_t>(ts.tv_sec) * 1000000U) + (static_cast<std::uint64_t>(ts.tv_nsec) /
+								     1000U);
 }
 
 std::int32_t processId() noexcept
@@ -379,7 +380,8 @@ int ifnameToIndex(const char *ifname) noexcept
 
 Fd openPacket(const char *ifname, std::uint16_t ethertype, const Mac &group, LinkInfo &info) noexcept
 {
-	Fd fd(::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, static_cast<int>(htons(ethertype))));
+	Fd fd(::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK,
+		       static_cast<int>(htons(ethertype))));
 	ifreq ifr{};
 	bool ok = fd.valid() && (std::strlen(ifname) < sizeof(ifr.ifr_name));
 
@@ -444,7 +446,8 @@ Rx recvPacket(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept
 
 Fd openMonitor(const char *ifname) noexcept
 {
-	Fd fd(::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, static_cast<int>(htons(ETH_P_ALL))));
+	Fd fd(::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK,
+		       static_cast<int>(htons(ETH_P_ALL))));
 	sock_fprog prog{};
 	sockaddr_ll sll{};
 

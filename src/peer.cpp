@@ -137,7 +137,8 @@ void Daemon::removePeer(Peer &p) noexcept
 
 void Daemon::expirePeers(Millis now) noexcept
 {
-	const Millis bssAge = (3U * static_cast<Millis>(mCfg.bssStatusMs)) + static_cast<Millis>(mCfg.helloMs);
+	const Millis bssAge = (3U * static_cast<Millis>(mCfg.bssStatusMs)) +
+			      static_cast<Millis>(mCfg.helloMs);
 
 	for (Peer &p : mPeers) {
 		if (!p.used) {
