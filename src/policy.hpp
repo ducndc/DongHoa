@@ -130,6 +130,42 @@ int rlRewardSteer(arcp::SteerOutcome o, int gainDb) noexcept;   // in dB units
 int rlRewardWait(int rssi) noexcept;                            // per fresh poll while waiting
 // Bin labels for the RL command, e.g. "-75..-80".
 std::string_view rlRssiBinName(std::size_t bin) noexcept;
+
+// ---- contextual bandit: which eligible candidate to steer to ----
+// A candidate's context (level, band change, local/remote, utilisation,
+// how its level is known) indexes a table of mean rewards (x256). Its
+// value blends that mean with a prior: what a success there would earn.
+enum class BanditSrc : std::uint8_t { STA_11K = 0, AP_SIDE = 1, UNMEASURED = 2 };
+struct BanditFeatures {
+	int levelDbm{0};
+	int bandDelta{0}; // candidate band vs the current one: -1 lower, 0 same, 1 higher
+	bool local{false};
+	int utilPct{-1};  // -1 unknown
+	BanditSrc src{BanditSrc::STA_11K};
+};
+constexpr std::size_t BANDIT_LEVEL_BINS = 4U; // >= -55, -55..-62, -62..-70, below
+constexpr std::size_t BANDIT_BAND_BINS = 3U;
+constexpr std::size_t BANDIT_LOCAL_BINS = 2U;
+constexpr std::size_t BANDIT_UTIL_BINS = 3U;  // < 30 % (or unknown), 30..55, > 55
+constexpr std::size_t BANDIT_SRC_BINS = 3U;
+constexpr std::size_t BANDIT_CTX =
+	BANDIT_LEVEL_BINS * BANDIT_BAND_BINS * BANDIT_LOCAL_BINS * BANDIT_UTIL_BINS * BANDIT_SRC_BINS;
+constexpr int BANDIT_PRIOR_WEIGHT = 3;      // the prior counts as this many samples
+constexpr int BANDIT_R_TARGET_REFUSED = -2; // the target AP refused or did not answer
+constexpr int BANDIT_R_PING_PONG = -10;     // back on the source BSS soon after a success
+constexpr Millis BANDIT_PING_PONG_MS = 60000U;
+struct BanditTable {
+	std::array<int, BANDIT_CTX> q{};          // mean reward x256
+	std::array<std::uint32_t, BANDIT_CTX> n{};
+};
+std::size_t banditCtx(const BanditFeatures &f) noexcept;
+// Prior in dB: the reward of a success with this gain (target level minus
+// the STA's current level), as rlRewardSteer counts it.
+int banditPriorDb(int gainDb) noexcept;
+// (mean x n + prior x weight) / (n + weight), x256.
+int banditValue(const BanditTable &t, std::size_t ctx, int priorDb) noexcept;
+// Running mean: alpha = 1/(n+1), then 1/8.
+void banditUpdate(BanditTable &t, std::size_t ctx, int rewardDb) noexcept;
 // hostapd's signal is the level of the STA's last received frame. A poll
 // sample is fresh only when that frame came within the last poll interval
 // (inactive_msec, 0 when hostapd does not report it): an idle STA's old

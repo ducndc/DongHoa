@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.8, 2026-11-08 (history in Appendix B) |
+| Document version | 2.9, 2026-11-08 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -152,7 +152,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
-| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `DROPRX [<MESSAGE> <n>]` (fault injection: drop received messages of a type), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
+| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `BANDIT [mode <n> | reset]` (target bandit state and control), `DROPRX [<MESSAGE> <n>]` (fault injection: drop received messages of a type), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
 | IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`, `class`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
@@ -246,6 +246,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-STR-8 | Once a STEER_REQ has been sent to a remote candidate, the outcome shall be sent to that target in STEER_RESULT, aborted included: when the STA disassociates during NEGOTIATE, and when no STEER_RESP arrives (the target may have accepted). A local disassociation shall abort the transaction in MEASURE and NEGOTIATE, and shall not end it in BTM and ROAM, where the outcome follows from where the STA associates or from the timeout. | T-I 19, T-O |
 | FR-STR-9 | **Backoff.** SUCCESS and WRONG_TARGET shall reset the STA's failure count and apply `steer_cooldown_ms` (30000). A failure shall increase it and apply `steer_cooldown_ms` × 2^failures, capped at `steer_backoff_max_ms` (600000). "No suitable candidate" applies the plain cooldown and is not a failure. A newly associated STA shall not be steered before one cooldown has passed. | T-U `test_policy`, I |
 | FR-STR-10 | Every transaction shall end within `beacon_req_timeout_ms` + N × (`steer_resp_timeout_ms` + 1500) + `btm_timeout_ms` + `roam_timeout_ms`, where N ≤ 16 is the number of remote candidates tried. | A |
+| FR-STR-11 | **Contextual bandit for the target.** Off by default (`bandit_target` 0); enabled by `bandit_target` 1 (shadow) or 2 (active) or at run time by `BANDIT mode <n>`. Each eligible candidate shall get one of 216 contexts (level bin, band change, local/remote, utilisation bin, level source) and a value (mean reward × n + prior × 3)/(n + 3), prior = 8 + clamp(gain, 0, 24) dB. The outcome of each tried candidate shall update its context's mean (success +8 + gain, elsewhere +4, BTM refused −10, roam timeout −6, target refused −2, aborted none), and a STA returning to the BSS it was steered away from within 60 s of a success shall add −10. Active mode shall order the eligible candidates by value and swap the top two in `bandit_epsilon_pct` (5 %) of steers; no gate of FR-STR/FR-POL shall be relaxed. | T-U, T-I 21 |
 
 ### 4.7 Admission and reservations, target side (ADM)
 
@@ -343,7 +344,7 @@ per second.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| NFR-CAP-1 | Fixed limits: 16 local BSSes (valid `bss` lines beyond 16 are ignored with a warning, the daemon still starts), 256 local STAs, 32 peers with 16 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class / roaming records, 64 uplink/downlink calibration entries, 16 candidates per steer, 256 stations per nl80211 station dump, a 432 × 2 Q-table. Running out of space in a table shall be logged and handled without crashing. | I |
+| NFR-CAP-1 | Fixed limits: 16 local BSSes (valid `bss` lines beyond 16 are ignored with a warning, the daemon still starts), 256 local STAs, 32 peers with 16 BSSes and 4 radios each, 512 remote STAs, 16 transactions, 32 reservations, 32 pending reliable messages, 8 L2 ports, 4 air monitors, 16 monitor watches, 512 device class / roaming records, 64 uplink/downlink calibration entries, 16 candidates per steer, 256 stations per nl80211 station dump, a 432 × 2 Q-table, a 216-context bandit table, 32 ping-pong watches. Running out of space in a table shall be logged and handled without crashing. | I |
 | NFR-CAP-2 | No heap allocation (C-5). The fixed daemon state is 449,352 bytes on x86-64 (the static `Daemon` object, measured with `nm -S`), in `.bss`. | A |
 | NFR-CAP-3 | The OpenWrt package file should stay below 64 KiB. **Not met:** `donghoa-1.0-r21.apk` is 99.2 KB on x86-64 (40.8 KB at `r5`); the growth comes from the features added since (AP-side measurement, low-power classification, station dumps, learning). Build with `-Os` or split rarely used parts if the limit matters on a target | T-O |
 
@@ -402,6 +403,7 @@ hostapd, `mac80211_hwsim`, `wpa_supplicant`, S1–S16). Details per scenario:
 | hostapd and nl80211 parsers (IR-2, FR-MON-2/3, NFR-PRF-4) | T-U hostapd parsers, station-dump parser (synthetic kernel messages, truncation); T-O S3, S16 | Real driver field variants beyond `mac80211_hwsim` |
 | Neighbor database (FR-NBR) | T-I 1, 6; T-O S2, S13 | — |
 | Triggers and policy (FR-TRG, FR-POL, FR-ADM-1) | T-U `test_policy`, `test_policy_tput`, freshness, per-STA threshold, Q-learning; T-I 3, 4, 7, 8, 13, 17, 18 in both models; T-O S5, S7, S8 | Calibration of thresholds on real clients |
+| Target bandit (FR-STR-11) | T-U context, prior, value, update; T-I 21 (shadow, active reordering, ping-pong; whole itest also with `bandit_target 1`) | Persisting/sharing the table |
 | Steering flow (FR-STR) | T-I 3 (remote RSSI roam), 7, 8 (band, 6 GHz), 11, 12 (12 APs, ranked pool), 16, 17 (BTM reject); T-O S4 (manual), S5 (band), S6 (cross-AP, BTM reject, reservation released) | WRONG_TARGET outcome |
 | Reservations, admission (FR-ADM) | T-I 3, 4, 19 (released at once by STEER_RESULT when the STA drops in NEGOTIATE or the answer is lost); T-O S6 (released on reject) | Expiry path (8 s) and peer-loss release |
 | Load balancing (FR-TRG-3) | T-U overload, admission, feedback rule; T-I 4, 14 (pause when futile) | — |
@@ -434,6 +436,7 @@ real hardware runs (survey utilisation source, station dumps, client
 | `rssi_steering` / `band_steering` / `load_balancing` | 1 / 1 / 1 | on/off |
 | `roam_thr_learn` / `roam_thr_min` / `roam_thr_max` | 1 / −82 / −65 | bool / dBm / dBm |
 | `rl_roam` / `rl_epsilon_pct` | 0 / 1 | 0 off, 1 shadow, 2 active / % |
+| `bandit_target` / `bandit_epsilon_pct` | 0 / 5 | 0 off, 1 shadow, 2 active / % |
 | `rssi_low` / `rssi_low_count` / `rssi_hysteresis` / `rssi_min_target` | −75 / 3 / 8 / −70 | dBm / samples / dB / dBm |
 | `band_steer_rssi` | −55 | dBm |
 | `band_steer_6g` | 1 | on/off: 5 → 6 GHz band steering |
@@ -481,3 +484,4 @@ real hardware runs (survey utilisation source, station dumps, client
 | 2.6 | 2026-11-07 | FR-TRG-8: Q-learning off by default (`rl_roam` 0); enabled by configuration or `RL mode <n>` |
 | 2.7 | 2026-11-07 | Documentation audit: §2.2 product functions brought up to date; IR-5 lists the `class` module; NFR-CAP-1 lists every table, NFR-CAP-2 re-measured (449,352 bytes); FR-REL-2 now unit-tested; §5.1 measurements updated; §7 verification matrix rewritten for the three test levels |
 | 2.8 | 2026-11-08 | FR-STR-8: STEER_RESULT once a STEER_REQ went out (aborted included); FR-TRG-3: a disconnected offload gives no verdict; IR-3: `DROPRX`; verification matrix updated (T-I 19, 20) |
+| 2.9 | 2026-11-08 | New FR-STR-11 (contextual bandit for the target, off by default); IR-3: `BANDIT`; keys `bandit_target`, `bandit_epsilon_pct`; NFR-CAP-1 tables |

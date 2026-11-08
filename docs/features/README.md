@@ -35,6 +35,7 @@ These documents explain. The reference documents they link to define:
 | 13 | [Configuration and OpenWrt integration](13-configuration-openwrt.md) | Config file, UCI-generated `bss` lines, procd service, package |
 | 14 | [Verification](14-verification.md) | Unit tests, integration test, QEMU system test, what each one proves |
 | 15 | [Q-learning: when to roam](15-rl-roaming.md) | A small integer Q-table learns from outcomes when to wait and when to steer; off by default; shadow (learn only) or active via `rl_roam` or `RL mode` |
+| 16 | [Contextual bandit: which target](16-target-bandit.md) | Learns from outcomes which kind of eligible candidate works and orders candidates by it; off by default (`bandit_target`, `BANDIT mode`) |
 
 ## System overview
 

@@ -597,6 +597,7 @@ void Daemon::onHapdConnected(std::size_t bss, const Mac &addr) noexcept
 	Sta *const s = getSta(addr, bss);
 
 	logging::info(LOG_MODULE, "sta {} associated to {}", addr, mBss[bss].cfg->ifname);
+	banditCheckPingPong(bss, addr);
 	if (s != nullptr) {
 		arcp::StaEvent e;
 		s->away = false;

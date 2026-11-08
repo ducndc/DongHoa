@@ -182,7 +182,9 @@ score = expected(target)
 ```
 
 Candidates are sorted best first (stable insertion sort); ineligible ones
-are dropped. None left → "no suitable candidate": cooldown, and for a band
+are dropped. With the contextual bandit active (`bandit_target 2`, off by
+default), the eligible candidates are then ordered by learned value instead;
+see [feature 16](16-target-bandit.md). None left → "no suitable candidate": cooldown, and for a band
 steer that measured nothing, a growing band backoff (feature 7).
 
 ### 6. Negotiate (`advance`, target side `onSteerReq`)

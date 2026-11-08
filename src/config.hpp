@@ -52,6 +52,12 @@ struct PolicyConfig {
 	// states). Enabled by this key or at run time with "RL mode <n>".
 	int rlRoam{0};
 	int rlEpsilonPct{1};
+	// Contextual bandit for the choice of target (policy::bandit*): 0 off
+	// (default), 1 shadow (learn from the outcomes of the score's choice),
+	// 2 active (order eligible candidates by learned value; swap the top
+	// two in bandit_epsilon_pct % of steers). Also "BANDIT mode <n>".
+	int banditTarget{0};
+	int banditEpsilonPct{5};
 	int roamThrMin{-82};
 	int roamThrMax{-65};
 	int rssiHysteresis{8};   // dB the target must beat the current RSSI by

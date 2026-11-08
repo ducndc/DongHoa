@@ -326,6 +326,18 @@ bool parseConfigLine(Config &c, std::string_view line) noexcept
 		ok = parseBss(c, v);
 	} else if (k == "key") {
 		ok = parseKey(c, v);
+	} else if (k == "bandit_target") {
+		const std::optional<long> n = parseLong(v, 10, 0, 2);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.banditTarget = static_cast<int>(*n);
+		}
+	} else if (k == "bandit_epsilon_pct") {
+		const std::optional<long> n = parseLong(v, 10, 0, 100);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.banditEpsilonPct = static_cast<int>(*n);
+		}
 	} else if (k == "rl_roam") {
 		const std::optional<long> n = parseLong(v, 10, 0, 2);
 		ok = n.has_value();

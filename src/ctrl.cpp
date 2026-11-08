@@ -258,6 +258,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		cmdRl(o, (req.size() > 3U) ? subView(req, 3U) : std::string_view());
 	} else if ((req == "DROPRX") || startsWith(req, "DROPRX ")) {
 		cmdDropRx(o, (req.size() > 7U) ? subView(req, 7U) : std::string_view());
+	} else if ((req == "BANDIT") || startsWith(req, "BANDIT ")) {
+		cmdBandit(o, (req.size() > 7U) ? subView(req, 7U) : std::string_view());
 	} else if (req == "CALIB") {
 		// Learned uplink -> downlink offsets used for AP-side levels.
 		formatTo(o, "default amon_rssi_offset={} learn={} min_samples={}\n", mCfg.pol.amonRssiOffset,
@@ -433,6 +435,60 @@ void Daemon::cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept
 	mDropCount = static_cast<std::uint32_t>(*n);
 	logging::warn(LOG_MODULE, "fault injection: dropping the next {} received {}", mDropCount, name);
 	formatTo(o, "OK dropping the next {} {}\n", mDropCount, name);
+}
+
+void Daemon::cmdBandit(FixedString<8192U> &o, std::string_view args) noexcept
+{
+	Tokens t(args, " ");
+	std::string_view a;
+	std::string_view b;
+	const bool hasA = t.next(a);
+	const bool hasB = t.next(b);
+	constexpr std::array<std::string_view, 3U> MODES{"off", "shadow", "active"};
+
+	if (hasA && (a == "reset")) {
+		mBandit = policy::BanditTable{};
+		mBanditStats = BanditStats{};
+		formatTo(o, "OK bandit table cleared\n");
+		return;
+	}
+	if (hasA && (a == "mode")) {
+		const std::optional<long> m = hasB ? parseLong(b, 10, 0, 2) : std::optional<long>();
+		if (!m.has_value()) {
+			formatTo(o, "FAIL usage: BANDIT mode <0 off|1 shadow|2 active>\n");
+		} else {
+			mBanditModeOverride = static_cast<int>(*m);
+			formatTo(o, "OK mode {}\n", MODES[static_cast<std::size_t>(*m)]);
+		}
+		return;
+	}
+	if (hasA) {
+		formatTo(o, "FAIL usage: BANDIT [mode <0|1|2> | reset]\n");
+		return;
+	}
+	formatTo(o, "bandit mode={} epsilon={}% reordered={} explored={} updates={}\n",
+		  MODES[static_cast<std::size_t>(banditMode())], mCfg.pol.banditEpsilonPct, mBanditStats.reordered,
+		  mBanditStats.explored, mBanditStats.updates);
+	constexpr std::array<std::string_view, 4U> LEVEL{">=-55", "-55..-62", "-62..-70", "<-70"};
+	constexpr std::array<std::string_view, 3U> BAND{"lower", "same", "higher"};
+	constexpr std::array<std::string_view, 3U> UTIL{"<30", "30..55", ">55"};
+	constexpr std::array<std::string_view, 3U> SRC{"11k", "ap-side", "unmeasured"};
+	for (std::size_t c = 0U; c < policy::BANDIT_CTX; c++) {
+		if (mBandit.n[c] == 0U) {
+			continue;
+		}
+		const std::size_t sr = c % policy::BANDIT_SRC_BINS;
+		const std::size_t ut = (c / policy::BANDIT_SRC_BINS) % policy::BANDIT_UTIL_BINS;
+		const std::size_t lo = (c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS)) % policy::BANDIT_LOCAL_BINS;
+		const std::size_t bd = (c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS * policy::BANDIT_LOCAL_BINS)) %
+				       policy::BANDIT_BAND_BINS;
+		const std::size_t lv = c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS * policy::BANDIT_LOCAL_BINS *
+					    policy::BANDIT_BAND_BINS);
+		FixedString<16U> mean;
+		formatQ(mean, mBandit.q[c]);
+		formatTo(o, "ctx {} level={} band={} {} util={} src={} mean={} n={}\n", c, LEVEL[lv], BAND[bd],
+			 (lo == 1U) ? "local" : "remote", UTIL[ut], SRC[sr], mean, mBandit.n[c]);
+	}
 }
 
 void Daemon::handleCtrl() noexcept

@@ -15,7 +15,7 @@ void usage(std::string_view prog) noexcept
 {
 	donghoa::Line u;
 	donghoa::formatTo(u,
-			   "usage: {} <ctrl_socket> STATUS|PEERS|STAS|STEERS|DEVCLASS|CALIB|RL|DROPRX|PING|"
+			   "usage: {} <ctrl_socket> STATUS|PEERS|STAS|STEERS|DEVCLASS|CALIB|RL|BANDIT|DROPRX|PING|"
 			   "STEER <sta> [<bssid>]|MONITOR <sta> [<ms>]|\n"
 			   "LOG [err|warn|info|debug [<module>...]]\n",
 			   prog);
