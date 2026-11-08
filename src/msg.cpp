@@ -447,6 +447,12 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 				     h->origin);
 			continue;
 		}
+		if ((mDropCount > 0U) && (h->type == mDropType)) {
+			mDropCount--;
+			logging::info(LOG_MODULE, "rx: {} #{} from {} dropped (fault injection, {} left)",
+				      arcp::msgName(h->type), h->msgId, h->origin, mDropCount);
+			continue;
+		}
 		const bool isNewPeer = findPeer(h->origin) == nullptr;
 		if (h->type == arcp::raw(arcp::MsgType::BYE)) {
 			Peer *const p = findPeer(h->origin);

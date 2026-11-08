@@ -289,6 +289,10 @@ STA21_MAC = "aa:bb:cc:dd:ee:21"  # S16: no 11k, scored with the learned offset
 STA22_MAC = "aa:bb:cc:dd:ee:22"  # S17: sticky STA (refuses BTM): learns a lower roaming threshold
 STA23_MAC = "aa:bb:cc:dd:ee:23"  # S18: refuses BTM at -80 dBm (teaches the Q-table in shadow mode)
 STA24_MAC = "aa:bb:cc:dd:ee:24"  # S18: same situation, decided by the learned table (active mode)
+STA26_MAC = "aa:bb:cc:dd:ee:26"  # S19a: STEER_REQ lost once, retransmitted
+STA27_MAC = "aa:bb:cc:dd:ee:27"  # S19b: every STEER_RESP lost
+STA28_MAC = "aa:bb:cc:dd:ee:28"  # S19c: disconnects during NEGOTIATE
+STA29_MAC = "aa:bb:cc:dd:ee:29"  # S20: chosen for offloading, disconnects instead
 STA18_MAC = "aa:bb:cc:dd:ee:18"  # S13: weak signal, but idle (old frame) until it sends again
 
 
@@ -428,6 +432,85 @@ def scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2):
         ap2.remove_sta(STA24_MAC)
     print("PASS 18: Q-learning: shadow learned STEER=-10 at -80 dBm from a refusing STA; active mode waited, "
           "then steered after %.1f s when staying weak cost more" % took)
+
+
+def scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2):
+    """S19: lost messages and a STA that drops mid-steer (fault injection
+    with DROPRX). (a) AP2 drops the first STEER_REQ: the retransmission
+    gets through and the steer succeeds. (b) AP1 loses every STEER_RESP:
+    at the NEGOTIATE timeout AP1 tells AP2, which frees its reservation at
+    once instead of after reserve_hold_ms. (c) The STA disconnects during
+    NEGOTIATE: AP2's reservation is freed at once."""
+    mark(logs, "S19 lost STEER messages and a STA dropping mid-steer")
+    log = lambda i: open(logs[i].name).read().split("=== S19")[-1]
+    resv = lambda mac: any(l.startswith("reservation sta " + mac) for l in cli(socks[1], "STEERS").splitlines())
+    tracked = lambda mac: "flags=kvr" in next((l for l in cli(socks[0], "STAS").splitlines()
+                                               if l.startswith("sta " + mac)), "")
+    # (a) retransmission
+    a = Sta(STA26_MAC, -60, {B2: (124, 149, -55)}, rrm={0})
+    with world.lock:
+        ap1.add_sta(a)
+    wait_for(lambda: tracked(STA26_MAC), 3, "STA26 tracked")
+    assert "OK" in cli(socks[1], "DROPRX", "STEER_REQ", "1")
+    assert "OK" in cli(socks[0], "STEER", STA26_MAC, B2)
+    wait_for(lambda: STA26_MAC + " (manual) finished: success" in log(0), 8, "steer despite a lost STEER_REQ")
+    assert "rx: STEER_REQ" in log(1) and "dropped (fault injection, 0 left)" in log(1), "first copy dropped"
+    wait_for(lambda: STA26_MAC in ap2.stas, 3, "STA26 at AP2")
+    with world.lock:
+        ap2.remove_sta(STA26_MAC)
+    # (b) every STEER_RESP lost: the NEGOTIATE timeout releases the slot
+    b = Sta(STA27_MAC, -60, {B2: (124, 149, -55)}, rrm={0})
+    with world.lock:
+        ap1.add_sta(b)
+    wait_for(lambda: tracked(STA27_MAC), 3, "STA27 tracked")
+    assert "OK" in cli(socks[0], "DROPRX", "STEER_RESP", "4")
+    assert "OK" in cli(socks[0], "STEER", STA27_MAC, B2)
+    wait_for(lambda: resv(STA27_MAC), 3, "AP2 to reserve a slot for STA27")
+    t0 = time.time()
+    wait_for(lambda: not resv(STA27_MAC), 5, "AP2's reservation released after the NEGOTIATE timeout")
+    held = time.time() - t0
+    assert held < 4.0, "released by STEER_RESULT, not by the 8 s expiry (%.1f s)" % held
+    assert "no STEER_RESP from 02:00:00:00:00:02" in log(0)
+    assert STA27_MAC + ": aborted" in log(1)
+    cli(socks[0], "DROPRX", "STEER_RESP", "0")
+    with world.lock:
+        ap1.remove_sta(STA27_MAC)
+    # (c) the STA disconnects while AP1 waits for the answer
+    c = Sta(STA28_MAC, -60, {B2: (124, 149, -55)}, rrm={0})
+    with world.lock:
+        ap1.add_sta(c)
+    wait_for(lambda: tracked(STA28_MAC), 3, "STA28 tracked")
+    assert "OK" in cli(socks[0], "DROPRX", "STEER_RESP", "4")
+    assert "OK" in cli(socks[0], "STEER", STA28_MAC, B2)
+    wait_for(lambda: resv(STA28_MAC), 3, "AP2 to reserve a slot for STA28")
+    t0 = time.time()
+    with world.lock:
+        ap1.remove_sta(STA28_MAC)  # gone in NEGOTIATE
+    wait_for(lambda: not resv(STA28_MAC), 2, "AP2's reservation released when the STA dropped")
+    held = time.time() - t0
+    assert STA28_MAC + " (manual) finished: aborted" in log(0)
+    cli(socks[0], "DROPRX", "STEER_RESP", "0")
+    print("PASS 19: lost STEER_REQ retransmitted; lost STEER_RESP and a STA dropping in NEGOTIATE release "
+          "the target's reservation at once (%.1f s)" % held)
+
+
+def scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2):
+    """S20: the STA chosen for offloading disconnects instead of moving. It
+    is no evidence about the offload: no verdict, no futile count."""
+    mark(logs, "S20 an offloaded STA disconnects: no verdict")
+    log2 = lambda: open(logs[1].name).read().split("=== S20")[-1]
+    sta = Sta(STA29_MAC, -58, {B1: (115, 36, -60)}, rrm={0})
+    with world.lock:
+        ap1.util = 30
+        ap2.add_sta(sta)
+        ap2.util = 230
+    wait_for(lambda: "offloading " + STA29_MAC in log2(), 15, "AP2 to offload STA29")
+    with world.lock:
+        ap2.remove_sta(STA29_MAC)  # gone instead of moving
+        ap2.util = 25
+    wait_for(lambda: STA29_MAC + " disconnected instead of moving: no verdict" in log2(), 8, "no verdict")
+    assert "offloading " + STA29_MAC + " did not lower" not in log2(), "a disconnect counted as a futile move"
+    print("PASS 20: an offloaded STA that disconnects gives no verdict on the offload")
 
 
 def scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2):
@@ -748,7 +831,9 @@ def main():
             scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
             scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
+            scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
             scenario_many_bss(world, procs, logs, tmp, base)
             scenario_scale(world, procs, logs, tmp, base)
@@ -853,7 +938,9 @@ def main():
         scenario_uldl_offset(world, procs, logs, socks, tmp, ap1, ap2, mon_port)
         scenario_roam_threshold(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_rl_roam(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_mid_steer_loss(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_many_bss(world, procs, logs, tmp, base)
         scenario_scale(world, procs, logs, tmp, base)

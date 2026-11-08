@@ -36,6 +36,17 @@ Peer *Daemon::findPeer(const Mac &id) noexcept
 	return r;
 }
 
+const RemoteSta *Daemon::findRemoteSta(const Mac &sta) const noexcept
+{
+	const RemoteSta *r = nullptr;
+	for (const RemoteSta &x : mRsta) {
+		if ((r == nullptr) && x.used && (x.sta == sta)) {
+			r = &x;
+		}
+	}
+	return r;
+}
+
 Peer *Daemon::getPeer(const Mac &id) noexcept
 {
 	Peer *r = findPeer(id);

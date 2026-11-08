@@ -256,6 +256,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		}
 	} else if ((req == "RL") || startsWith(req, "RL ")) {
 		cmdRl(o, (req.size() > 3U) ? subView(req, 3U) : std::string_view());
+	} else if ((req == "DROPRX") || startsWith(req, "DROPRX ")) {
+		cmdDropRx(o, (req.size() > 7U) ? subView(req, 7U) : std::string_view());
 	} else if (req == "CALIB") {
 		// Learned uplink -> downlink offsets used for AP-side levels.
 		formatTo(o, "default amon_rssi_offset={} learn={} min_samples={}\n", mCfg.pol.amonRssiOffset,
@@ -398,6 +400,39 @@ void Daemon::cmdRl(Out &o, std::string_view args) noexcept
 			 policy::rlRssiBinName(rb), TREND[tr], GAP[gap], ref, (ref == 2U) ? "+" : "", streak, qw, qs,
 			 mRl.n[s][0U], mRl.n[s][1U], (mRl.q[s][1U] > mRl.q[s][0U]) ? "steer" : "wait");
 	}
+}
+
+// Fault injection for tests and diagnosis: "DROPRX <MESSAGE> <n>" drops the
+// next n received ARCP messages of that type (before ACK), as a lossy link
+// would; "DROPRX" shows what is pending, "DROPRX <MESSAGE> 0" cancels.
+void Daemon::cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept
+{
+	Tokens t(args, " ");
+	std::string_view name;
+	std::string_view count;
+	const bool hasName = t.next(name);
+	const bool hasCount = t.next(count);
+
+	if (!hasName) {
+		formatTo(o, "droprx {} {}\n", (mDropCount > 0U) ? arcp::msgName(mDropType) : std::string_view("-"),
+			 mDropCount);
+		return;
+	}
+	std::optional<std::uint8_t> type;
+	for (std::uint32_t v = 0U; (v < 256U) && !type.has_value(); v++) {
+		if (arcp::msgName(static_cast<std::uint8_t>(v)) == name) {
+			type = static_cast<std::uint8_t>(v);
+		}
+	}
+	const std::optional<long> n = hasCount ? parseLong(count, 10, 0, 1000) : std::optional<long>();
+	if (!type.has_value() || !n.has_value()) {
+		formatTo(o, "FAIL usage: DROPRX <MESSAGE (e.g. STEER_RESP)> <n 0..1000>\n");
+		return;
+	}
+	mDropType = *type;
+	mDropCount = static_cast<std::uint32_t>(*n);
+	logging::warn(LOG_MODULE, "fault injection: dropping the next {} received {}", mDropCount, name);
+	formatTo(o, "OK dropping the next {} {}\n", mDropCount, name);
 }
 
 void Daemon::handleCtrl() noexcept

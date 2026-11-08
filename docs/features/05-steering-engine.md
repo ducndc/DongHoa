@@ -244,8 +244,27 @@ not when it says so. Outcomes and what follows:
 | no suitable candidate | nothing to move to | cooldown (not counted as a failure) |
 
 An association back to the source BSS is ignored (some STAs reassociate
-first). If the STA disassociates during MEASURE or NEGOTIATE, the
-transaction is aborted.
+first).
+
+### 9. The STA disconnects in the middle of a steer
+
+| Phase when it drops | What happens | Penalty |
+|---|---|---|
+| MEASURE | aborted at once; late beacon reports and AP-side results are ignored | none (not a failure) |
+| NEGOTIATE | aborted at once; **STEER_RESULT (aborted) to the target**, which frees its reservation; a late STEER_RESP is ignored | none |
+| BTM, ROAM | kept: leaving is what a roaming STA does. Association at the target → SUCCESS, elsewhere → WRONG_TARGET, back at the source → ignored (new connection, start-up cooldown), nowhere → BTM timeout [2 s] / roam timeout [5 s], STEER_RESULT frees the target's slot | backoff only if it never reappears (and its entry still exists) |
+
+On the target, a reservation always ends: the STA's association, a
+STEER_RESULT (sent as soon as a STEER_REQ went out, aborted included, and
+also when the target's answer never arrived: it may have accepted), the
+source AP lost, or expiry after `reserve_hold_ms` [8 s] as the last resort.
+The disconnect itself is multicast as STA_EVENT (disassoc), and the STA's
+class and learned threshold are saved to its shared record.
+
+Tested with fault injection (`DROPRX`, feature 12) in itest PASS 19: a lost
+STEER_REQ is retransmitted; with every STEER_RESP lost, the NEGOTIATE timeout
+releases the target's slot at once; a STA dropping in NEGOTIATE releases it
+at once instead of after 8 s.
 
 ## Timing summary
 
