@@ -455,10 +455,10 @@ void testPolicy()
 							f.local = lo == 1;
 							f.utilPct = u;
 							f.src = static_cast<policy::BanditSrc>(sr);
-							const std::size_t c = policy::banditCtx(f);
-							unique = unique && (c < policy::BANDIT_CTX) && !seen[c];
-							if (c < policy::BANDIT_CTX) {
-								seen[c] = true;
+							const std::size_t ci = policy::banditCtx(f);
+							unique = unique && (ci < policy::BANDIT_CTX) && !seen[ci];
+							if (ci < policy::BANDIT_CTX) {
+								seen[ci] = true;
 							}
 						}
 					}
@@ -483,10 +483,10 @@ void testPolicy()
 		}
 		CHECK(policy::banditValue(t, 7U, 20) < 0); // evidence outweighs the prior
 		CHECK(policy::banditValue(t, policy::BANDIT_CTX, 5) == (5 * policy::RL_ONE)); // out of range: prior
-		Config c;
-		CHECK(c.pol.banditTarget == 0); // off by default
-		CHECK(parseConfigLine(c, "bandit_target 2") && (c.pol.banditTarget == 2) && !parseConfigLine(c, "bandit_target 3"));
-		CHECK(parseConfigLine(c, "bandit_epsilon_pct 0") && (c.pol.banditEpsilonPct == 0));
+		Config cfg;
+		CHECK(cfg.pol.banditTarget == 0); // off by default
+		CHECK(parseConfigLine(cfg, "bandit_target 2") && (cfg.pol.banditTarget == 2) && !parseConfigLine(cfg, "bandit_target 3"));
+		CHECK(parseConfigLine(cfg, "bandit_epsilon_pct 0") && (cfg.pol.banditEpsilonPct == 0));
 	}
 	// Q-learning of when to roam
 	{
@@ -564,9 +564,9 @@ void testPolicy()
 		CHECK(policy::rlRewardSteer(arcp::SteerOutcome::BTM_REJECT, 0) == policy::RL_R_REFUSED);
 		CHECK(policy::rlRewardSteer(arcp::SteerOutcome::ABORTED, 0) == 0);
 		CHECK((policy::rlRewardWait(-65) == 0) && (policy::rlRewardWait(-82) == -3) && (policy::rlRewardWait(0) == 0));
-		Config c;
-		CHECK(c.pol.rlRoam == 0); // off by default; rl_roam or RL mode enables it
-		CHECK(parseConfigLine(c, "rl_roam 2") && (c.pol.rlRoam == 2) && !parseConfigLine(c, "rl_roam 3"));
+		Config cfg;
+		CHECK(cfg.pol.rlRoam == 0); // off by default; rl_roam or RL mode enables it
+		CHECK(parseConfigLine(cfg, "rl_roam 2") && (cfg.pol.rlRoam == 2) && !parseConfigLine(cfg, "rl_roam 3"));
 	}
 	// per-STA roaming threshold
 	{
@@ -591,9 +591,9 @@ void testPolicy()
 		      (policy::decayRoamThr(q, -75) == -75));
 		q.roamThrLearn = false;
 		CHECK(policy::roamThreshold(q, -80) == -75);            // learning off: rssi_low
-		Config c;
-		CHECK(parseConfigLine(c, "roam_thr_min -85") && (c.pol.roamThrMin == -85));
-		CHECK(parseConfigLine(c, "roam_thr_learn 0") && !c.pol.roamThrLearn);
+		Config cfg;
+		CHECK(parseConfigLine(cfg, "roam_thr_min -85") && (cfg.pol.roamThrMin == -85));
+		CHECK(parseConfigLine(cfg, "roam_thr_learn 0") && !cfg.pol.roamThrLearn);
 		// STA_ROAM TLV round trip; a longer TLV from a newer peer decodes
 		arcp::StaRoam r;
 		r.sta = mac("02:00:00:00:02:09");

@@ -219,7 +219,8 @@ void Daemon::applyStaSignal(Sta &s, int signal, std::uint32_t inactiveMs) noexce
 }
 
 void Daemon::applyStaTraffic(Sta &s, std::uint64_t rxBytes, std::uint64_t txBytes, std::uint32_t inactiveMs,
-			     std::uint32_t connectedS, std::uint16_t rxRate, std::uint16_t txRate, Millis now) noexcept
+			     std::uint32_t connectedS, std::uint16_t rxRate, std::uint16_t txRate,
+			     Millis now) noexcept
 {
 	const std::uint64_t total = rxBytes + txBytes;
 	const std::uint64_t prev = s.rxBytes + s.txBytes;
@@ -256,7 +257,8 @@ void Daemon::applyStaSample(Sta &s, const hapd::Sta &h, std::size_t bss) noexcep
 	// link only (the first one seen), or the deltas mix two sources.
 	const bool counters = !s.mld || (s.links[0U].used && (s.links[0U].bss == bss));
 	if (counters) {
-		applyStaTraffic(s, h.rxBytes, h.txBytes, h.inactiveMs, h.connectedS, h.rxRateMbps, h.txRateMbps, now);
+		applyStaTraffic(s, h.rxBytes, h.txBytes, h.inactiveMs, h.connectedS, h.rxRateMbps,
+				h.txRateMbps, now);
 	}
 	if (h.bands != 0U) {
 		s.bandsAdv = h.bands;
@@ -322,14 +324,16 @@ void Daemon::refreshBss(std::size_t i) noexcept
 		b.wiphy = mSurvey.findWiphy(b.ifindex);
 		b.surveyPrev = SurveySample{};
 		if (b.wiphy.has_value()) {
-			logging::dbg(LOG_MODULE, "bss {}: ifindex {} on wiphy {}", b.cfg->ifname, b.ifindex, *b.wiphy);
+			logging::dbg(LOG_MODULE, "bss {}: ifindex {} on wiphy {}", b.cfg->ifname, b.ifindex,
+				     *b.wiphy);
 		}
 	}
 	if (!wasUp && b.hapd.runCommand("GET_CONFIG", reply)) {
 		const std::optional<long> wpa = getKvInt(reply.view(), "wpa");
 		b.secured = wpa.has_value() && (*wpa != 0);
 		if ((b.cfg->mdid != 0U) && (reply.view().find("FT-") == std::string_view::npos)) {
-			logging::warn(LOG_MODULE, "bss {}: mdid configured but hostapd key_mgmt has no FT AKM",
+			logging::warn(LOG_MODULE,
+				      "bss {}: mdid configured but hostapd key_mgmt has no FT AKM",
 				      b.cfg->ifname);
 		}
 	}
@@ -342,7 +346,8 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	b.info.bw = st->bw;
 	b.info.opClass = rrm::opClass20mhz(st->band, st->channel);
 	// 11k/11v must be enabled in hostapd (see README).
-	b.info.caps = static_cast<std::uint16_t>(st->caps | arcp::CAP_BTM | arcp::CAP_RRM_NR | arcp::CAP_RRM_BCN);
+	b.info.caps = static_cast<std::uint16_t>(st->caps | arcp::CAP_BTM | arcp::CAP_RRM_NR |
+						 arcp::CAP_RRM_BCN);
 	if (b.cfg->mdid != 0U) {
 		b.info.caps = static_cast<std::uint16_t>(b.info.caps | arcp::CAP_FT);
 	}
@@ -392,7 +397,8 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	if (util >= 0) {
 		b.load.util = (!wasUp || (b.load.util == 255U))
 				      ? static_cast<std::uint8_t>(util)
-				      : static_cast<std::uint8_t>(((3 * static_cast<int>(b.load.util)) + util + 2) / 4);
+				      : static_cast<std::uint8_t>(((3 * static_cast<int>(b.load.util)) +
+								   util + 2) / 4);
 	} else if (!wasUp) {
 		b.load.util = 255U;
 	} else {
@@ -402,14 +408,13 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	b.load.staCount = static_cast<std::uint16_t>(st->numSta);
 	b.load.maxSta = static_cast<std::uint16_t>(b.cfg->maxSta);
 	b.load.txPower = static_cast<std::int8_t>(st->maxTxpower);
-	b.load.flags = (policy::admit(mCfg.pol, policy::utilToPct(b.load.util), st->numSta,
-				      countReservations(i, os::nowMs()), b.cfg->maxSta) == arcp::SteerStatus::ACCEPT)
-			       ? arcp::LOAD_ACCEPTING
-			       : 0U;
+	const arcp::SteerStatus adm = policy::admit(mCfg.pol, policy::utilToPct(b.load.util), st->numSta,
+						    countReservations(i, os::nowMs()), b.cfg->maxSta);
+	b.load.flags = (adm == arcp::SteerStatus::ACCEPT) ? arcp::LOAD_ACCEPTING : 0U;
 	b.up = true;
 	if (!wasUp) {
-		logging::info(LOG_MODULE, "bss {} up: {} ch {} band {} ssid '{}'{}", b.cfg->ifname, b.info.bssid,
-			      b.info.channel, b.info.band, SsidText{b.info.ssidView()},
+		logging::info(LOG_MODULE, "bss {} up: {} ch {} band {} ssid '{}'{}", b.cfg->ifname,
+			      b.info.bssid, b.info.channel, b.info.band, SsidText{b.info.ssidView()},
 			      (b.info.mdid != 0U) ? " FT" : "");
 	}
 	if (!wasUp || (old != b.info)) {
@@ -520,7 +525,8 @@ void Daemon::pollStas() noexcept
 			continue;
 		}
 		if (b.nlMissed >= 2) {
-			logging::warn(LOG_MODULE, "bss {}: station dumps not completing, polling hostapd", b.cfg->ifname);
+			logging::warn(LOG_MODULE, "bss {}: station dumps not completing, polling hostapd",
+				      b.cfg->ifname);
 			b.nlMissed = 0;
 		}
 		b.nlAsked = false;
@@ -562,7 +568,8 @@ void Daemon::processStationDumps() noexcept
 				hapd::Reply reply;
 				FixedString<64U> cmd;
 				formatTo(cmd, "STA {}", n.addr);
-				const std::optional<hapd::Sta> h = (b.hapd.runCommand(cmd.view(), reply) && !reply.empty())
+				const std::optional<hapd::Sta> h = (b.hapd.runCommand(cmd.view(), reply) &&
+								    !reply.empty())
 									   ? hapd::parseSta(reply.view())
 									   : std::optional<hapd::Sta>();
 				s = (h.has_value() && h->authorized) ? getSta(h->addr, i) : nullptr;
@@ -573,7 +580,8 @@ void Daemon::processStationDumps() noexcept
 			}
 			// The kernel's per-frame average where it has one.
 			applyStaSignal(*s, (n.signalAvg != 0) ? n.signalAvg : n.signal, n.inactiveMs);
-			applyStaTraffic(*s, n.rxBytes, n.txBytes, n.inactiveMs, n.connectedS, n.rxRateMbps, n.txRateMbps,
+			applyStaTraffic(*s, n.rxBytes, n.txBytes, n.inactiveMs, n.connectedS, n.rxRateMbps,
+					n.txRateMbps,
 					start);
 			s->lastPollMs = start;
 		}
@@ -622,8 +630,8 @@ void Daemon::onHapdDisconnected(std::size_t bss, const Mac &addr) noexcept
 		sendStaEvent(addr, bss, arcp::StaEventType::DISASSOC, 0U);
 		// Left by itself (no steer of ours) with a known level: if a peer
 		// reports it soon, that was an own roam at this level.
-		const bool ownLeave = (s != nullptr) && !s->away && (s->rssi != 0) && (findTxnBySta(addr) == nullptr) &&
-				      mCfg.pol.roamThrLearn;
+		const bool ownLeave = (s != nullptr) && !s->away && (s->rssi != 0) &&
+				      (findTxnBySta(addr) == nullptr) && mCfg.pol.roamThrLearn;
 		// Q-learning: the link dropped while we were waiting at a weak level.
 		if ((s != nullptr) && s->rlWaiting && (findTxnBySta(addr) == nullptr)) {
 			rlEndWait(*s, (s->rssi < mCfg.pol.rssiLow) ? policy::RL_R_LINK_DROP : 0,
@@ -672,8 +680,8 @@ void Daemon::onHapdBeaconResp(std::string_view args) noexcept
 	if (!r.has_value()) {
 		logging::dbg(LOG_MODULE, "sta {} beacon report mode {}", *a, mode);
 	} else {
-		logging::dbg(LOG_MODULE, "sta {} sees {} ch {} rcpi {} ({} dBm)", *a, r->bssid, r->channel, r->rcpi,
-			     rrm::rcpiToDbm(r->rcpi));
+		logging::dbg(LOG_MODULE, "sta {} sees {} ch {} rcpi {} ({} dBm)", *a, r->bssid, r->channel,
+			     r->rcpi, rrm::rcpiToDbm(r->rcpi));
 	}
 	onBeaconReport(*s, r);
 }
@@ -743,7 +751,8 @@ void Daemon::syncNeighbors() noexcept
 	// Local siblings (other radios of this AP). Idempotent in hostapd.
 	for (std::size_t i = 0U; i < mNBss; i++) {
 		for (std::size_t j = 0U; j < mNBss; j++) {
-			if ((i != j) && mBss[i].up && mBss[j].up && arcp::isSameEss(mBss[i].info, mBss[j].info)) {
+			if ((i != j) && mBss[i].up && mBss[j].up && arcp::isSameEss(mBss[i].info,
+										    mBss[j].info)) {
 				setNeighbor(mBss[i], mBss[j].info);
 			}
 		}

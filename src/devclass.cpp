@@ -124,11 +124,12 @@ void Daemon::shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t 
 			   std::string_view why) noexcept
 {
 	if (newDbm == oldDbm) {
-		logging::dbg(LOG_MODULE, "sta {}: roaming threshold stays {} dBm ({}, {} events)", sta, oldDbm, why, events);
+		logging::dbg(LOG_MODULE, "sta {}: roaming threshold stays {} dBm ({}, {} events)", sta,
+			     oldDbm, why, events);
 		return;
 	}
-	logging::info(LOG_MODULE, "sta {}: roaming threshold {} -> {} dBm ({}, {} events)", sta, oldDbm, newDbm, why,
-		      events);
+	logging::info(LOG_MODULE, "sta {}: roaming threshold {} -> {} dBm ({}, {} events)", sta, oldDbm,
+		      newDbm, why, events);
 	storeRoamRec(sta, newDbm, events, mApId);
 	const DevClassRec *const r = findDevClass(sta);
 	for (const Peer &peer : mPeers) {
@@ -178,7 +179,8 @@ void Daemon::onStaRoam(const Peer &from, const arcp::StaRoam &c) noexcept
 	const PolicyConfig &p = mCfg.pol;
 	const int lo = (p.roamThrMin <= p.roamThrMax) ? p.roamThrMin : p.roamThrMax;
 	const int hi = (p.roamThrMin <= p.roamThrMax) ? p.roamThrMax : p.roamThrMin;
-	const int thr = (c.thresholdDbm < lo) ? lo : ((c.thresholdDbm > hi) ? hi : static_cast<int>(c.thresholdDbm));
+	const int thr = (c.thresholdDbm < lo) ? lo : ((c.thresholdDbm > hi) ? hi :
+						      static_cast<int>(c.thresholdDbm));
 	const DevClassRec *const known = findDevClass(c.sta);
 
 	// events only grow along a STA's history: the larger count is newer
@@ -188,8 +190,8 @@ void Daemon::onStaRoam(const Peer &from, const arcp::StaRoam &c) noexcept
 	Sta *const s = findSta(c.sta);
 	if ((s != nullptr) && !s->away && (c.events > s->roamEvents)) {
 		if (s->roamThr != thr) {
-			logging::info(LOG_MODULE, "sta {}: roaming threshold {} dBm ({} events, from AP {})", c.sta, thr,
-				      c.events, from.id);
+			logging::info(LOG_MODULE, "sta {}: roaming threshold {} dBm ({} events, from AP {})",
+				      c.sta, thr, c.events, from.id);
 		}
 		s->roamThr = thr;
 		s->roamEvents = c.events;
@@ -203,7 +205,8 @@ void Daemon::sendStaClass(const Mac &peer, const DevClassRec &r) noexcept
 	arcp::StaClass c;
 
 	c.sta = r.sta;
-	c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER : arcp::DevClass::NORMAL);
+	c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER :
+					       arcp::DevClass::NORMAL);
 	c.score = static_cast<std::int32_t>(r.score);
 	c.samples = r.samples;
 	beginMsg(m, arcp::MsgType::STA_CLASS, arcp::FLAG_ACK_REQ);
@@ -232,7 +235,9 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 			// same stale record coming back); bump it so the correction
 			// is not silently dropped by a peer holding the old count.
 			s.lpSamples++;
-			logging::info(LOG_MODULE, "sta {} classified normal (its PHY overrides the traffic shape)", s.addr);
+			logging::info(LOG_MODULE,
+				      "sta {} classified normal (its PHY overrides the traffic shape)",
+				      s.addr);
 			const DevClassRec &r = storeDevClass(s.addr, false, 0, s.lpSamples, mApId);
 			for (const Peer &peer : mPeers) {
 				if (peer.used) {
@@ -248,9 +253,9 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 	policy::addTrafficSample(s.traffic, upBps, downBps);
 	s.lpS100 = policy::lpBehaviourScore(p, s.traffic, band);
 	logging::dbg(LOG_MODULE,
-		     "sta {}: up={}Bps down={}Bps meanUp={}Bps meanDown={}Bps sigmaUp={} sigmaDown={} n={} s100={} "
-		     "score={}",
-		     s.addr, upBps, downBps, s.traffic.up.mean16 / 16, s.traffic.down.mean16 / 16,
+		     "sta {}: up={}Bps down={}Bps meanUp={}Bps meanDown={}Bps sigmaUp={} sigmaDown={} n={} "
+		     "s100={} "
+		     "score={}", s.addr, upBps, downBps, s.traffic.up.mean16 / 16, s.traffic.down.mean16 / 16,
 		     policy::isqrt(s.traffic.up.m2), policy::isqrt(s.traffic.down.m2), s.traffic.n, s.lpS100,
 		     s.lpScore);
 	if (s.lpS100 == policy::LP_NO_EVIDENCE) {
@@ -381,7 +386,8 @@ void Daemon::syncDevClass(const Mac &peer) noexcept
 		if (cls) {
 			arcp::StaClass c;
 			c.sta = r.sta;
-			c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER : arcp::DevClass::NORMAL);
+			c.devClass = static_cast<std::uint8_t>(r.lowPower ? arcp::DevClass::LOW_POWER :
+							       arcp::DevClass::NORMAL);
 			c.score = static_cast<std::int32_t>(r.score);
 			c.samples = r.samples;
 			(void)m.add(c);

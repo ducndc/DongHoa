@@ -46,7 +46,8 @@ std::optional<int> ctrlLinkId(std::string_view ctrlName) noexcept
 	std::optional<int> r;
 	const std::string_view base = netdevName(ctrlName);
 	if (base.size() < ctrlName.size()) {
-		const std::optional<long> id = parseLong(subView(ctrlName, base.size() + LINK.size()), 10, 0, 14);
+		const std::optional<long> id = parseLong(subView(ctrlName, base.size() + LINK.size()), 10, 0,
+							 14);
 		if (id.has_value()) {
 			r = static_cast<int>(*id);
 		}
@@ -83,7 +84,8 @@ std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname)
 				found = true;
 			} else if (link.has_value() && (*v == base)) {
 				// AP MLD link: several links share the netdev name
-				const std::optional<long> li = getKvInt(buf, indexed("mld_link_id", i).view());
+				const std::optional<long> li = getKvInt(buf, indexed("mld_link_id",
+										     i).view());
 				if (!li.has_value() || (*li == *link)) {
 					idx = i;
 					found = true;
@@ -104,10 +106,13 @@ std::optional<Status> parseStatus(std::string_view buf, std::string_view ifname)
 				}
 				st.ssidLen = static_cast<std::uint8_t>(n);
 			}
-			const std::optional<std::string_view> mld = getKv(buf, indexed("mld_addr", idx).view());
-			const std::optional<Mac> mldMac = mld.has_value() ? parseMac(*mld) : std::optional<Mac>();
+			const std::optional<std::string_view> mld = getKv(buf, indexed("mld_addr",
+										       idx).view());
+			const std::optional<Mac> mldMac = mld.has_value() ? parseMac(*mld) :
+							  std::optional<Mac>();
 			const std::optional<long> mldLink = getKvInt(buf, indexed("mld_link_id", idx).view());
-			if (mldMac.has_value() && mldLink.has_value() && (*mldLink >= 0) && (*mldLink <= 14)) {
+			if (mldMac.has_value() && mldLink.has_value() && (*mldLink >= 0) &&
+			    (*mldLink <= 14)) {
 				st.mldAddr = *mldMac;
 				st.linkId = static_cast<int>(*mldLink);
 			}

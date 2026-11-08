@@ -74,7 +74,8 @@ std::optional<SurveySample> parseInUse(ByteView msg) noexcept
 	const ByteView si = findAttr(attrs, static_cast<std::uint16_t>(NL80211_ATTR_SURVEY_INFO));
 	const ByteView f = findAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_FREQUENCY));
 
-	if (!si.empty() && hasAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_IN_USE)) && (f.size() >= 4U)) {
+	if (!si.empty() && hasAttr(si, static_cast<std::uint16_t>(NL80211_SURVEY_INFO_IN_USE)) &&
+	    (f.size() >= 4U)) {
 		SurveySample out;
 		out.valid = true;
 		out.freq = static_cast<int>(os::loadNe32(f, 0U));
@@ -106,7 +107,8 @@ std::uint16_t askFamily(const os::Fd &fd, std::uint32_t seq) noexcept
 		  static_cast<std::uint8_t>(CTRL_CMD_GETFAMILY), 1U);
 	r.attr(static_cast<std::uint16_t>(CTRL_ATTR_FAMILY_NAME), viewOf(name));
 	const std::optional<std::size_t> n =
-		(fd.valid() && os::sendNetlink(fd, r.finish())) ? os::recvNetlink(fd, spanOf(buf), RECV_TIMEOUT_MS)
+		(fd.valid() && os::sendNetlink(fd, r.finish())) ? os::recvNetlink(fd, spanOf(buf),
+										  RECV_TIMEOUT_MS)
 								 : std::optional<std::size_t>();
 	if (n.has_value() && (*n >= (NL_HDR + GENL_HDR))) {
 		const ByteView msg = viewOf(buf).first(*n);
@@ -153,20 +155,21 @@ std::optional<std::uint32_t> Survey::findWiphy(int ifindex) noexcept
 	if (fd.valid()) {
 		// Own socket, own sequence: mSeq belongs to the dump in flight,
 		// whose replies would otherwise look stale and be dropped.
-		constexpr std::uint32_t seq = 1U;
+		constexpr std::uint32_t SEQ = 1U;
 		os::storeNe32(spanOf(idx), 0U, static_cast<std::uint32_t>(ifindex));
-		Request r(mFamily, static_cast<std::uint16_t>(NLM_F_REQUEST), seq,
+		Request r(mFamily, static_cast<std::uint16_t>(NLM_F_REQUEST), SEQ,
 			  static_cast<std::uint8_t>(NL80211_CMD_GET_INTERFACE), 0U);
 		r.attr(static_cast<std::uint16_t>(NL80211_ATTR_IFINDEX), viewOf(idx));
 		const std::optional<std::size_t> n = os::sendNetlink(fd, r.finish())
-							     ? os::recvNetlink(fd, spanOf(buf), RECV_TIMEOUT_MS)
+							     ? os::recvNetlink(fd, spanOf(buf),
+									       RECV_TIMEOUT_MS)
 							     : std::optional<std::size_t>();
 		const ByteView msg = viewOf(buf).first(n.has_value() ? *n : 0U);
-		if ((msg.size() >= (NL_HDR + GENL_HDR)) && (os::loadNe32(msg, 8U) == seq) &&
+		if ((msg.size() >= (NL_HDR + GENL_HDR)) && (os::loadNe32(msg, 8U) == SEQ) &&
 		    (os::loadNe16(msg, 4U) == mFamily)) {
 			const std::size_t len = os::loadNe32(msg, 0U);
-			const ByteView attrs = msg.sub(NL_HDR + GENL_HDR,
-						       ((len <= msg.size()) ? len : msg.size()) - (NL_HDR + GENL_HDR));
+			const std::size_t end = (len <= msg.size()) ? len : msg.size();
+			const ByteView attrs = msg.sub(NL_HDR + GENL_HDR, end - (NL_HDR + GENL_HDR));
 			const ByteView w = findAttr(attrs, static_cast<std::uint16_t>(NL80211_ATTR_WIPHY));
 			if (w.size() >= 4U) {
 				wiphy = os::loadNe32(w, 0U);
@@ -305,7 +308,8 @@ void Survey::requestStations(int ifindex) noexcept
 	if (f == nullptr) {
 		return;
 	}
-	const bool inFlight = mInFlight.has_value() && (mKind == Kind::STATIONS) && (&mStaIf[*mInFlight] == f);
+	const bool inFlight = mInFlight.has_value() && (mKind == Kind::STATIONS) &&
+			      (&mStaIf[*mInFlight] == f);
 	if (!inFlight) {
 		f->queued = true;
 	}
@@ -331,7 +335,8 @@ bool Survey::isStationDumpPending(int ifindex) const noexcept
 	for (std::size_t i = 0U; i < mStaIf.size(); i++) {
 		const StaIf &f = mStaIf[i];
 		if (f.used && (f.ifindex == ifindex)) {
-			p = f.queued || (mInFlight.has_value() && (mKind == Kind::STATIONS) && (*mInFlight == i));
+			p = f.queued || (mInFlight.has_value() && (mKind == Kind::STATIONS) &&
+					 (*mInFlight == i));
 		}
 	}
 	return p;
@@ -370,8 +375,8 @@ void Survey::finish(bool ok) noexcept
 				mStats.staMaxUs = us32;
 			}
 			if (mStaNextFull) {
-				logging::warn(LOG_MODULE, "ifindex {}: more than {} stations, list truncated", f.ifindex,
-					      MAX_STATIONS);
+				logging::warn(LOG_MODULE, "ifindex {}: more than {} stations, list truncated",
+					      f.ifindex, MAX_STATIONS);
 			}
 		} else {
 			mStats.errors++;
@@ -394,12 +399,13 @@ void Survey::finish(bool ok) noexcept
 			r.cur[i] = r.next[i];
 		}
 		r.nCur = r.nNext;
-		logging::dbg(LOG_MODULE, "wiphy {}: survey dump blocked {} us, {} in-use channel(s)", r.wiphy, us32,
-			     r.nCur);
+		logging::dbg(LOG_MODULE, "wiphy {}: survey dump blocked {} us, {} in-use channel(s)", r.wiphy,
+			     us32, r.nCur);
 		if ((us32 > SLOW_US) && !mWarnedSlow) {
 			mWarnedSlow = true;
 			logging::warn(LOG_MODULE,
-				      "wiphy {}: one survey dump held the daemon {} ms in the driver (slow firmware or "
+				      "wiphy {}: one survey dump held the daemon {} ms in the driver (slow "
+				      "firmware or "
 				      "bus); it runs once per radio every sta_poll_interval_ms",
 				      r.wiphy, us32 / 1000U);
 		}
@@ -477,8 +483,8 @@ void Survey::tick(Millis now) noexcept
 		logging::warn(LOG_MODULE, "ifindex {}: no station dump reply in {} ms, abandoned",
 			      mStaIf[*mInFlight].ifindex, DUMP_TIMEOUT_MS);
 	} else {
-		logging::warn(LOG_MODULE, "wiphy {}: no survey reply in {} ms, abandoned", mRadio[*mInFlight].wiphy,
-			      DUMP_TIMEOUT_MS);
+		logging::warn(LOG_MODULE, "wiphy {}: no survey reply in {} ms, abandoned",
+			      mRadio[*mInFlight].wiphy, DUMP_TIMEOUT_MS);
 	}
 	mInFlight.reset();
 	// A new socket ends the kernel's half-done dump (a second dump on the

@@ -214,14 +214,16 @@ bool isSignalFresh(std::uint32_t inactiveMs, int pollMs) noexcept
 
 bool isUlDlCalibrated(const PolicyConfig &p, const UlDlOffset &o) noexcept
 {
-	const std::uint32_t need = (p.amonOffsetMinSamples < 1) ? 1U : static_cast<std::uint32_t>(p.amonOffsetMinSamples);
+	const std::uint32_t need = (p.amonOffsetMinSamples < 1) ? 1U :
+				   static_cast<std::uint32_t>(p.amonOffsetMinSamples);
 	return p.amonOffsetLearn && (o.n >= need);
 }
 
 bool addUlDlSample(const PolicyConfig &p, UlDlOffset &o, int downlinkDbm, int uplinkDbm) noexcept
 {
 	const int delta = downlinkDbm - uplinkDbm;
-	bool ok = (downlinkDbm < 0) && (uplinkDbm < 0) && (delta <= ULDL_MAX_DELTA) && (delta >= -ULDL_MAX_DELTA);
+	bool ok = (downlinkDbm < 0) && (uplinkDbm < 0) && (delta <= ULDL_MAX_DELTA) &&
+		  (delta >= -ULDL_MAX_DELTA);
 	if (ok && isUlDlCalibrated(p, o)) {
 		const int dev = (16 * delta) - o.offset16;
 		ok = (dev <= (16 * ULDL_OUTLIER)) && (dev >= -(16 * ULDL_OUTLIER));
@@ -338,7 +340,8 @@ namespace {
 
 void addRate(RateStats &r, std::uint32_t n, std::uint64_t bps) noexcept
 {
-	const std::int64_t x16 = static_cast<std::int64_t>(((bps < TRAFFIC_RATE_MAX) ? bps : TRAFFIC_RATE_MAX) * 16U);
+	const std::int64_t x16 = static_cast<std::int64_t>(((bps < TRAFFIC_RATE_MAX) ? bps :
+							    TRAFFIC_RATE_MAX) * 16U);
 	const std::int64_t delta = x16 - r.mean16;
 	r.mean16 += delta / static_cast<std::int64_t>(n);
 	// delta and (x - new mean) have the same sign: the product is >= 0.
@@ -378,14 +381,15 @@ bool isLpExcludedPhy(const PolicyConfig &p, std::uint8_t phyCaps) noexcept
 
 std::uint32_t isqrt(std::uint64_t v) noexcept
 {
+	std::uint64_t rem = v; // the parameter itself is not modified (Rule 13.3.x)
 	std::uint64_t r = 0U;
 	std::uint64_t bit = static_cast<std::uint64_t>(1U) << 62U;
-	while (bit > v) {
+	while (bit > rem) {
 		bit >>= 2U;
 	}
 	while (bit != 0U) {
-		if (v >= (r + bit)) {
-			v -= r + bit;
+		if (rem >= (r + bit)) {
+			rem -= r + bit;
 			r = (r >> 1U) + bit;
 		} else {
 			r >>= 1U;
@@ -421,7 +425,8 @@ int lpBehaviourScore(const PolicyConfig &p, const TrafficStats &t, std::uint8_t 
 	// Asymmetry alone does not tell low-power traffic from a real transfer
 	// (a backup or AirDrop upload is "bursty up, quiet down" too, just at
 	// 1000x the scale): gate on the recent mean uplink rate.
-	const std::uint64_t meanUp = (t.upRecent16 <= 0) ? 0U : (static_cast<std::uint64_t>(t.upRecent16) / 16U);
+	const std::uint64_t meanUp = (t.upRecent16 <= 0) ? 0U : (static_cast<std::uint64_t>(t.upRecent16) /
+								 16U);
 	const bool small = (p.lpMaxMeanBps <= 0) || (meanUp <= static_cast<std::uint64_t>(p.lpMaxMeanBps));
 
 	if (!enough || !small || !t.lastActive || ((su == 0U) && (sd == 0U))) {

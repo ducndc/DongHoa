@@ -178,7 +178,8 @@ void decodeSetNeighbor(std::string_view ifname, std::string_view args) noexcept
 	if (sl.has_value()) {
 		formatTo(l, " ssid \"{}\"", SsidText{viewOf(ssid).first(*sl)});
 	}
-	formatTo(l, " op_class {} ch {} phy {} info [{}]", nr->opClass, nr->channel, nr->phyType, info.view());
+	formatTo(l, " op_class {} ch {} phy {} info [{}]", nr->opClass, nr->channel, nr->phyType,
+		 info.view());
 	logging::dbg(LOG_MODULE, "{}", l.view());
 }
 
@@ -201,9 +202,11 @@ void decodeBeaconResp(std::string_view ifname, std::string_view args) noexcept
 	const std::optional<rrm::BeaconReport> r =
 		haveHex ? rrm::parseBcnRepHex(hex) : std::optional<rrm::BeaconReport>();
 	if (r.has_value()) {
-		formatTo(l, ", bssid {} op_class {} ch {} rcpi {} ({} dBm) rsni {} dur {} TU phy {} frame {}", r->bssid,
+		formatTo(l, ", bssid {} op_class {} ch {} rcpi {} ({} dBm) rsni {} dur {} TU phy {} frame {}",
+			 r->bssid,
 			 r->opClass, r->channel, r->rcpi, rrm::rcpiToDbm(r->rcpi), r->rsni, r->duration,
-			 r->frameInfo & 0x7fU, ((r->frameInfo & 0x80U) != 0U) ? "pilot" : "beacon/probe-resp");
+			 r->frameInfo & 0x7fU, ((r->frameInfo & 0x80U) != 0U) ? "pilot" :
+			 "beacon/probe-resp");
 	}
 	logging::dbg(LOG_MODULE, "{}", l.view());
 }

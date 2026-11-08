@@ -60,7 +60,8 @@ bool Daemon::init(const char *cfgPath, bool debugAll) noexcept
 		std::optional<std::uint32_t> r = os::randomU32();
 		while (!r.has_value() || (*r == 0U)) {
 			const std::uint64_t seed = os::nowMs() ^
-				(static_cast<std::uint64_t>(static_cast<std::uint32_t>(os::processId())) << 16U);
+				(static_cast<std::uint64_t>(static_cast<std::uint32_t>(os::processId())) <<
+				 16U);
 			r = static_cast<std::uint32_t>((seed & 0xffffffffU) | 1U);
 		}
 		mBootId = *r;
@@ -70,8 +71,10 @@ bool Daemon::init(const char *cfgPath, bool debugAll) noexcept
 	if (ok) {
 		initAmon();
 		os::installSignalHandlers();
-		logging::info(LOG_MODULE, "DongHoa '{}' ap_id {} boot {}{}", mCfg.name, mApId, hex(mBootId, 8U),
-			      mCfg.keyView().empty() ? " (NO authentication)" : " (authenticated)");
+		const std::string_view auth = mCfg.keyView().empty() ? " (NO authentication)"
+									    : " (authenticated)";
+		logging::info(LOG_MODULE, "DongHoa '{}' ap_id {} boot {}{}", mCfg.name, mApId,
+			      hex(mBootId, 8U), auth);
 	}
 	return ok;
 }
@@ -210,8 +213,7 @@ void usage(std::string_view prog) noexcept
 			   "  -c  configuration file\n"
 			   "  -d  debug logging for every module (overrides log_level/log_debug)\n"
 			   "  -s  log to syslog (daemon facility) instead of stderr\n"
-			   "Log levels can also be changed at run time: donghoa_cli <socket> LOG\n",
-			   prog);
+			   "Log levels can also be changed at run time: donghoa_cli <socket> LOG\n", prog);
 	donghoa::os::writeStderr(u.view());
 }
 

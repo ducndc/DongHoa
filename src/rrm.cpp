@@ -359,7 +359,8 @@ std::string_view btmStatusName(int status) noexcept
 		"reject: no suitable candidates",
 		"reject: leaving ESS",
 	};
-	return ((status >= 0) && (status < static_cast<int>(NAMES.size()))) ? NAMES[static_cast<std::size_t>(status)]
+	return ((status >= 0) &&
+		(status < static_cast<int>(NAMES.size()))) ? NAMES[static_cast<std::size_t>(status)]
 									     : std::string_view("reserved");
 }
 

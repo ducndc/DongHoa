@@ -25,8 +25,10 @@ std::string_view bandClass(std::uint8_t advertised, std::uint8_t usable) noexcep
 {
 	constexpr std::array<std::string_view, 4U> NAMES{"none", "single", "dual", "tri"};
 	std::size_t n = 0U;
-	for (std::uint8_t b = usable & 0x07U; b != 0U; b = static_cast<std::uint8_t>(b & (b - 1U))) {
-		n++;
+	for (std::size_t i = 0U; i < 3U; i++) {
+		if ((usable & (1U << i)) != 0U) {
+			n++;
+		}
 	}
 	return (advertised == 0U) ? std::string_view("unknown") : NAMES[n];
 }
@@ -74,7 +76,8 @@ void putBss(Out &o, const arcp::BssInfo &bi, const arcp::BssLoad *bl) noexcept
 		formatTo(o, " mld={} link={}", bi.mldAddr, bi.linkId);
 	}
 	if (bl != nullptr) {
-		formatTo(o, " sta={} util={}% noise={} accepting={}", bl->staCount, policy::utilToPct(bl->util),
+		formatTo(o, " sta={} util={}% noise={} accepting={}", bl->staCount,
+			 policy::utilToPct(bl->util),
 			  bl->noise, ((bl->flags & arcp::LOAD_ACCEPTING) != 0U) ? 1 : 0);
 	}
 	formatTo(o, "\n");
@@ -154,9 +157,12 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		}
 		if (mSurvey.isOpen()) {
 			const SurveyStats &ss = mSurvey.stats();
-			formatTo(o, "survey=nl80211 radios={} dumps={} last_us={} max_us={} timeouts={} errors={}\n",
+			formatTo(o,
+				 "survey=nl80211 radios={} dumps={} last_us={} max_us={} timeouts={} "
+				 "errors={}\n",
 				  ss.radios, ss.dumps, ss.lastUs, ss.maxUs, ss.timeouts, ss.errors);
-			formatTo(o, "station_dump=nl80211 dumps={} last_us={} max_us={}\n", ss.staDumps, ss.staLastUs,
+			formatTo(o, "station_dump=nl80211 dumps={} last_us={} max_us={}\n", ss.staDumps,
+				 ss.staLastUs,
 				  ss.staMaxUs);
 		} else {
 			formatTo(o, "survey=off (hostapd chan_util_avg only)\n");
@@ -169,7 +175,9 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 				formatTo(o, "  util_src={}\n",
 					 (us == LocalBss::UtilSrc::SURVEY)
 						 ? "survey (nl80211 busy time)"
-						 : ((us == LocalBss::UtilSrc::HOSTAPD) ? "hostapd (chan_util_avg)" : "none"));
+						 : ((us == LocalBss::UtilSrc::HOSTAPD) ? "hostapd "
+											 "(chan_util_avg)" :
+											 "none"));
 				formatTo(o, "  sta_src={}\n",
 					 mBss[i].nlActive ? "nl80211 station dump (hostapd resync every 10 s)"
 							  : "hostapd STA-FIRST/NEXT");
@@ -190,7 +198,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			}
 			for (std::size_t k = 0U; k < p.nRf; k++) {
 				const arcp::RfInfo &rf = p.rf[k];
-				formatTo(o, "  radio {} freq={} ch={} util={}% noise={} txpower={}\n", rf.radioId, rf.freq,
+				formatTo(o, "  radio {} freq={} ch={} util={}% noise={} txpower={}\n",
+					 rf.radioId, rf.freq,
 					  rf.channel, policy::utilToPct(rf.util), rf.noise, rf.txPower);
 			}
 		}
@@ -200,16 +209,23 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 				continue;
 			}
 			const std::string_view bcn = s.bcnUnsupported ? std::string_view("none")
-						     : (s.bcnMode.has_value() ? rrm::beaconModeName(*s.bcnMode)
+						     : (s.bcnMode.has_value() ?
+							rrm::beaconModeName(*s.bcnMode)
 									      : std::string_view("unknown"));
-			const std::int64_t backoff = static_cast<std::int64_t>(s.nextSteerMs) - static_cast<std::int64_t>(now);
-			const std::uint8_t usable = static_cast<std::uint8_t>(
-				static_cast<std::uint8_t>(s.bandsAdv | s.bandsSeen) & static_cast<std::uint8_t>(~s.bandsBlocked));
-			formatTo(o, "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} bands={}({}) adv={} seen={}{}",
+			const std::int64_t backoff = static_cast<std::int64_t>(s.nextSteerMs) -
+						     static_cast<std::int64_t>(now);
+			const std::uint8_t known = static_cast<std::uint8_t>(s.bandsAdv | s.bandsSeen);
+			const std::uint8_t usable =
+				static_cast<std::uint8_t>(known & static_cast<std::uint8_t>(~s.bandsBlocked));
+			formatTo(o,
+				 "sta {} bss={}{} rssi={} tput={}kbps flags={}{}{} bcn={} bands={}({}) "
+				 "adv={} seen={}{}",
 				  s.addr, mBss[s.bss].cfg->ifname, s.away ? "(away)" : "", s.rssi, s.tputKbps,
-				  ((s.flags & arcp::STA_F11K) != 0U) ? "k" : "", ((s.flags & arcp::STA_F11V) != 0U) ? "v" : "",
+				  ((s.flags & arcp::STA_F11K) != 0U) ? "k" : "",
+				  ((s.flags & arcp::STA_F11V) != 0U) ? "v" : "",
 				  ((s.flags & arcp::STA_F11R) != 0U) ? "r" : "", bcn, bandsName(usable),
-				  bandClass(s.bandsAdv, usable), bandsName(s.bandsAdv), bandsName(s.bandsSeen),
+				  bandClass(s.bandsAdv,
+					    usable), bandsName(s.bandsAdv), bandsName(s.bandsSeen),
 				  ((s.bandsBlocked & rrm::BANDS_6G) != 0U) ? " no6g=wpa2-psk" : "");
 			// MLD STA: every link as <bss>:<link id>:<rssi>, best link first in bss=
 			if (s.mld) {
@@ -217,7 +233,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 				const char *sep = "";
 				for (const StaLink &l : s.links) {
 					if (l.used) {
-						formatTo(o, "{}{}:{}:{}", sep, mBss[l.bss].cfg->ifname, mBss[l.bss].info.linkId,
+						formatTo(o, "{}{}:{}:{}", sep, mBss[l.bss].cfg->ifname,
+							 mBss[l.bss].info.linkId,
 							  l.rssi);
 						sep = ",";
 					}
@@ -226,7 +243,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			}
 			FixedString<16U> sText;
 			formatScore(sText, s.lpS100);
-			formatTo(o, " class={} lp_score={}/{} s={}", s.lowPower ? "low-power" : "normal", s.lpScore,
+			formatTo(o, " class={} lp_score={}/{} s={}", s.lowPower ? "low-power" : "normal",
+				 s.lpScore,
 				  mCfg.pol.lpThreshold, sText);
 			formatTo(o, " roam_thr={}({})", policy::roamThreshold(mCfg.pol, s.roamThr),
 				  (s.roamEvents > 0U) ? "learned" : "default");
@@ -237,8 +255,10 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		}
 		for (const RemoteSta &r : mRsta) {
 			if (r.used) {
-				formatTo(o, "remote {} ap={} bss={} rssi={}{}\n", r.sta, r.ap, r.bssid, r.rssi,
-					  ((r.flags & arcp::STA_F_LOW_POWER) != 0U) ? " class=low-power" : "");
+				formatTo(o, "remote {} ap={} bss={} rssi={}{}\n", r.sta, r.ap, r.bssid,
+					 r.rssi,
+					  ((r.flags & arcp::STA_F_LOW_POWER) != 0U) ? " class=low-power" :
+					  "");
 			}
 		}
 	} else if (req == "DEVCLASS") {
@@ -268,21 +288,26 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 			if (c.used) {
 				FixedString<16U> off;
 				formatOffset16(off, c.off.offset16);
-				formatTo(o, "calib {} offset={}dB samples={} used={} age={}s\n", c.bssid, off, c.off.n,
-					  policy::isUlDlCalibrated(mCfg.pol, c.off) ? "yes" : "no", (now - c.ts) / 1000U);
+				formatTo(o, "calib {} offset={}dB samples={} used={} age={}s\n", c.bssid, off,
+					 c.off.n,
+					  policy::isUlDlCalibrated(mCfg.pol,
+								   c.off) ? "yes" : "no", (now - c.ts) /
+								   1000U);
 			}
 		}
 	} else if (req == "STEERS") {
 		for (const SteerTxn &t : mTxn) {
 			if (t.used) {
 				const long cur = (t.cur >= MAX_CAND) ? -1L : static_cast<long>(t.cur);
-				formatTo(o, "txn {} sta {} state={} cand={}/{}\n", t.id, t.sta, steerStateName(t.state), cur,
+				formatTo(o, "txn {} sta {} state={} cand={}/{}\n", t.id, t.sta,
+					 steerStateName(t.state), cur,
 					  t.nCand);
 			}
 		}
 		for (const Reservation &r : mResv) {
 			if (r.used) {
-				formatTo(o, "reservation sta {} bss={} txn={}\n", r.sta, mBss[r.bss].cfg->ifname, r.txn);
+				formatTo(o, "reservation sta {} bss={} txn={}\n", r.sta,
+					 mBss[r.bss].cfg->ifname, r.txn);
 			}
 		}
 	} else if (startsWith(req, "STEER ")) {
@@ -301,7 +326,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 				formatTo(o, "FAIL unknown sta\n");
 			} else {
 				s->nextSteerMs = 0U;
-				const bool ok = startSteer(*s, arcp::SteerReason::MANUAL, tgt.has_value() ? &*tgt : nullptr);
+				const bool ok = startSteer(*s, arcp::SteerReason::MANUAL,
+							   tgt.has_value() ? &*tgt : nullptr);
 				formatTo(o, ok ? "OK\n" : "FAIL\n");
 			}
 		}
@@ -314,18 +340,20 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		const bool hasA = t.next(a);
 		const bool hasB = t.next(b);
 		const std::optional<Mac> sta = hasA ? parseMac(a) : std::optional<Mac>();
-		const std::optional<long> ms = hasB ? parseLong(b, 10, 1, 5000)
-						     : std::optional<long>(static_cast<long>(mCfg.pol.amonDurationMs));
+		const long defMs = static_cast<long>(mCfg.pol.amonDurationMs);
+		const std::optional<long> ms = hasB ? parseLong(b, 10, 1, 5000) : std::optional<long>(defMs);
 		if (!sta.has_value() || !ms.has_value()) {
 			formatTo(o, "FAIL usage: MONITOR <sta> [<ms 1..5000>]\n");
 		} else if (!canMeasureStas()) {
 			formatTo(o, "FAIL no air_monitor or sta_rssi_api configured\n");
 		} else {
-			const arcp::MonitorStatus st = startAmonWatch(*sta, mApId, 0U, static_cast<int>(*ms), 0U, 0U);
+			const arcp::MonitorStatus st = startAmonWatch(*sta, mApId, 0U, static_cast<int>(*ms),
+								      0U, 0U);
 			if (st == arcp::MonitorStatus::MEASURED) {
 				formatTo(o, "OK result in the log after the watch (logread -e donghoa)\n");
 			} else {
-				formatTo(o, "FAIL {}\n", arcp::monitorStatusName(static_cast<std::uint8_t>(st)));
+				formatTo(o, "FAIL {}\n",
+					 arcp::monitorStatusName(static_cast<std::uint8_t>(st)));
 			}
 		}
 	} else if (req == "LOG") {
@@ -380,7 +408,8 @@ void Daemon::cmdRl(Out &o, std::string_view args) noexcept
 	}
 	const std::size_t mi = static_cast<std::size_t>(rlMode());
 	formatTo(o, "rl mode={} epsilon={}% decisions={} steers={} explored={} updates={}\n", MODES[mi],
-		  mCfg.pol.rlEpsilonPct, mRlStats.decisions, mRlStats.steers, mRlStats.explored, mRlStats.updates);
+		  mCfg.pol.rlEpsilonPct, mRlStats.decisions, mRlStats.steers, mRlStats.explored,
+		  mRlStats.updates);
 	constexpr std::array<std::string_view, 3U> TREND{"falling", "stable", "rising"};
 	constexpr std::array<std::string_view, 4U> GAP{"unknown", "worse", "0..7", ">=8"};
 	for (std::size_t s = 0U; s < policy::RL_STATES; s++) {
@@ -389,17 +418,23 @@ void Daemon::cmdRl(Out &o, std::string_view args) noexcept
 		}
 		const std::size_t streak = s % policy::RL_STREAK_BINS;
 		const std::size_t ref = (s / policy::RL_STREAK_BINS) % policy::RL_REF_BINS;
-		const std::size_t gap = (s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS)) % policy::RL_GAP_BINS;
+		const std::size_t gap = (s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS)) %
+					policy::RL_GAP_BINS;
 		const std::size_t tr =
-			(s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS * policy::RL_GAP_BINS)) % policy::RL_TREND_BINS;
-		const std::size_t rb = s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS * policy::RL_GAP_BINS *
+			(s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS *
+			      policy::RL_GAP_BINS)) % policy::RL_TREND_BINS;
+		const std::size_t rb = s / (policy::RL_STREAK_BINS * policy::RL_REF_BINS *
+					    policy::RL_GAP_BINS *
 					    policy::RL_TREND_BINS);
 		FixedString<16U> qw;
 		FixedString<16U> qs;
 		formatQ(qw, mRl.q[s][0U]);
 		formatQ(qs, mRl.q[s][1U]);
-		formatTo(o, "q {} rssi={} trend={} gap={} refusals={}{} streak={} wait={} steer={} n={}/{} greedy={}\n", s,
-			 policy::rlRssiBinName(rb), TREND[tr], GAP[gap], ref, (ref == 2U) ? "+" : "", streak, qw, qs,
+		formatTo(o,
+			 "q {} rssi={} trend={} gap={} refusals={}{} streak={} wait={} steer={} n={}/{} "
+			 "greedy={}\n", s,
+			 policy::rlRssiBinName(rb), TREND[tr], GAP[gap], ref, (ref == 2U) ? "+" : "", streak,
+			 qw, qs,
 			 mRl.n[s][0U], mRl.n[s][1U], (mRl.q[s][1U] > mRl.q[s][0U]) ? "steer" : "wait");
 	}
 }
@@ -416,8 +451,8 @@ void Daemon::cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept
 	const bool hasCount = t.next(count);
 
 	if (!hasName) {
-		formatTo(o, "droprx {} {}\n", (mDropCount > 0U) ? arcp::msgName(mDropType) : std::string_view("-"),
-			 mDropCount);
+		formatTo(o, "droprx {} {}\n",
+			 (mDropCount > 0U) ? arcp::msgName(mDropType) : std::string_view("-"), mDropCount);
 		return;
 	}
 	std::optional<std::uint8_t> type;
@@ -467,8 +502,8 @@ void Daemon::cmdBandit(FixedString<8192U> &o, std::string_view args) noexcept
 		return;
 	}
 	formatTo(o, "bandit mode={} epsilon={}% reordered={} explored={} updates={}\n",
-		  MODES[static_cast<std::size_t>(banditMode())], mCfg.pol.banditEpsilonPct, mBanditStats.reordered,
-		  mBanditStats.explored, mBanditStats.updates);
+		  MODES[static_cast<std::size_t>(banditMode())], mCfg.pol.banditEpsilonPct,
+		  mBanditStats.reordered, mBanditStats.explored, mBanditStats.updates);
 	constexpr std::array<std::string_view, 4U> LEVEL{">=-55", "-55..-62", "-62..-70", "<-70"};
 	constexpr std::array<std::string_view, 3U> BAND{"lower", "same", "higher"};
 	constexpr std::array<std::string_view, 3U> UTIL{"<30", "30..55", ">55"};
@@ -479,15 +514,18 @@ void Daemon::cmdBandit(FixedString<8192U> &o, std::string_view args) noexcept
 		}
 		const std::size_t sr = c % policy::BANDIT_SRC_BINS;
 		const std::size_t ut = (c / policy::BANDIT_SRC_BINS) % policy::BANDIT_UTIL_BINS;
-		const std::size_t lo = (c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS)) % policy::BANDIT_LOCAL_BINS;
-		const std::size_t bd = (c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS * policy::BANDIT_LOCAL_BINS)) %
+		const std::size_t lo = (c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS)) %
+				       policy::BANDIT_LOCAL_BINS;
+		const std::size_t bd = (c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS *
+					     policy::BANDIT_LOCAL_BINS)) %
 				       policy::BANDIT_BAND_BINS;
-		const std::size_t lv = c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS * policy::BANDIT_LOCAL_BINS *
+		const std::size_t lv = c / (policy::BANDIT_SRC_BINS * policy::BANDIT_UTIL_BINS *
+					    policy::BANDIT_LOCAL_BINS *
 					    policy::BANDIT_BAND_BINS);
 		FixedString<16U> mean;
 		formatQ(mean, mBandit.q[c]);
-		formatTo(o, "ctx {} level={} band={} {} util={} src={} mean={} n={}\n", c, LEVEL[lv], BAND[bd],
-			 (lo == 1U) ? "local" : "remote", UTIL[ut], SRC[sr], mean, mBandit.n[c]);
+		formatTo(o, "ctx {} level={} band={} {} util={} src={} mean={} n={}\n", c, LEVEL[lv],
+			 BAND[bd], (lo == 1U) ? "local" : "remote", UTIL[ut], SRC[sr], mean, mBandit.n[c]);
 	}
 }
 

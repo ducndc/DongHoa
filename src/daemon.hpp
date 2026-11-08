@@ -412,7 +412,8 @@ public:
 	void receiveAmon(std::size_t port) noexcept;
 	void tickAmon(Millis now) noexcept;
 	// MEASURED: the watch started; otherwise why this AP cannot measure.
-	arcp::MonitorStatus startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn, int durationMs,
+	arcp::MonitorStatus startAmonWatch(const Mac &sta, const Mac &requester, std::uint32_t txn,
+					   int durationMs,
 					   std::uint8_t opClass, std::uint8_t channel) noexcept;
 	// Monitor interface or driver RSSI API present (AP_FLAG_AIR_MONITOR).
 	bool canMeasureStas() const noexcept;
@@ -443,7 +444,8 @@ public:
 	void banditCheckPingPong(std::size_t bss, const Mac &sta) noexcept;
 	// Own roam of a STA that already left: from its record (leftRssi).
 	void noteOwnRoamFromRecord(const Mac &sta) noexcept;
-	void shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t events, std::string_view why) noexcept;
+	void shareRoamThr(const Mac &sta, int oldDbm, int newDbm, std::uint32_t events,
+			  std::string_view why) noexcept;
 	// A peer reports sta associated to it: hand it what we know.
 	void onPeerStaAssoc(const Mac &ap, const Mac &sta) noexcept;
 	// A peer appeared or restarted: send it every low-power record.
@@ -467,7 +469,8 @@ private:
 	// One poll's signal / traffic of a non-MLD STA (hostapd or nl80211).
 	void applyStaSignal(Sta &s, int signal, std::uint32_t inactiveMs) noexcept;
 	void applyStaTraffic(Sta &s, std::uint64_t rxBytes, std::uint64_t txBytes, std::uint32_t inactiveMs,
-			     std::uint32_t connectedS, std::uint16_t rxRate, std::uint16_t txRate, Millis now) noexcept;
+			     std::uint32_t connectedS, std::uint16_t rxRate, std::uint16_t txRate,
+			     Millis now) noexcept;
 	void listStasFromHapd(std::size_t bss, Millis start) noexcept;
 	void pruneUnlisted(std::size_t bss, Millis start) noexcept;
 	void updateStaLink(Sta &s, const hapd::Sta &h, std::size_t bss, Millis now) noexcept;

@@ -133,7 +133,8 @@ bool Conn::runCommand(std::string_view command, Reply &reply) noexcept
 	if (ok) {
 		ok = recvReply(mCmd, reply, CMD_TIMEOUT_MS);
 		if (!ok) {
-			logging::warn(LOG_MODULE, "hapd[{}]: no reply to '{}'", mIfname, subView(command, 0U, 32U));
+			logging::warn(LOG_MODULE, "hapd[{}]: no reply to '{}'", mIfname,
+					      subView(command, 0U, 32U));
 			close();
 		} else {
 			rrmlog::logCommand(mIfname.view(), command, reply.view());
