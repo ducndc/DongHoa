@@ -43,7 +43,8 @@ given so each section can be checked against the source.
                          |     hapd.cpp     survey.cpp     amon.cpp (air monitor)   |
                          +-------|------------|------------|------------------+
                               hostapd      nl80211     monitor interfaces (radiotap)
-     pure, unit-tested: text  proto  rrm  policy  config  sha256  hapd_parse   (all I/O via os.cpp)
+     pure, unit-tested: text  proto  rrm  policy  config  sha256  sha512  ed25519  trust  hapd_parse
+                        (all I/O via os.cpp)
 ```
 
 The modules fall into three layers:
@@ -76,7 +77,11 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `types.hpp` | pure | `Mac`, `ByteView`/`ByteSpan`, big/little-endian get/put, `FixedString<N>` | `getBe16`, `putBe32`, `copyBytes`, `equal` | — |
 | `text.{hpp,cpp}` | pure | Type-safe `{}` formatting, hex, checked number parsing (`std::from_chars`), MAC and key=value parsing, tokenizer | `formatTo`, `hex`, `parseLong`, `parseU64`, `parseMac`, `getKv`, `subView`, `Tokens` | IR-1 |
 | `proto.{hpp,cpp}` | pure | ARCP header and TLV encode/decode, HMAC finish/verify, TLV iterator (namespace `arcp`) | `Message::begin/add/finish`, `parseHeader`, `verify`, `TlvReader`, `decode` | IR-8..10, FR-SEC-1..2,4 |
-| `sha256.{hpp,cpp}` | pure | SHA-256 and HMAC-SHA256 | `Sha256`, `computeHmacSha256` | FR-SEC-1,3 |
+| `sha256.{hpp,cpp}` | pure | SHA-256, HMAC-SHA256, PBKDF2-HMAC-SHA256 | `Sha256`, `computeHmacSha256`, `pbkdf2Sha256` | FR-SEC-1,3 |
+| `sha512.{hpp,cpp}` | pure | SHA-512 (for Ed25519) | `Sha512`, `computeSha512` | FR-SEC-6 |
+| `ed25519.{hpp,cpp}` | pure | Ed25519 key pair, sign, verify (RFC 8032) | `keyPairFromSeed`, `sign`, `verify`, `isValidPublicKey` | FR-SEC-6,7 |
+| `trust.{hpp,cpp}` | pure | Enrollment trust table: merge rule, approve / revoke, fingerprint, file form | `merge`, `approve`, `revoke`, `trustedKey`, `fingerprint`, `saveText`, `loadText` | FR-SEC-9,10 |
+| `enroll.cpp` | coord. | Automatic key enrollment: seed file, ENROLL_REQ, pending list, welcome, TRUST sync, `ENROLL` | `initEnroll`, `tickEnroll`, `onUntrusted`, `onTrust`, `sendWelcome`, `cmdEnroll` | FR-SEC-8..11 |
 | `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
 | `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
 | `nlparse.{hpp,cpp}` | pure | nl80211 attribute lookup and station-dump entry parsing | `nl::findAttr`, `nl::parseStation` | NFR-PRF-4 |
@@ -107,7 +112,7 @@ main: parse -c/-d/-s -> Daemon::init:
    -> log levels (log_level, log_debug, -d)
    -> setup_transport: L2::add_iface per 'iface'; ap_id = cfg or first port MAC;
                        L2::add_sim when sim_port is set
-   -> boot_id = os::random_u32() (non-zero; fallback: time ^ pid)
+   -> boot_id = os::randomU32() (non-zero; fallback: time ^ pid)
    -> local_init (BSS slots, ifindex, Survey::open) -> ctrl_open -> amon_init
    -> SIGINT/SIGTERM set the stop flag; SIGPIPE ignored
    -> Daemon::run()
@@ -172,14 +177,14 @@ as `std::array` members. Measured sizes on x86-64:
 | Table | Capacity | Bytes | Notes |
 |---|---|---|---|
 | `sta[]` — local STAs | 256 | 124,928 | Includes a 16-entry beacon-report cache per STA |
-| `pending[]` — reliable TX queue | 32 | 46,336 | Each holds a full 1400-byte frame for retransmission |
+| `pending[]` — reliable TX queue | 32 | ~47,900 | Each holds a full 1450-byte frame for retransmission |
 | `peers[]` | 32 | — | Each holds 16 remote BSSes and 4 RF entries |
 | `txn[]` — steering transactions | 16 | 22,656 | Each holds 16 candidates |
 | `rsta[]` — remote STA locations | 512 | 16,384 | |
 | `resv[]` — reservations | 32 | 1,280 | |
 | `watch[]` — air monitor watches | 16 | 2,048 | Up to 4 frequencies each |
 | `bss[]`, config, L2 ports, etc. | 16 BSS / 8 ports | remainder | |
-| **Total** `sizeof(Daemon)` | | **449,352** | Re-measured in v2.7 (`nm -S`, x86-64); the per-table figures above date from v1.4 |
+| **Total** `sizeof(Daemon)` | | **460,832** | Re-measured in v2.11 (`nm -S`, x86-64; includes the 64-entry `peer_key` table); the per-table figures above date from v1.4 |
 
 Lookups are linear scans. With these sizes a scan costs microseconds, and it
 avoids hash tables and allocation. Each table entry has a `used` flag. Free
@@ -219,7 +224,7 @@ slots are found by scanning, and running out is logged [NFR-CAP-1].
 
 **Encoding.** `beginMsg` writes the 24-byte header with the next `msg_id` and
 this boot's `boot_id`. TLVs are appended with `Message::add`, which reserve room
-for the AUTH TLV and set `overflow` instead of writing past 1400 bytes.
+for the SIG and AUTH TLVs and set `overflow` instead of writing past 1450 bytes.
 `Message::finish` sets `body_len` and, when a key is configured, sets the AUTH
 flag and appends `HMAC-SHA256(key, header ‖ TLVs)` truncated to 16 bytes. An
 overflowed message is never sent.
@@ -253,8 +258,12 @@ frame -> arcp::parse_header (magic, version 1, body fits)  -- else drop
 **Replay window (`acceptPeerSeq`).** `seqHi` is the highest `msg_id`
 accepted and `seq_win` a 64-bit bitmap, where bit *i* means `seq_hi − i` has
 been seen. A higher id shifts the window. An id inside the window is accepted
-once. An id older than 64 is rejected. A new `boot_id` resets the window to
-the new id.
+once. An id older than 64 is rejected. A message of any
+`boot_id` other than the verified one is refused by the window. The receive
+path then sends a CHALLENGE (16-byte nonce, `mChal`, 8 slots, one per origin
+per 500 ms); a RESPONSE carrying the nonce within 3 s adopts its `boot_id`
+(`arcp::resetSeq`) and creates the peer or logs a restart. A CHALLENGE is
+answered by anyone, and the answerer re-sends HELLO/BSS_STATUS (≤ 1/s).
 
 **TLV dispatch (`handleTlvs`):**
 
@@ -600,9 +609,13 @@ requires at least one `bss` and one transport.
 
 | Threat | Mitigation | Residual |
 |---|---|---|
-| Rogue AP injects state or steering commands | HMAC-SHA256/128 on every message; fail closed on mismatch in both directions | Shared group key: any AP holding it is trusted |
+| Rogue AP injects state or steering commands | HMAC-SHA256/128 on every message; fail closed on mismatch in both directions; optional per-AP Ed25519 signatures | Without signatures, any holder of the group key is trusted |
 | Replay within one boot | 64-entry per-peer window | — |
-| Replay of an earlier boot's messages | none | Accepted for 1.0 (NFR-SEC-2). Fix: persistent boot counter |
+| Replay of recorded messages (earlier boot, unseen boot, removed peer) | Liveness check (`liveness_check 1`): a boot is adopted only through a fresh CHALLENGE / RESPONSE | Off by default: replay across boots possible until enabled |
+| Shipped example key used in production | Refused at start-up (`KEY_PLACEHOLDER`) | — |
+| Stolen AP configuration (group key) used to impersonate other APs | Per-AP Ed25519 signatures (`sign_seed`, `peer_key`): messages accepted only from listed origins, signed with their own key | A compromised AP speaks as itself until its `peer_key` line is removed on the other APs; keys distributed by hand |
+| Rogue box joins an enrolled mesh | Enrollment only by approval of the fingerprint on a trusted AP (`ENROLL approve`); revocation spreads with a higher generation | Until its first welcome, a new AP trusts whoever welcomes it with its key (check `welcomed by`, or `ENROLL init` on the first AP); any trusted AP can approve |
+| Offline guessing of a passphrase from a captured frame | PBKDF2-HMAC-SHA256, 100 000 iterations | Fixed salt (one key per mesh); a weak passphrase is still guessable, slowly; `hex:` keys avoid it |
 | Timing attack on MAC check | Constant-time compare (`ctEqual`) | — |
 | Leaking 802.11r keys | ARCP carries no key material (C-2) | — |
 | Local control socket abuse | Filesystem permissions on `ctrl_socket` | No authentication beyond the file mode |
@@ -881,13 +894,15 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | D20 | Per-STA roaming threshold learned from outcomes, shared with the class records | One global `rssi_low` | Sticky clients are not pestered, cooperative ones roam earlier; no new message type |
 | D21 | Tabular, integer Q-learning with a prior equal to the rule, off by default | Deep RL; a bandit for target choice first | Fits a single-threaded, heap-free daemon and tens of decisions a day; starting from the rule makes enabling it safe |
 | D22 | Contextual bandit for the target: tabular contexts per candidate, value shrunk towards a gain-based prior, only reorders eligible candidates, off by default | LinUCB / Thompson sampling with features | Integer only, explainable (`BANDIT` shows every context), safe: never relaxes a gate |
+| D23 | Per-AP Ed25519 signatures with a configured trust list, own implementation (radix 2^25.5 field, SHA-512), HMAC kept as an optional outer layer | Pairwise keys from a root key; a library (libsodium, mbedTLS) | Only per-AP asymmetric keys stop one compromised AP from speaking for the others; no library keeps the libc-only binary (`make check-deps`) |
+| D24 | Key enrollment by fingerprint approval on any trusted AP; trust table as last-writer-wins registers (generation per ap_id) flooded over ARCP and kept on disk | A central CA key; trust on first use; a push-button window | No single point of failure or extra key to guard; nothing joins without an administrator; revocations cannot be undone by stale copies |
 
 ## 11. Known limitations and risks
 
 | # | Item | Impact | Possible remedy |
 |---|---|---|---|
 | R1 | STA_EVENT is sent multicast without ACK_REQ, but the source detects success from it | A lost event turns a successful remote steer into ROAM_TIMEOUT, with backoff for that STA | Send STA_EVENT(assoc) with ACK_REQ to the AP named in a matching reservation, or confirm from STA_STATUS |
-| R2 | Replay of an earlier boot's messages (NFR-SEC-2) | Stale state or steering commands could be injected by someone who recorded traffic | Persistent boot counter or time window |
+| R2 | Replay of recorded messages (NFR-SEC-2) | — | Closed in 2.10 by the liveness check (CHALLENGE / RESPONSE) |
 | R3 | hostapd calls block the loop for up to 1 s each | Delayed timers while hostapd hangs (bounded, §4.3) | Mitigated in v2.2: per-STA metrics come from asynchronous nl80211 station dumps; hostapd is asked per poll only for each BSS's `STATUS`, plus a full listing every 10 s and one `STA <addr>` per new STA. Remaining: an asynchronous command queue for those |
 | R4 | `hapd_parse_status` falls back to entry 0 when the ifname is not among `bss[i]` | On multi-BSS radios, a wrong configured ifname would report the first BSS. On OpenWrt, generated `bss` lines (IR-12) avoid wrong names | Fail instead of falling back |
 | R5 | BTM/RRM/NR capabilities are always advertised | Wrong if hostapd lacks them; hostapd then rejects the commands and steering aborts | Read them from `GET_CONFIG` |
@@ -952,3 +967,7 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.7 | 2026-11-07 | Documentation audit: `rrm_log.cpp` in the module catalogue; R3, R9 mitigated, R10, R11 resolved, new R17, R18; decisions D17–D21; data size re-measured (449,352 bytes); replay window moved to `arcp::acceptSeq` (unit-tested) |
 | 2.8 | 2026-11-08 | §6.6: STEER_RESULT from NEGOTIATE on and on the NEGOTIATE timeout; load-balancing verdict only for a STA seen elsewhere; `DROPRX` fault injection |
 | 2.9 | 2026-11-08 | §6.6: contextual bandit for the target (contexts, prior, credits, ping-pong watch); D22, R19 |
+| 2.10 | 2026-11-08 | §6.9 security: liveness check (CHALLENGE / RESPONSE) before adopting a peer's boot; PBKDF2 passphrase keys; example key refused; R2 closed |
+| 2.11 | 2026-11-08 | Per-AP Ed25519 signatures: modules `sha512`, `ed25519`; §6.9 threat row; D23; payload limit 1450 bytes; data size re-measured (460,832 bytes) |
+| 2.12 | 2026-11-08 | Automatic key enrollment: modules `trust`, `enroll`; threat row; D24 |
+| 2.13 | 2026-11-08 | Security off by default: `liveness_check` key (default 0); shipped configurations without `key` |

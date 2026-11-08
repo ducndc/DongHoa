@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    U["Unit tests (make test)<br/>pure modules only, 555 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–21"]
+    U["Unit tests (make test)<br/>pure modules only, 661 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–24"]
     I --> Q["System test (openwrt/qemu/systest.sh)<br/>2 OpenWrt VMs: real hostapd, mac80211_hwsim,<br/>wpa_supplicant STA, raw-socket ARCP<br/>~7 min, S1–S16"]
     Q --> H["Real hardware<br/>(AP2: pending)"]
     S["Static and dynamic checks:<br/>strict warnings, cppcheck, ASan/UBSan,<br/>check-deps (libc only)"] -.-> U
@@ -24,7 +24,7 @@ flowchart TB
 ## Unit tests (`tests/test_unit.cpp`)
 
 One binary linking only the pure modules (`text`, `proto`, `rrm`, `policy`,
-`config`, `sha256`, `hapd_parse`, `nlparse`, plus `log`/`os` helpers).
+`config`, `sha256`, `sha512`, `ed25519`, `trust`, `hapd_parse`, `nlparse`, plus `log`/`os` helpers).
 
 | Group | Covers |
 |---|---|
@@ -39,7 +39,11 @@ One binary linking only the pure modules (`text`, `proto`, `rrm`, `policy`,
 | `testMlo` | BSS_INFO trailer, `isSameMld`, `peer_addr` parsing |
 | `testLowPower` | Welford statistics, S, θ, hysteresis, traces, gates, PHY exclusion |
 | `testNlParse` | nl80211 station entries: nesting, 64-bit counters, rates, flags, truncated input |
-| `testReplayWindow` | replay window: order, duplicates, late within the window, outside, big jump, restart |
+| `testReplayWindow` | replay window: order, duplicates, late within the window, outside, big jump; other boots refused; verified restart (`resetSeq`) |
+| `testChallengeTlvs` | CHALLENGE / RESPONSE nonce TLVs, names, constant-time compare |
+| `testSha512`, `testEd25519` | SHA-512 vectors; RFC 8032 tests 1-3; rejection of another key, changed R / S / message, S + L, an invalid point |
+| `testSignedMessage` | SIG TLV from `finish`, `verifySig` with and without AUTH, wrong key, changed byte, unsigned message |
+| `testTrust` | trust table merge order (stale copy, revocation, re-approval, ties), approve / revoke, file round trip, fingerprint, TRUST_REC / ENROLL_KEY TLVs |
 
 ## Integration test (`tests/itest.py`)
 
@@ -71,6 +75,9 @@ all APs by time (`DONGHOA_KEEP_LOGS=1` keeps them).
 | 19 | Fault injection: lost STEER_REQ retransmitted; lost STEER_RESP and a STA dropping in NEGOTIATE release the target's reservation at once | 1, 5, 8 |
 | 20 | An offloaded STA that disconnects gives no load-balancing verdict | 8 |
 | 21 | Contextual bandit: shadow learns a refused and a successful target, active reorders, ping-pong detected | 16 |
+| 22 | Liveness challenge: AP2 restart verified; replayed BYE (earlier / unseen boot) and replayed HELLO after removal refused | 1, 2 |
+| 23 | Ed25519 signatures: unlisted box with the group key refused; BYE forged with the group key (wrong or no signature) refused, signed by the AP accepted; bad signing configs refused | 1 |
+| 24 | Key enrollment: keys created, approval by fingerprint and welcome, approval spread through the mesh, unapproved box and forgeries kept out, revocation spread, persistence across restart | 17 |
 
 `DONGHOA_ITEST_EXTRA="score_model 1"` reruns everything under the
 throughput model (7–9 are skipped there by design: the mock BSSes are all

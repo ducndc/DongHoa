@@ -152,7 +152,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
-| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `BANDIT [mode <n> | reset]` (target bandit state and control), `DROPRX [<MESSAGE> <n>]` (fault injection: drop received messages of a type), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
+| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `BANDIT [mode <n> | reset]` (target bandit state and control), `ENROLL [approve <ap_id> | revoke <ap_id> | init]` (key enrollment), `DROPRX [<MESSAGE> <n>]` (fault injection: drop received messages of a type), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
 | IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`, `class`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
@@ -170,7 +170,7 @@ interface, and it learns about STAs from hostapd's output and events.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| IR-8 | ARCP shall be carried directly in Ethernet II frames: EtherType 0x88B5, multicast group `03:41:52:43:50:00`, payload ≤ 1400 bytes, no IP. The wire format is normative in `docs/PROTOCOL.md`, with `src/proto.hpp` as the source of the numbers. | T-U `test_proto_*`, T-I 1 |
+| IR-8 | ARCP shall be carried directly in Ethernet II frames: EtherType 0x88B5, multicast group `03:41:52:43:50:00`, payload ≤ 1450 bytes, no IP. The wire format is normative in `docs/PROTOCOL.md`, with `src/proto.hpp` as the source of the numbers. | T-U `test_proto_*`, T-I 1 |
 | IR-9 | All ARCP fields shall be big-endian. 802.11 structures handed to hostapd (Neighbor Report BSSID Information, Beacon Request duration) shall be little-endian as 802.11 requires. | T-U `test_rrm` |
 | IR-10 | Decoders shall ignore unknown TLV types and accept TLVs longer than the version they understand (forward compatibility). | I |
 | IR-11 | For root-free testing, a "sim" transport shall carry the identical Ethernet frames over UDP on loopback (`sim_port`, `sim_peer`). | T-I 1–5 |
@@ -186,7 +186,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-DSC-3 | On the first message from an unknown AP, the daemon shall create a peer entry and send its own HELLO and BSS_STATUS at once. | I, T-I 1 |
 | FR-DSC-4 | A peer shall be removed when nothing valid has arrived from it for `peer_timeout_ms` (7000), or when it sends BYE. | T-I 5 (BYE) |
 | FR-DSC-5 | On graceful shutdown (SIGINT/SIGTERM), the daemon shall multicast BYE. | T-I 5 |
-| FR-DSC-6 | A change of a peer's `boot_id` shall be treated as a restart: its sequence state is reset and the event is logged. | I |
+| FR-DSC-6 | With `liveness_check 1` (default 0), a peer's `boot_id` (new origin, or a known origin with another `boot_id`) shall be adopted only after the peer answered a CHALLENGE with a fresh 16-byte nonce from that boot. A verified new `boot_id` of a known peer shall be treated as a restart: its sequence state is reset and the event is logged. | T-U `test_replay_window`, T-I 22 |
 | FR-DSC-7 | When a peer is removed, the daemon shall drop the peer's BSSes, remote STA entries and reservations, and move on from steering transactions negotiating with it. | T-I 5 |
 
 ### 4.2 State exchange (STE)
@@ -279,9 +279,15 @@ interface, and it learns about STAs from hostapd's output and events.
 |---|---|---|
 | FR-SEC-1 | With `key` set, every message shall carry an HMAC-SHA256 (truncated to 16 bytes) over the header and the preceding TLVs, and messages without a valid MAC shall be dropped. | T-U `test_proto_roundtrip`, T-I 2 |
 | FR-SEC-2 | Without `key`, messages that carry the AUTH flag shall be dropped, so a key mismatch fails closed in both directions. | T-U |
-| FR-SEC-3 | A key shall be either `hex:` with at least 16 bytes, or a passphrase of at least 8 characters, turned into a key as SHA256("arcp-key:" ‖ passphrase). Shorter keys shall be refused. | T-U `test_config` |
+| FR-SEC-3 | A key shall be either `hex:` with at least 16 bytes, or a passphrase of 8 to 128 characters, turned into a key with PBKDF2-HMAC-SHA256 (salt `donghoa-arcp-key`, 100 000 iterations). Other keys, and the public example key, shall be refused. | T-U `test_config`, `test_sha256` |
 | FR-SEC-4 | MAC comparison shall take constant time. | I |
-| FR-SEC-5 | The daemon shall log at start-up whether authentication is enabled. | I |
+| FR-SEC-5 | The daemon shall log at start-up whether authentication is enabled, and which kind (HMAC, Ed25519, both). | I |
+| FR-SEC-6 | With `sign_seed` and `peer_key` configured, every message shall carry an Ed25519 signature (RFC 8032) of the header and preceding TLVs, made with the AP's own key; a receiver shall drop every message whose origin is not listed in `peer_key` or whose signature does not verify under that origin's key. Non-canonical signatures (S ≥ L) shall be rejected. | T-U `test_ed25519`, `test_signed_message`, T-I 23 |
+| FR-SEC-7 | `sign_seed` without `peer_key` (or the reverse), a `peer_key` that is not a valid curve point or is listed twice, and a `peer_key` for the AP's own `ap_id` that does not match its seed shall be refused at start-up. `donghoa -g` shall generate a key pair. | T-U `test_config`, T-I 23 |
+| FR-SEC-8 | With `enroll 1`, the daemon shall use the key in `seed_file`, creating it (random, mode 0600) on first start, and log its fingerprint (first 8 bytes of SHA-256 of the public key). | T-I 24 |
+| FR-SEC-9 | An AP not enrolled shall multicast a self-signed ENROLL_REQ every 3 s; a trusted AP shall list valid requests (self-signature checked, revoked keys ignored) as pending with their fingerprint, and `ENROLL approve <ap_id>` shall add the key to the trust table and welcome the AP. Nothing shall be added to the trust table without an approval or a trusted AP's TRUST message. | T-U `test_trust`, T-I 24 |
+| FR-SEC-10 | The trust table shall merge as last-writer-wins registers by generation (revoked wins ties), be sent to all peers after a change, every 60 s and to new peers, be kept in `trust_file` across restarts, and a peer whose record is revoked shall be removed at once. | T-U `test_trust`, T-I 24 |
+| FR-SEC-11 | An AP not enrolled shall accept one welcome: a TRUST message with its own key as trusted and the sender's own trusted record, signed by the sender; afterwards (or after `ENROLL init`) it shall accept no welcome. | T-I 24 |
 
 ### 4.11 Air monitor (AMN)
 
@@ -360,8 +366,8 @@ per second.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| NFR-SEC-1 | Authentication should be enabled in every deployment. The example configuration enables it. | I |
-| NFR-SEC-2 | Known limitation, accepted for 1.0: a new `boot_id` resets the replay window, so messages from a peer's earlier boot can be replayed (PROTOCOL.md §5). | — |
+| NFR-SEC-1 | Every security option shall be off by default (no `key`, `liveness_check 0`, no signatures, no enrollment) and enabled by configuration; the shipped configurations shall show each one commented out. Authentication is recommended in every deployment; the public example key shall be refused if used. | T-U `test_config` |
+| NFR-SEC-2 | With `liveness_check 1`, recorded messages shall not be accepted when replayed across boots or after a peer's removal (FR-DSC-6); within a boot the replay window applies always. | T-U, T-I 22 |
 | NFR-SEC-3 | ARCP shall not carry confidential data: no key material (C-2), only MAC addresses and radio metrics. Messages are authenticated, not encrypted. | I |
 
 ### 5.5 Portability and maintainability
@@ -369,7 +375,7 @@ per second.
 | ID | Requirement | Verif. |
 |---|---|---|
 | NFR-POR-1 | The daemon shall build and run on glibc and musl, and cross-compile with the OpenWrt SDK (24.x `.ipk`, 25.x `.apk`). | T-O |
-| NFR-MNT-1 | Decision logic and byte layouts shall live in pure modules (`proto`, `rrm`, `policy`, `config`, `sha256`, hostapd parsers) that the unit tests can link without I/O. | I |
+| NFR-MNT-1 | Decision logic and byte layouts shall live in pure modules (`proto`, `rrm`, `policy`, `config`, `sha256`, `sha512`, `ed25519`, `trust`, hostapd parsers) that the unit tests can link without I/O. | I |
 | NFR-MNT-2 | Wire numbers shall be defined only in `src/proto.hpp`. A change to the protocol shall update `proto.{hpp,cpp}`, `docs/PROTOCOL.md` and the round-trip tests together. | I |
 | NFR-MNT-3 | A change to daemon behaviour shall keep `make itest` passing (PASS 1–5). | T-I |
 
@@ -485,3 +491,7 @@ real hardware runs (survey utilisation source, station dumps, client
 | 2.7 | 2026-11-07 | Documentation audit: §2.2 product functions brought up to date; IR-5 lists the `class` module; NFR-CAP-1 lists every table, NFR-CAP-2 re-measured (449,352 bytes); FR-REL-2 now unit-tested; §5.1 measurements updated; §7 verification matrix rewritten for the three test levels |
 | 2.8 | 2026-11-08 | FR-STR-8: STEER_RESULT once a STEER_REQ went out (aborted included); FR-TRG-3: a disconnected offload gives no verdict; IR-3: `DROPRX`; verification matrix updated (T-I 19, 20) |
 | 2.9 | 2026-11-08 | New FR-STR-11 (contextual bandit for the target, off by default); IR-3: `BANDIT`; keys `bandit_target`, `bandit_epsilon_pct`; NFR-CAP-1 tables |
+| 2.10 | 2026-11-08 | Security review: FR-DSC-6 (liveness CHALLENGE / RESPONSE before adopting a boot), FR-SEC-3 (PBKDF2 passphrase keys), NFR-SEC-1 (example key refused), NFR-SEC-2 (replay closed) |
+| 2.11 | 2026-11-08 | New FR-SEC-6, FR-SEC-7 (per-AP Ed25519 signatures, `sign_seed`, `peer_key`, `donghoa -g`); IR-8 payload 1450 bytes |
+| 2.12 | 2026-11-08 | New FR-SEC-8..11 (automatic key enrollment: keys created, requests, approval by fingerprint, trust table sync and persistence, welcome); IR-3: `ENROLL` |
+| 2.13 | 2026-11-08 | Security off by default: `liveness_check` (FR-DSC-6, NFR-SEC-2), shipped configurations without `key` (NFR-SEC-1) |

@@ -25,6 +25,8 @@ Millis nowMs() noexcept;
 std::uint64_t nowUs() noexcept;
 std::int32_t processId() noexcept;
 std::optional<std::uint32_t> randomU32() noexcept;
+// Fills out from the kernel CSPRNG; false if it is not available.
+bool randomBytes(const ByteSpan &out) noexcept;
 
 // ---- logging sinks ----
 
@@ -46,6 +48,8 @@ bool stopRequested() noexcept;
 // Reads a whole text file (at most out.capacity() bytes); false on error.
 bool readTextFile(const char *path, FixedString<16384U> &out) noexcept;
 void removeFile(const char *path) noexcept;
+// Replaces a small file atomically (path.tmp, fsync, rename), mode 0600.
+bool writeTextFile(const char *path, std::string_view text) noexcept;
 
 // ---- file descriptors ----
 

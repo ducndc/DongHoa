@@ -90,11 +90,15 @@ held.
 
 ### Restart detection
 
-A peer's `boot_id` is random per start. A different `boot_id` from a known
-peer means it restarted: its replay window is reset, it is logged
+A peer's `boot_id` is random per start. A new `boot_id` from a known peer
+(verified first by the liveness check when `liveness_check 1`, feature 1)
+means it restarted: its
+replay window is reset,
+it is logged
 (`peer … restarted`), and records it may have lost (device classes) are sent
 again. A restart is noticed on its first frame, without waiting for the old
-entry to time out.
+entry to time out (one CHALLENGE / RESPONSE round trip). A new origin is
+added the same way, so replayed frames never create or revive a peer.
 
 ### Peer table full
 

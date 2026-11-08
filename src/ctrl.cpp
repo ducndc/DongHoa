@@ -149,6 +149,16 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		formatTo(o, "PONG\n");
 	} else if (req == "STATUS") {
 		formatTo(o, "ap_id={}\nname={}\nboot_id={}\n", mApId, mCfg.name, hex(mBootId, 8U));
+		std::string_view enrollState;
+		if (mCfg.enroll) {
+			enrollState = mTrust.enrolled ? " enroll=enrolled" : " enroll=pending";
+		}
+		formatTo(o, "auth hmac={} ed25519={} liveness_check={}{}\n",
+			 mCfg.keyView().empty() ? "off" : "on", mCfg.signing ? "on" : "off",
+			 mCfg.livenessCheck ? "on" : "off", enrollState);
+		if (mCfg.signing) {
+			formatTo(o, "fingerprint={}\n", trust::fingerprint(mCfg.signKey.pub));
+		}
 		for (std::size_t i = 0U; i < mL2.size(); i++) {
 			formatTo(o, "port={}\n", mL2.port(i).name);
 		}
@@ -278,6 +288,8 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		cmdRl(o, (req.size() > 3U) ? subView(req, 3U) : std::string_view());
 	} else if ((req == "DROPRX") || startsWith(req, "DROPRX ")) {
 		cmdDropRx(o, (req.size() > 7U) ? subView(req, 7U) : std::string_view());
+	} else if ((req == "ENROLL") || startsWith(req, "ENROLL ")) {
+		cmdEnroll(o, (req.size() > 7U) ? subView(req, 7U) : std::string_view());
 	} else if ((req == "BANDIT") || startsWith(req, "BANDIT ")) {
 		cmdBandit(o, (req.size() > 7U) ? subView(req, 7U) : std::string_view());
 	} else if (req == "CALIB") {

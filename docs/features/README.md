@@ -20,7 +20,7 @@ These documents explain. The reference documents they link to define:
 
 | # | Document | In one sentence |
 |---|---|---|
-| 1 | [Transport and messaging](01-transport-messaging.md) | Raw-Ethernet ARCP frames, HMAC authentication, replay window, reliable unicast, automatic backhaul failover |
+| 1 | [Transport and messaging](01-transport-messaging.md) | Raw-Ethernet ARCP frames, HMAC authentication, per-AP Ed25519 signatures, replay window and liveness check, reliable unicast, automatic backhaul failover |
 | 2 | [Peer discovery and state exchange](02-peer-discovery.md) | APs find each other with HELLO and share BSS, load, STA and radio state |
 | 3 | [802.11k neighbor reports](03-neighbor-reports.md) | Every BSS's hostapd neighbor database fills itself from the peers |
 | 4 | [Local monitoring](04-local-monitoring.md) | hostapd and nl80211 give BSS status, channel utilisation and per-STA metrics |
@@ -36,6 +36,7 @@ These documents explain. The reference documents they link to define:
 | 14 | [Verification](14-verification.md) | Unit tests, integration test, QEMU system test, what each one proves |
 | 15 | [Q-learning: when to roam](15-rl-roaming.md) | A small integer Q-table learns from outcomes when to wait and when to steer; off by default; shadow (learn only) or active via `rl_roam` or `RL mode` |
 | 16 | [Contextual bandit: which target](16-target-bandit.md) | Learns from outcomes which kind of eligible candidate works and orders candidates by it; off by default (`bandit_target`, `BANDIT mode`) |
+| 17 | [Automatic key enrollment](17-key-enrollment.md) | APs create their own signing keys; a new AP is admitted by approving its fingerprint on any trusted AP, and the trust table spreads to all APs (`enroll`, `ENROLL`) |
 
 ## System overview
 

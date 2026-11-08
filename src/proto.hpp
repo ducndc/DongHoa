@@ -11,6 +11,7 @@
 #include <optional>
 #include <string_view>
 
+#include "ed25519.hpp"
 #include "types.hpp"
 
 namespace donghoa {
@@ -24,8 +25,9 @@ constexpr std::uint16_t MAGIC = 0x4152U; // "AR"
 constexpr std::uint8_t VERSION = 1U;
 constexpr std::size_t HDR_LEN = 24U;
 // Header + TLVs; leaves room for VLAN/backhaul encapsulation in 1500 bytes.
-constexpr std::size_t MAX_PAYLOAD = 1400U;
+constexpr std::size_t MAX_PAYLOAD = 1450U; // Ethernet allows 1500: 50 bytes of margin
 constexpr std::size_t AUTH_LEN = 16U;
+constexpr std::size_t SIG_LEN = 64U; // Ed25519 signature
 constexpr std::size_t TLV_HDR_LEN = 3U;
 constexpr std::size_t STA_ENTRY_LEN = 30U;
 // Largest values (SSID / name 32 bytes, MLD trailer included).
@@ -36,6 +38,7 @@ constexpr std::size_t BSS_LOAD_LEN = 14U;
 // Header flags
 constexpr std::uint8_t FLAG_ACK_REQ = 0x01U;
 constexpr std::uint8_t FLAG_AUTH = 0x02U;
+constexpr std::uint8_t FLAG_SIG = 0x04U; // a SIG TLV (Ed25519) precedes AUTH
 
 enum class MsgType : std::uint8_t {
 	HELLO = 0x01U,
@@ -44,6 +47,7 @@ enum class MsgType : std::uint8_t {
 	RF_STATUS = 0x04U,
 	STA_EVENT = 0x05U,
 	STA_CLASS = 0x06U,
+	TRUST = 0x07U, // enrollment: trust table records
 	STEER_REQ = 0x10U,
 	STEER_RESP = 0x11U,
 	STEER_RESULT = 0x12U,
@@ -51,6 +55,9 @@ enum class MsgType : std::uint8_t {
 	STA_MONITOR_REPORT = 0x14U,
 	ACK = 0x20U,
 	BYE = 0x21U,
+	CHALLENGE = 0x22U, // prove you are live: answer this nonce
+	RESPONSE = 0x23U,  // the nonce of a CHALLENGE, from the current boot
+	ENROLL_REQ = 0x24U, // an AP not enrolled yet announces its key
 };
 
 enum class Tlv : std::uint8_t {
@@ -69,6 +76,11 @@ enum class Tlv : std::uint8_t {
 	STA_MONITOR_RESULT = 0x15U,
 	STA_MONITOR_STATUS = 0x16U,
 	STA_ROAM = 0x17U,
+	CHALLENGE = 0x18U,
+	RESPONSE = 0x19U,
+	ENROLL_KEY = 0x1AU,
+	TRUST_REC = 0x1BU,
+	SIG = 0xFEU,
 	AUTH = 0xFFU,
 };
 
@@ -297,6 +309,15 @@ struct StaRoam {
 	std::uint32_t events{0U}; // outcomes behind it; the larger value is newer
 };
 
+// Enrollment (PROTOCOL.md §10): one trust table record.
+constexpr std::size_t TRUST_REC_LEN = 43U;
+struct TrustRecord {
+	Mac apId{};
+	ed25519::PublicKey pub{};
+	bool revoked{false};
+	std::uint32_t gen{0U};
+};
+
 struct StaMonitorStatus {
 	std::uint32_t txn{0U};
 	Mac sta{};
@@ -304,6 +325,10 @@ struct StaMonitorStatus {
 };
 
 // ---- encoding ----
+
+// Liveness nonce of CHALLENGE / RESPONSE (§4 of PROTOCOL.md).
+constexpr std::size_t NONCE_LEN = 16U;
+using Nonce = std::array<std::uint8_t, NONCE_LEN>;
 
 class Message {
 public:
@@ -329,10 +354,15 @@ public:
 	bool add(const StaMonitorStatus &v) noexcept;
 	bool add(const StaRoam &v) noexcept;
 	bool addAck(std::uint32_t msgId) noexcept;
+	// CHALLENGE or RESPONSE TLV
+	bool addNonce(Tlv type, const Nonce &n) noexcept;
+	bool add(const TrustRecord &v) noexcept;
+	bool addEnrollKey(const ed25519::PublicKey &pub) noexcept;
 
-	// Sets the length and, with a non-empty key, appends the HMAC.
-	// False if any TLV did not fit.
-	bool finish(ByteView key) noexcept;
+	// Sets the length; with a signer appends the SIG TLV (Ed25519 over the
+	// header and TLVs before it), then with a non-empty key the AUTH TLV
+	// (HMAC over everything before it). False if any TLV did not fit.
+	bool finish(ByteView key, const ed25519::KeyPair *signer = nullptr) noexcept;
 
 	ByteView bytes() const noexcept { return ByteView(mBuf.data(), mLen); }
 	std::uint8_t type() const noexcept { return mBuf[3U]; }
@@ -363,6 +393,9 @@ std::optional<Header> parseHeader(ByteView frame) noexcept;
 // True if authentication succeeds, or if no key is configured and the
 // message carries no AUTH.
 bool verify(ByteView frame, const Header &h, ByteView key) noexcept;
+// True if the message carries a SIG TLV (just before AUTH, or last) that is
+// a valid Ed25519 signature of the header and TLVs before it under pub.
+bool verifySig(ByteView frame, const Header &h, const ed25519::PublicKey &pub) noexcept;
 
 class TlvReader {
 public:
@@ -392,15 +425,27 @@ bool decode(ByteView v, StaMonitorStatus &o) noexcept;
 bool decode(ByteView v, StaRoam &o) noexcept;
 
 // Per-peer replay window (as in IPsec): accepts (bootId, msgId) once.
-// A new bootId (the peer restarted) resets it; otherwise a msgId above the
-// highest seen, or within the last 64 and not seen yet, is accepted.
+// Within one boot, a msgId above the highest seen, or within the last 64 and
+// not seen yet, is accepted.
 struct ReplayWindow {
 	std::uint32_t bootId{0U};
 	std::uint32_t seqHi{0U};  // highest msgId accepted
 	std::uint64_t seqWin{0U}; // bit i = (seqHi - i) seen
 };
-// True if new (and records it); restarted: the bootId changed from a known one.
-bool acceptSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId, bool &restarted) noexcept;
+// True if (bootId, msgId) would be accepted by acceptSeq (no change).
+bool isSeqNew(const ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId) noexcept;
+// True if (bootId, msgId) is new for the window's boot, and records it. A
+// message of any other boot is refused: a boot is adopted only by resetSeq,
+// after the peer answered a CHALLENGE (a replay cannot).
+bool acceptSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId) noexcept;
+// Starts the window at a verified (bootId, msgId).
+void resetSeq(ReplayWindow &w, std::uint32_t bootId, std::uint32_t msgId) noexcept;
+// Constant-time comparison (MACs, nonces); false if the sizes differ.
+bool ctEqual(ByteView a, ByteView b) noexcept;
+// CHALLENGE / RESPONSE TLV value
+bool decodeNonce(ByteView v, Nonce &n) noexcept;
+bool decode(ByteView v, TrustRecord &o) noexcept;
+bool decodeEnrollKey(ByteView v, ed25519::PublicKey &pub) noexcept;
 std::string_view monitorStatusName(std::uint8_t status) noexcept;
 bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept;
 

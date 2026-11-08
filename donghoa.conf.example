@@ -19,9 +19,17 @@ name ap-livingroom
 # 802.11s mesh). Do not list a bridge AND its member ports.
 iface br-lan
 
-# Shared secret: every message carries a truncated HMAC-SHA256.
-# Either a passphrase (>= 8 chars) or hex:<32..128 hex digits>.
-key change-me-to-a-long-random-secret
+# ---- security (all off by default) ----
+# Shared secret: every message carries a truncated HMAC-SHA256. Off when not
+# set: any host on the LAN can then talk ARCP. Either a passphrase (8..128
+# chars, stretched with PBKDF2) or hex:<32..128 hex digits> (best: 32 random
+# bytes, e.g. hex:$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.2x"')).
+# The example value below is public and refused if left as it is.
+#key change-me-to-a-long-random-secret
+
+# Liveness check: a peer's new boot is accepted only after it answers a
+# random challenge, so recorded messages cannot be replayed across restarts.
+#liveness_check 1
 
 # hostapd BSSes managed by this daemon (repeatable).
 #   mdid=<hex>   802.11r Mobility Domain (must match hostapd mobility_domain)
@@ -32,6 +40,22 @@ bss wlan1 mdid=a1b2 max_sta=64
 
 hostapd_ctrl_dir /var/run/hostapd
 ctrl_socket /var/run/donghoa.sock
+
+# Per-AP signatures (recommended): with the group key alone, anyone holding it
+# (e.g. from a stolen AP) can speak as any AP. With these lines each AP signs
+# with its own Ed25519 key and accepts only the APs listed. Generate with
+# "donghoa -g"; set both or neither. The same peer_key list can go on every AP.
+#sign_seed hex:<64 hex digits, this AP only>
+#peer_key 02:00:00:00:00:01 hex:<64 hex digits>
+#peer_key 02:00:00:00:00:02 hex:<64 hex digits>
+
+# Or let keys manage themselves: each AP creates its key on first start and
+# asks to be enrolled; admit it with "donghoa_cli <sock> ENROLL approve <ap_id>"
+# on any trusted AP after comparing the fingerprint it logs. On the first AP
+# of a new mesh, run "ENROLL init" (or approve the second AP from it).
+#enroll 1
+#seed_file /etc/donghoa.seed
+#trust_file /etc/donghoa.trust
 
 # ---- timers (ms) ----
 #hello_interval_ms 2000

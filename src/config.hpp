@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include "ed25519.hpp"
 #include "log.hpp"
 #include "rrm.hpp"
 #include "types.hpp"
@@ -19,6 +20,13 @@ constexpr std::size_t MAX_BSS = 16U; // local BSSes managed (and tracked per pee
 constexpr std::size_t MAX_MONITORS = 4U;
 constexpr std::size_t MAX_L2_PORTS = 8U;
 constexpr std::size_t MAX_SIM_PEERS = 16U;
+constexpr std::size_t MAX_TRUSTED = 64U; // peer_key lines (this AP's own may be listed)
+
+// "peer_key <ap_id> hex:<public key>": an AP allowed to talk ARCP
+struct TrustedKey {
+	Mac apId{};
+	ed25519::PublicKey pub{};
+};
 // hostapd control socket name: a netdev name (15) or, for an AP MLD link,
 // "<netdev>_link<id>" (up to 22).
 constexpr std::size_t IF_NAME_MAX = 22U;
@@ -173,6 +181,38 @@ struct Config {
 
 	std::array<std::uint8_t, 64U> key{};
 	std::size_t keyLen{0U};
+	bool keyPlaceholder{false}; // 'key' was the shipped example value (refused)
+
+	// Per-AP signatures: this AP signs with signKey; messages are accepted
+	// only from origins in trusted[], signed with their key. Both or neither.
+	bool signing{false};
+	ed25519::KeyPair signKey{};
+	std::array<TrustedKey, MAX_TRUSTED> trusted{};
+	std::size_t nTrusted{0U};
+
+	// Liveness check (CHALLENGE / RESPONSE) before adopting a peer's boot:
+	// stops replays across boots. Off by default; answering a peer's
+	// CHALLENGE is always on.
+	bool livenessCheck{false};
+
+	// Automatic enrollment (implies signing): own key from seedFile
+	// (created on first start), trust table kept in trustFile; peer_key
+	// lines become fixed anchors.
+	bool enroll{false};
+	Path seedFile{"/etc/donghoa.seed"};
+	Path trustFile{"/etc/donghoa.trust"};
+
+	// Public key listed for origin, or nullptr.
+	const ed25519::PublicKey *findTrusted(const Mac &origin) const noexcept
+	{
+		const ed25519::PublicKey *r = nullptr;
+		for (std::size_t i = 0U; i < nTrusted; i++) {
+			if ((r == nullptr) && (trusted[i].apId == origin)) {
+				r = &trusted[i].pub;
+			}
+		}
+		return r;
+	}
 
 	int helloMs{2000};
 	int bssStatusMs{5000};
@@ -185,6 +225,16 @@ struct Config {
 
 	ByteView keyView() const noexcept { return ByteView(key.data(), keyLen); }
 };
+
+// The example key of donghoa.conf.example and the OpenWrt package. It is
+// public, so it is refused instead of authenticating anything.
+constexpr std::string_view KEY_PLACEHOLDER{"change-me-to-a-long-random-secret"};
+// Passphrase keys: PBKDF2-HMAC-SHA256(passphrase, KEY_KDF_SALT, iterations).
+// The salt is fixed (every AP must derive the same key); the iteration count
+// costs about 0.1 s on x86-64 and well under 2 s on an ARMv7 AP, once at start.
+constexpr std::string_view KEY_KDF_SALT{"donghoa-arcp-key"};
+constexpr std::uint32_t KEY_KDF_ITERATIONS = 100000U;
+constexpr std::size_t KEY_PASSPHRASE_MAX = 128U;
 
 // One "key value" line; false if the key or value is invalid.
 bool parseConfigLine(Config &c, std::string_view line) noexcept;

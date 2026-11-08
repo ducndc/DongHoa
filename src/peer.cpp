@@ -14,11 +14,7 @@ constexpr LogModule LOG_MODULE{LogModule::PEER};
 bool acceptPeerSeq(Peer &p, std::uint32_t bootId, std::uint32_t msgId) noexcept
 {
 	arcp::ReplayWindow w{p.bootId, p.seqHi, p.seqWin};
-	bool restarted = false;
-	const bool accept = arcp::acceptSeq(w, bootId, msgId, restarted);
-	if (restarted) {
-		logging::info(LOG_MODULE, "peer {} restarted", p.id);
-	}
+	const bool accept = arcp::acceptSeq(w, bootId, msgId);
 	p.bootId = w.bootId;
 	p.seqHi = w.seqHi;
 	p.seqWin = w.seqWin;

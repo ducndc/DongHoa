@@ -8,6 +8,7 @@
 #include "os.hpp"
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 
 #include <arpa/inet.h>
@@ -144,6 +145,11 @@ std::optional<std::uint32_t> randomU32() noexcept
 	return r;
 }
 
+bool randomBytes(const ByteSpan &out) noexcept
+{
+	return getrandom(out.data(), out.size(), 0U) == static_cast<ssize_t>(out.size());
+}
+
 // ---- logging sinks ----
 
 void writeStderr(std::string_view line) noexcept
@@ -220,6 +226,26 @@ bool readTextFile(const char *path, FixedString<16384U> &out) noexcept
 void removeFile(const char *path) noexcept
 {
 	(void)::unlink(path);
+}
+
+bool writeTextFile(const char *path, std::string_view text) noexcept
+{
+	FixedString<256U> tmp;
+	bool ok = tmp.append(std::string_view(path)) && tmp.append(".tmp");
+
+	if (ok) {
+		const int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW;
+		Fd fd(::open(tmp.cStr(), flags, S_IRUSR | S_IWUSR));
+		ok = fd.valid() && (::write(fd.get(), text.data(), text.size()) ==
+				    static_cast<ssize_t>(text.size())) && (::fsync(fd.get()) == 0);
+	}
+	if (ok) {
+		ok = std::rename(tmp.cStr(), path) == 0;
+	}
+	if (!ok && !tmp.empty()) {
+		(void)::unlink(tmp.cStr());
+	}
+	return ok;
 }
 
 // ---- file descriptors ----

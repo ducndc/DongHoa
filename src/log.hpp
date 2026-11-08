@@ -32,6 +32,7 @@ enum class LogModule : std::uint8_t {
 	CONFIG,
 	RRM,
 	CLASS,
+	ENROLL,
 	COUNT
 };
 

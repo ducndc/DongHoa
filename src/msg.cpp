@@ -10,6 +10,29 @@ namespace {
 constexpr LogModule LOG_MODULE{LogModule::MSG};
 constexpr Millis RETX_INTERVAL_MS = 300U;
 constexpr int RETX_MAX_TRIES = 4;
+// Liveness check: one CHALLENGE per origin per interval; its nonce is valid
+// for NONCE_TTL_MS; a CHALLENGE makes us re-send HELLO/BSS_STATUS at most once
+// per RESYNC_MIN_MS (the challenger dropped the ones that triggered it).
+constexpr Millis CHALLENGE_INTERVAL_MS = 500U;
+constexpr Millis NONCE_TTL_MS = 3000U;
+constexpr Millis RESYNC_MIN_MS = 1000U;
+
+// The value of the first TLV of type t in the message, if any.
+bool findTlv(ByteView frame, const arcp::Header &h, arcp::Tlv t, ByteView &out) noexcept
+{
+	arcp::TlvReader rd(frame, h);
+	std::uint8_t type = 0U;
+	ByteView v;
+	bool found = false;
+
+	while (!found && rd.next(type, v)) {
+		if (type == arcp::raw(t)) {
+			out = v;
+			found = true;
+		}
+	}
+	return found;
+}
 
 } // namespace
 
@@ -21,7 +44,7 @@ void Daemon::beginMsg(arcp::Message &m, arcp::MsgType type, std::uint8_t flags) 
 
 bool Daemon::finish(arcp::Message &m) noexcept
 {
-	const bool ok = m.finish(mCfg.keyView());
+	const bool ok = m.finish(mCfg.keyView(), mCfg.signing ? &mCfg.signKey : nullptr);
 	if (!ok) {
 		logging::err(LOG_MODULE, "tx: message type {} overflow", m.type());
 	}
@@ -148,6 +171,116 @@ void Daemon::onAckReceived(const Mac &peer, std::uint32_t id) noexcept
 	}
 }
 
+void Daemon::sendDirect(std::size_t port, const Mac &dst, arcp::Message &m) noexcept
+{
+	if ((port < mL2.size()) && finish(m)) {
+		trace("tx", m.bytes(), nullptr, mL2.port(port).name.view(), 1);
+		(void)mL2.send(port, dst, m.bytes());
+	}
+}
+
+void Daemon::sendChallenge(std::size_t port, const Mac &dst, const Mac &origin) noexcept
+{
+	const Millis now = os::nowMs();
+	Challenge *c = nullptr;
+	Challenge *oldest = &mChal[0];
+
+	for (Challenge &x : mChal) {
+		if (x.used && (x.origin == origin)) {
+			c = &x;
+		} else if (!x.used || (oldest->used && (x.sent < oldest->sent))) {
+			oldest = &x;
+		} else {
+			// keep looking
+		}
+	}
+	if ((c != nullptr) && ((now - c->sent) < CHALLENGE_INTERVAL_MS)) {
+		return; // one already on its way
+	}
+	if (c == nullptr) {
+		c = oldest;
+	}
+	Challenge fresh;
+	fresh.used = true;
+	fresh.origin = origin;
+	fresh.sent = now;
+	if (!os::randomBytes(spanOf(fresh.nonce))) {
+		logging::err(LOG_MODULE, "no randomness for a challenge nonce");
+		return;
+	}
+	*c = fresh;
+	logging::dbg(LOG_MODULE, "rx: unverified boot of {}: CHALLENGE", origin);
+	arcp::Message m;
+	beginMsg(m, arcp::MsgType::CHALLENGE, 0U);
+	(void)m.addNonce(arcp::Tlv::CHALLENGE, c->nonce);
+	sendDirect(port, dst, m);
+}
+
+void Daemon::answerChallenge(std::size_t port, const Mac &dst, ByteView frame,
+			     const arcp::Header &h) noexcept
+{
+	ByteView v;
+	arcp::Nonce n{};
+	if (!findTlv(frame, h, arcp::Tlv::CHALLENGE, v) || !arcp::decodeNonce(v, n)) {
+		return;
+	}
+	arcp::Message m;
+	beginMsg(m, arcp::MsgType::RESPONSE, 0U);
+	(void)m.addNonce(arcp::Tlv::RESPONSE, n);
+	sendDirect(port, dst, m);
+	// The challenger dropped what it got from us so far: send our state again.
+	const Millis now = os::nowMs();
+	if ((mLastResync == 0U) || ((now - mLastResync) >= RESYNC_MIN_MS)) {
+		mLastResync = now;
+		mNextHello = 0U;
+		mNextBssStatus = 0U;
+	}
+}
+
+bool Daemon::isResponseValid(ByteView frame, const arcp::Header &h) noexcept
+{
+	ByteView v;
+	arcp::Nonce n{};
+	bool ok = false;
+
+	if (findTlv(frame, h, arcp::Tlv::RESPONSE, v) && arcp::decodeNonce(v, n)) {
+		const Millis now = os::nowMs();
+		for (Challenge &c : mChal) {
+			if (!ok && c.used && (c.origin == h.origin) && ((now - c.sent) < NONCE_TTL_MS) &&
+			    arcp::ctEqual(viewOf(c.nonce), viewOf(n))) {
+				c.used = false;
+				ok = true;
+			}
+		}
+	}
+	return ok;
+}
+
+bool Daemon::isSignatureOk(ByteView frame, const arcp::Header &h) noexcept
+{
+	const ed25519::PublicKey *const pub = trustedKeyFor(h.origin);
+	bool ok = pub != nullptr;
+	if (!ok) {
+		logging::dbg(LOG_MODULE, "rx: {} from {}: origin not in peer_key, dropped",
+			     arcp::msgName(h.type), h.origin);
+	} else {
+		// A further copy of a message already accepted (another port, a
+		// retransmission) only needs its ACK repeated: skip the costly check.
+		const Peer *const p = findPeer(h.origin);
+		bool dup = false;
+		if ((p != nullptr) && (p->bootId == h.bootId)) {
+			const arcp::ReplayWindow w{p->bootId, p->seqHi, p->seqWin};
+			dup = !arcp::isSeqNew(w, h.bootId, h.msgId);
+		}
+		ok = dup || arcp::verifySig(frame, h, *pub);
+		if (!ok) {
+			logging::dbg(LOG_MODULE, "rx: {} from {}: bad or missing signature, dropped",
+				     arcp::msgName(h.type), h.origin);
+		}
+	}
+	return ok;
+}
+
 void Daemon::sendAck(const Mac &peer, std::uint32_t id) noexcept
 {
 	arcp::Message m;
@@ -160,16 +293,16 @@ void Daemon::sendAck(const Mac &peer, std::uint32_t id) noexcept
 
 // HELLO and BSS_STATUS carry every local BSS in one message, and a message
 // that overflows is not sent at all: raising MAX_BSS must keep them inside
-// MAX_PAYLOAD (header, worst-case TLVs, AUTH).
+// MAX_PAYLOAD (header, worst-case TLVs, SIG, AUTH).
 static_assert((arcp::HDR_LEN + (arcp::TLV_HDR_LEN + arcp::AP_INFO_MAX_LEN) +
 	       (MAX_BSS * (arcp::TLV_HDR_LEN + arcp::BSS_INFO_MAX_LEN)) + arcp::TLV_HDR_LEN +
-	       arcp::AUTH_LEN) <=
+	       arcp::SIG_LEN + arcp::TLV_HDR_LEN + arcp::AUTH_LEN) <=
 		      arcp::MAX_PAYLOAD,
 	      "HELLO with MAX_BSS BSSes does not fit one ARCP message");
 static_assert((arcp::HDR_LEN +
 	       (MAX_BSS * ((arcp::TLV_HDR_LEN + arcp::BSS_INFO_MAX_LEN) + (arcp::TLV_HDR_LEN +
 									   arcp::BSS_LOAD_LEN))) +
-	       arcp::TLV_HDR_LEN + arcp::AUTH_LEN) <= arcp::MAX_PAYLOAD,
+	       arcp::TLV_HDR_LEN + arcp::SIG_LEN + arcp::TLV_HDR_LEN + arcp::AUTH_LEN) <= arcp::MAX_PAYLOAD,
 	      "BSS_STATUS with MAX_BSS BSSes does not fit one ARCP message");
 
 void Daemon::sendHello() noexcept
@@ -449,17 +582,65 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 				     arcp::msgName(h->type), h->origin);
 			continue;
 		}
+		if (mCfg.enroll && (trustedKeyFor(h->origin) == nullptr)) {
+			onUntrusted(frame, *h); // enrollment request, or the welcome
+			continue;
+		}
+		if (((mCfg.nTrusted > 0U) || mCfg.enroll) && !isSignatureOk(frame, *h)) {
+			continue;
+		}
+		if (mCfg.enroll && (h->type == arcp::raw(arcp::MsgType::ENROLL_REQ))) {
+			// A trusted key asking again (it lost its trust table): it
+			// cannot answer a CHALLENGE until it trusts us, so welcome it.
+			sendWelcome(h->origin);
+			continue;
+		}
+		if (mCfg.enroll && (h->type == arcp::raw(arcp::MsgType::TRUST))) {
+			// Signed by a trusted AP; a replayed record loses the merge
+			// (generations), so no liveness check is needed, and a newly
+			// welcomed AP learns the rest of the mesh at once.
+			onTrust(frame, *h);
+			continue;
+		}
 		if ((mDropCount > 0U) && (h->type == mDropType)) {
 			mDropCount--;
 			logging::info(LOG_MODULE, "rx: {} #{} from {} dropped (fault injection, {} left)",
 				      arcp::msgName(h->type), h->msgId, h->origin, mDropCount);
 			continue;
 		}
-		const bool isNewPeer = findPeer(h->origin) == nullptr;
+		if (h->type == arcp::raw(arcp::MsgType::CHALLENGE)) {
+			// Answered whoever asks: a RESPONSE proves nothing to a replayer.
+			answerChallenge(port, src, frame, *h);
+			continue;
+		}
+		Peer *const known = findPeer(h->origin);
+		const bool isNewPeer = known == nullptr;
+		// A boot is adopted only through a fresh CHALLENGE / RESPONSE, so
+		// recorded frames (of an earlier boot, or of a peer since removed)
+		// are refused whatever their boot_id.
+		bool verified = false;
+		if (!mCfg.livenessCheck && (known != nullptr) && (known->bootId != h->bootId) &&
+		    (h->type == arcp::raw(arcp::MsgType::BYE))) {
+			removePeer(*known); // liveness check off: any boot's BYE counts
+			continue;
+		}
+		if (((known == nullptr) || (known->bootId != h->bootId)) && !mCfg.livenessCheck) {
+			verified = true; // liveness check off: a new boot is adopted at once
+		} else if ((known == nullptr) || (known->bootId != h->bootId)) {
+			verified = (h->type == arcp::raw(arcp::MsgType::RESPONSE)) &&
+				   isResponseValid(frame, *h);
+			if (!verified) {
+				if (h->type != arcp::raw(arcp::MsgType::BYE)) {
+					sendChallenge(port, src, h->origin);
+				}
+				continue;
+			}
+		} else {
+			// the boot this peer was verified with
+		}
 		if (h->type == arcp::raw(arcp::MsgType::BYE)) {
-			Peer *const p = findPeer(h->origin);
-			if ((p != nullptr) && acceptPeerSeq(*p, h->bootId, h->msgId)) {
-				removePeer(*p);
+			if ((known != nullptr) && acceptPeerSeq(*known, h->bootId, h->msgId)) {
+				removePeer(*known);
 			}
 			continue;
 		}
@@ -467,13 +648,24 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		if (p == nullptr) {
 			continue;
 		}
-		const bool restarted = (p->bootId != 0U) && (p->bootId != h->bootId);
-		if (!acceptPeerSeq(*p, h->bootId, h->msgId)) {
+		const bool restarted = verified && (p->bootId != 0U);
+		if (verified) {
+			if (restarted) {
+				logging::info(LOG_MODULE, "peer {} restarted", p->id);
+			}
+			arcp::ReplayWindow w;
+			arcp::resetSeq(w, h->bootId, h->msgId);
+			p->bootId = w.bootId;
+			p->seqHi = w.seqHi;
+			p->seqWin = w.seqWin;
+		} else if (!acceptPeerSeq(*p, h->bootId, h->msgId)) {
 			// Duplicate (other path or retransmission): ACK again.
 			if ((h->flags & arcp::FLAG_ACK_REQ) != 0U) {
 				sendAck(p->id, h->msgId);
 			}
 			continue;
+		} else {
+			// new message of the verified boot
 		}
 		// The path delivering the first copy of a new message wins, so
 		// unicast follows backhaul changes (wired <-> wireless).
@@ -491,6 +683,7 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		}
 		if (isNewPeer || restarted) {
 			syncDevClass(p->id); // it may have lost the device classes
+			mNextTrustSync = 0U; // and the trust table
 		}
 	}
 }
