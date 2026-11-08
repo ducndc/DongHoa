@@ -47,7 +47,11 @@ CPPCHECK = cppcheck --std=c++17 --language=c++ --enable=warning,portability --in
 cppcheck:
 	@$(CPPCHECK) src tools
 
+# Coding-convention rules the compiler does not enforce (docs/CODING_CONVENTION.md §7)
+style:
+	@python3 tools/style_check.py
+
 clean:
 	rm -f donghoa donghoa_cli $(TESTS)
 
-.PHONY: all test itest check-deps cppcheck clean
+.PHONY: all test itest check-deps cppcheck style clean
