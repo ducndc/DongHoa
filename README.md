@@ -76,6 +76,28 @@ donghoa_cli /var/run/donghoa.sock LOG debug steer msg   # debug two modules, no 
 donghoa_cli /var/run/donghoa.sock STEER aa:bb:cc:dd:ee:ff [target-bssid]
 ```
 
+**Manual steering test.** `STEER <sta> [<bssid>]` starts a real transaction
+right away (`reason=manual`), ignoring the RSSI/band/load trigger
+conditions and any backoff; everything after MEASURE (scoring, NEGOTIATE
+with another AP, BTM, ROAM) runs exactly as an automatic steer would.
+Omit `<bssid>` to let the daemon pick the best-scoring candidate itself;
+give one to force a specific target, local or on another AP. Watch it with
+`donghoa_cli ... STEERS` (live transaction state) or `logread`/stderr with
+`LOG debug steer policy local`.
+
+A real STA often does not answer the 802.11v BSS Transition Management
+request within the default `btm_timeout_ms` (2000): raise it (e.g. to
+`5000`) if you see `btm-timeout` in the log but the STA was clearly about
+to move. If it still never acts on a polite request, `disassoc_imminent 1`
+(`disassoc_timer` TBTTs of grace, 0 = immediate) tells it it will be
+disassociated regardless, which forces the move at the cost of a brief
+connectivity blip. After a forced move, the STA's *previous* AP may keep
+listing it in `hostapd`/`STAS` for a while: hostapd expires an association
+that did not end with a clean disassociate handshake on its own inactivity
+timeout, not on a fixed schedule — that is normal cleanup lag, not a sign
+the roam failed; check the *target* AP's `STATUS`/`STAS` for the STA to
+confirm it actually arrived.
+
 **Debugging.** Log lines name their module, for example `steer:` or `msg:`.
 `LOG` shows each module's level; `LOG debug <module>...` raises it at run time
 and `LOG info` resets all. With `msg` at debug, every ARCP frame is traced:
