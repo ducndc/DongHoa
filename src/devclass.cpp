@@ -302,10 +302,15 @@ void Daemon::saveDevClass(const Sta &s) noexcept
 		storeRoamRec(s.addr, s.roamThr, s.roamEvents, mApId);
 	}
 	const DevClassRec *const r = findDevClass(s.addr);
-	// Keep what was learned here, unless a peer already holds more.
+	// Keep what was learned here, unless a peer already holds more. A tied
+	// count alone does not mean someone else still owns it: if the STA is
+	// genuinely associated here right now (not just leaving, the case this
+	// is called for from onPeerStaAssoc), this AP is the current authority
+	// for it regardless of not having produced fresh evidence yet.
 	if ((s.lpSamples > 0U) && ((r == nullptr) || (r->samples <= s.lpSamples))) {
+		const bool tie = (r != nullptr) && (r->samples == s.lpSamples);
 		(void)storeDevClass(s.addr, s.lowPower, s.lpScore, s.lpSamples,
-				    ((r != nullptr) && (r->samples == s.lpSamples)) ? r->source : mApId);
+				    (tie && s.away) ? r->source : mApId);
 	}
 }
 
