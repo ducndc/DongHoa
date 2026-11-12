@@ -78,7 +78,7 @@ remote syslog servers and log filters see standard severities.
 |---|---|---|---|
 | `err` (3) | `ERR` | the daemon cannot do something it should | socket or config failure, key file not writable |
 | `warning` (4) | `WRN` | something is wrong but handled | message not acknowledged, hostapd rejected a BTM request, a setting differs from a peer's |
-| `notice` (5) | `NTC` | normal but significant events | start / stop, peer discovered / lost / restarted, BSS up, hostapd connected, steer finished (with outcome), device class change, enrollment requests and decisions, findings cleared |
+| `notice` (5) | `NTC` | normal but significant events | start / stop, peer discovered / lost / restarted, BSS up, hostapd connected, steer finished (with outcome) or without a suitable candidate, device class change, enrollment requests and decisions, findings cleared |
 | `info` (6) | `INF` | routine operation | each step of a steer, STA association, measurements, offload decisions, records learned from peers |
 | `debug` (7) | `DBG` | traces | ARCP frames, hostapd commands, per-poll values |
 

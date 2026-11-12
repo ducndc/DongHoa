@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.9, 2026-11-08 (history in §13) |
+| Document version | 2.14, 2026-11-12 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 

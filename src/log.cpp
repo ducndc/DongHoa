@@ -27,28 +27,47 @@ constexpr std::array<std::string_view, MODULES> MODULE_NAMES{
 	"config", "rrm", "class", "enroll", "check",
 };
 
-// Indexed by severity code 0..7 (RFC 5424); 0..2 are never set.
-constexpr std::size_t LEVELS = 8U;
-constexpr std::array<std::string_view, LEVELS> LEVEL_NAMES{"emerg",  "alert", "crit", "err",
-							  "warning", "notice", "info", "debug"};
-constexpr std::array<std::string_view, LEVELS> TAGS{"EMR", "ALR", "CRT", "ERR", "WRN", "NTC", "INF", "DBG"};
+// The RFC 5424 severity codes in use: ERR (3) .. DEBUG (7).
+constexpr std::size_t FIRST = static_cast<std::size_t>(LogLevel::ERR);
+constexpr std::size_t LEVELS = 5U;
+constexpr long MAX_CODE = 7;
 
-struct LevelAlias {
+struct LevelName {
 	std::string_view name;
 	LogLevel level;
 };
-constexpr std::array<LevelAlias, 5U> LEVEL_ALIASES{{
+
+// Every name a level can be set by. The first LEVELS entries are the RFC
+// 5424 keywords in severity order: a level is shown as entry (code - FIRST).
+// emerg, alert and crit set ERR, the most severe level in use.
+constexpr std::array<LevelName, 10U> LEVEL_NAMES{{
+	{"err", LogLevel::ERR},
+	{"warning", LogLevel::WARN},
+	{"notice", LogLevel::NOTICE},
+	{"info", LogLevel::INFO},
+	{"debug", LogLevel::DEBUG},
+	{"error", LogLevel::ERR},
+	{"warn", LogLevel::WARN},
 	{"emerg", LogLevel::ERR},
 	{"alert", LogLevel::ERR},
 	{"crit", LogLevel::ERR},
-	{"error", LogLevel::ERR},
-	{"warn", LogLevel::WARN},
 }};
+constexpr std::array<std::string_view, LEVELS> TAGS{"ERR", "WRN", "NTC", "INF", "DBG"};
+
+constexpr bool isNameOrderOk() noexcept
+{
+	bool ok = true;
+	for (std::size_t i = 0U; i < LEVELS; i++) {
+		ok = ok && (static_cast<std::size_t>(LEVEL_NAMES[i].level) == (FIRST + i));
+	}
+	return ok;
+}
+static_assert(isNameOrderOk(), "LEVEL_NAMES starts with the keywords in severity order");
 
 bool isValid(LogLevel l) noexcept
 {
 	const std::size_t i = static_cast<std::size_t>(l);
-	return (i >= static_cast<std::size_t>(LogLevel::ERR)) && (i < LEVELS);
+	return (i >= FIRST) && (i < (FIRST + LEVELS));
 }
 
 bool sSyslog = false;
@@ -94,20 +113,18 @@ void setAll(LogLevel l) noexcept
 std::optional<LogLevel> parseLevel(std::string_view s) noexcept
 {
 	std::optional<LogLevel> r;
-	const std::optional<long> n = parseLong(s, 10, 0, static_cast<long>(LEVELS) - 1L);
-	const std::size_t lowest = static_cast<std::size_t>(LogLevel::ERR);
-	for (std::size_t i = lowest; i < LEVELS; i++) {
-		if ((s == LEVEL_NAMES[i]) || (n.has_value() && (static_cast<std::size_t>(*n) == i))) {
-			r = static_cast<LogLevel>(i);
+	for (const LevelName &n : LEVEL_NAMES) {
+		if (s == n.name) {
+			r = n.level;
 		}
 	}
-	for (const LevelAlias &a : LEVEL_ALIASES) {
-		if (s == a.name) {
-			r = a.level;
+	// A severity code is one digit: "-0", "00" and "007" are not levels.
+	if (!r.has_value() && (s.size() == 1U)) {
+		const std::optional<long> n = parseLong(s, 10, 0, MAX_CODE);
+		if (n.has_value()) {
+			const std::size_t code = static_cast<std::size_t>(*n);
+			r = static_cast<LogLevel>((code < FIRST) ? FIRST : code); // 0..2 set ERR
 		}
-	}
-	if (!r.has_value() && n.has_value()) {
-		r = LogLevel::ERR; // 0..2: emerg, alert, crit
 	}
 	return r;
 }
@@ -125,7 +142,7 @@ std::optional<LogModule> parseModule(std::string_view s) noexcept
 
 std::string_view levelName(LogLevel l) noexcept
 {
-	return isValid(l) ? LEVEL_NAMES[idx(l)] : std::string_view("?");
+	return isValid(l) ? LEVEL_NAMES[idx(l) - FIRST].name : std::string_view("?");
 }
 
 std::string_view moduleName(LogModule m) noexcept
@@ -153,6 +170,7 @@ void useSyslog(bool on) noexcept
 void emit(LogModule m, LogLevel l, std::string_view text) noexcept
 {
 	const Millis t = os::nowMs();
+	const bool valid = isValid(l);
 	Line line;
 
 	// "<s>.<ms> [TAG] module: text". The monotonic time lines up exactly
@@ -165,10 +183,13 @@ void emit(LogModule m, LogLevel l, std::string_view text) noexcept
 	if (ms < 10U) {
 		(void)line.pushBack('0');
 	}
-	formatTo(line, "{} [{}] {}: {}", ms, isValid(l) ? TAGS[idx(l)] : std::string_view("?"), moduleName(m),
-		 text);
+	const std::string_view tag = valid ? TAGS[idx(l) - FIRST] : std::string_view("?");
+	formatTo(line, "{} [{}] {}: {}", ms, tag, moduleName(m), text);
 	if (sSyslog) {
-		os::writeSyslog(static_cast<std::uint8_t>(idx(l)), line.view());
+		// A value outside ERR..DEBUG must not reach syslog as emerg, alert or
+		// crit, which many syslog daemons write to every console.
+		const LogLevel prio = valid ? l : LogLevel::INFO;
+		os::writeSyslog(static_cast<std::uint8_t>(idx(prio)), line.view());
 	} else {
 		(void)line.pushBack('\n');
 		os::writeStderr(line.view());
