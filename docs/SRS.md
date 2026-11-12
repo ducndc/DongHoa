@@ -152,7 +152,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | ID | Requirement | Verif. |
 |---|---|---|
 | IR-1 | **Configuration file.** The daemon shall read one text file given with `-c`, one `key value` per line, with `#` comments. An unknown key or an invalid value shall stop start-up with an error that gives the line number. At least one `bss` line and one transport (`iface` or `sim_port`) shall be required. | T-U `test_config`, I |
-| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `BANDIT [mode <n> | reset]` (target bandit state and control), `ENROLL [approve <ap_id> | revoke <ap_id> | init]` (key enrollment), `DROPRX [<MESSAGE> <n>]` (fault injection: drop received messages of a type), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
+| IR-3 | **Control socket.** When `ctrl_socket` is set, the daemon shall answer UNIX-datagram requests: `PING`, `STATUS`, `PEERS`, `STAS`, `STEERS`, `DEVCLASS` (device class records), `CALIB` (learned uplink/downlink offsets), `RL [mode <n> | reset]` (Q-learning state and control), `BANDIT [mode <n> | reset]` (target bandit state and control), `ENROLL [approve <ap_id> | revoke <ap_id> | init]` (key enrollment), `DROPRX [<MESSAGE> <n>]` (fault injection: drop received messages of a type), `STEER <sta> [<bssid>]`, `MONITOR <sta> [<ms>]` (measure a STA with this AP's air monitors; result in the log), `METRICS` (outcome counters, FR-OBS-1), `CHECK` (configuration consistency, FR-OBS-2) and `LOG [<level> [<module>...]]` (show or set log levels). Each reply shall be a single datagram of at most 8 KiB. Unknown commands shall get `UNKNOWN COMMAND`. | T-I 1,5, T-O |
 | IR-4 | **CLI.** `donghoa_cli <socket> <command…>` shall send one request, print the reply, and fail if no reply arrives within 2 s. | T-I, T-O |
 | IR-5 | **Logging.** Each log line shall carry the monotonic time, a level tag (`ERR`, `WRN`, `INF`, `DBG`) and the module (`main`, `l2`, `msg`, `peer`, `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`, `rrm`, `class`). Each module shall have its own level: info by default, set by `log_level` and `log_debug <modules>` in the configuration, by `-d` (all modules at debug), and at run time by the control command `LOG [<level> [<module>...]]` without a restart. Output shall go to stderr, or with `-s` to syslog (facility daemon) with priorities matching the levels. At debug level, module `msg` shall trace every ARCP frame sent, retransmitted and received (type, id, peer, port, flags, TLV list), and module `rrm` shall dump every 802.11k/v command sent to hostapd (`REQ_BEACON`, `BSS_TM_REQ`, `SET_NEIGHBOR`, `REMOVE_NEIGHBOR`) with its reply, and every 11k/v event (`BEACON-RESP-RX`, `BEACON-REQ-TX-STATUS`, `BSS-TM-RESP`, `BSS-TM-QUERY`), raw and decoded. | T-U `test_log`, `test_rrm`, T-I 1, 3, T-O |
 
@@ -326,6 +326,13 @@ The method is defined in `docs/PROTOCOL.md` §8.
 | FR-LPC-5 | With `lp_no_steer` on, a low-power STA shall not be steered automatically (RSSI, band, load); manual steering shall still work. STA_ENTRY shall carry the class as flag 0x20. | T-I 10 |
 | FR-LPC-6 | A STA whose hostapd `flags` show a PHY ruled out by `lp_exclude_vht` / `lp_exclude_he` / `lp_exclude_eht` shall never be low-power; a low-power one shall be set to normal at once and the change sent to every peer with its sample count raised by one. | T-U, T-I 10 |
 
+### 4.14 Observability (OBS)
+
+| ID | Requirement | Verif. |
+|---|---|---|
+| FR-OBS-1 | The daemon shall count, since start-up: per local BSS and trigger, steering transactions started, ended by outcome (incl. no candidate), BTM requests sent / accepted / rejected, the level gain and duration of successes; per local BSS as target, STEER_REQ answers by status and reported outcomes; load-balancing offloads and verdicts (effective, futile, no verdict, pause); ARCP messages received, sent, retransmitted, unacknowledged and dropped by reason. `METRICS` shall return them, with uptime, peer count, active transactions, the number of consistency findings and per-BSS STA count and utilisation, in the Prometheus text exposition format, leaving out zero values. | T-U `testMetrics`, T-I 25 |
+| FR-OBS-2 | Every HELLO shall carry the sender's steering settings (POLICY TLV). Every 10 s the daemon shall compare each local BSS with every other BSS of the same SSID (own or a peer's, links of one AP MLD excepted) for a different mobility domain, 802.11r on one side only, FT over DS on one side only and different security, and its own steering settings with each peer's. A new finding shall be logged as a warning (module `check`) and its end as information; `CHECK` shall list the current findings. The check shall not change any behaviour. | T-U `testConsistency`, T-I 25 |
+
 ## 5. Non-functional requirements
 
 ### 5.1 Performance
@@ -375,9 +382,10 @@ per second.
 | ID | Requirement | Verif. |
 |---|---|---|
 | NFR-POR-1 | The daemon shall build and run on glibc and musl, and cross-compile with the OpenWrt SDK (24.x `.ipk`, 25.x `.apk`). | T-O |
-| NFR-MNT-1 | Decision logic and byte layouts shall live in pure modules (`proto`, `rrm`, `policy`, `config`, `sha256`, `sha512`, `ed25519`, `trust`, hostapd parsers) that the unit tests can link without I/O. | I |
+| NFR-MNT-1 | Decision logic and byte layouts shall live in pure modules (`proto`, `rrm`, `policy`, `config`, `sha256`, `sha512`, `ed25519`, `trust`, `consistency`, `metrics`, hostapd parsers) that the unit tests can link without I/O. | I |
 | NFR-MNT-2 | Wire numbers shall be defined only in `src/proto.hpp`. A change to the protocol shall update `proto.{hpp,cpp}`, `docs/PROTOCOL.md` and the round-trip tests together. | I |
-| NFR-MNT-3 | A change to daemon behaviour shall keep `make itest` passing (PASS 1–5). | T-I |
+| NFR-MNT-3 | A change to daemon behaviour shall keep `make itest` passing (PASS 1–25). | T-I |
+| NFR-MNT-4 | Every parser of input from outside the daemon (ARCP frames, radiotap, nl80211, hostapd replies and events, the configuration and trust files) shall have a libFuzzer target run under ASan/UBSan (`make fuzz`). | T-F |
 
 ## 6. Out of scope (version 1.0)
 
@@ -396,7 +404,8 @@ per second.
 
 Three automated levels: **T-U** unit tests (`make test`, pure modules),
 **T-I** integration test (`make itest`: real daemons, mock hostapd, PASS
-1–18), **T-O** the QEMU OpenWrt system test (`openwrt/qemu/systest.sh`: real
+1–25), **T-F** fuzzing (`make fuzz`: libFuzzer on every parser of outside
+input), **T-O** the QEMU OpenWrt system test (`openwrt/qemu/systest.sh`: real
 hostapd, `mac80211_hwsim`, `wpa_supplicant`, S1–S16). Details per scenario:
 `docs/features/14-verification.md`.
 
@@ -418,6 +427,8 @@ hostapd, `mac80211_hwsim`, `wpa_supplicant`, S1–S16). Details per scenario:
 | MLO (FR-MLO) | T-U `test_mlo`; T-I 9 | Real AP MLD |
 | Capacity (NFR-CAP-1) | T-I 12 (12 APs), 15 (17 BSSes: 16 managed); compile-time check that 16 BSSes fit HELLO/BSS_STATUS | 33 APs; message load at 10+ APs |
 | Resilience (FR-MON-6, NFR-REL-1) | T-O S10 (hostapd restart) | — |
+| Observability (FR-OBS-1/2) | T-U `testMetrics`, `testConsistency`; T-I 25 (counters after the earlier scenarios, Prometheus syntax; mobility domain and threshold findings, cleared) | Counters on real hardware |
+| Parser robustness (NFR-MNT-4) | T-F `fuzz_arcp`, `fuzz_radio`, `fuzz_text` (10 min each: no finding) | Continuous fuzzing (not in CI) |
 | OpenWrt service, UCI `bss` lines (IR-7, IR-12) | T-O S11 (interface rename), S12 (strict config); package upgrade with `apk add` | Init script against fixture `ubus` output |
 
 Remaining recommended additions: an itest with two ports (path failover);
@@ -495,3 +506,4 @@ real hardware runs (survey utilisation source, station dumps, client
 | 2.11 | 2026-11-08 | New FR-SEC-6, FR-SEC-7 (per-AP Ed25519 signatures, `sign_seed`, `peer_key`, `donghoa -g`); IR-8 payload 1450 bytes |
 | 2.12 | 2026-11-08 | New FR-SEC-8..11 (automatic key enrollment: keys created, requests, approval by fingerprint, trust table sync and persistence, welcome); IR-3: `ENROLL` |
 | 2.13 | 2026-11-08 | Security off by default: `liveness_check` (FR-DSC-6, NFR-SEC-2), shipped configurations without `key` (NFR-SEC-1) |
+| 2.14 | 2026-11-12 | New §4.14: FR-OBS-1 (outcome counters, `METRICS`, Prometheus text), FR-OBS-2 (configuration consistency check, POLICY TLV in HELLO, `CHECK`); NFR-MNT-4 (fuzzing); IR-3; verification level T-F |

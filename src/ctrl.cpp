@@ -368,6 +368,10 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 					 arcp::monitorStatusName(static_cast<std::uint8_t>(st)));
 			}
 		}
+	} else if (req == "METRICS") {
+		cmdMetrics(o);
+	} else if (req == "CHECK") {
+		cmdCheck(o);
 	} else if (req == "LOG") {
 		cmdLog(o, std::string_view());
 	} else if (startsWith(req, "LOG ")) {
@@ -388,6 +392,37 @@ void formatQ(FixedString<16U> &out, int q256) noexcept
 }
 
 } // namespace
+
+// Outcome counters and a few gauges, Prometheus text format.
+void Daemon::cmdMetrics(Out &o) const noexcept
+{
+	std::size_t peers = 0U;
+	std::size_t txns = 0U;
+	for (const Peer &p : mPeers) {
+		peers += p.used ? 1U : 0U;
+	}
+	for (const SteerTxn &t : mTxn) {
+		txns += t.used ? 1U : 0U;
+	}
+	formatTo(o, "# donghoa {} ({})\n", mApId, mCfg.name);
+	formatTo(o, "donghoa_uptime_seconds {}\n", (os::nowMs() - mStartMs) / 1000U);
+	formatTo(o, "donghoa_peers {}\n", peers);
+	formatTo(o, "donghoa_steer_active {}\n", txns);
+	formatTo(o, "donghoa_config_issues {}\n", countIssues());
+	for (std::size_t i = 0U; i < mNBss; i++) {
+		const LocalBss &b = mBss[i];
+		formatTo(o, "donghoa_bss_up{bss=\"{}\"} {}\n", b.cfg->ifname, b.up ? 1 : 0);
+		if (b.up) {
+			formatTo(o, "donghoa_bss_stations{bss=\"{}\"} {}\n", b.cfg->ifname, b.load.staCount);
+			const int util = policy::utilToPct(b.load.util);
+			if (util >= 0) {
+				formatTo(o, "donghoa_bss_util_pct{bss=\"{}\"} {}\n", b.cfg->ifname, util);
+			}
+		}
+		metrics::formatBss(o, b.cfg->ifname.view(), mMetrics[i]);
+	}
+	metrics::formatArcp(o, mArcpMetrics);
+}
 
 void Daemon::cmdRl(Out &o, std::string_view args) noexcept
 {

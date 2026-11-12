@@ -12,6 +12,7 @@ namespace {
 constexpr LogModule LOG_MODULE{LogModule::MAIN};
 
 constexpr int LOOP_TICK_MS = 100;
+constexpr Millis CHECK_INTERVAL_MS = 10000U; // configuration consistency check
 
 // Owner of each polled descriptor.
 enum class Src : std::uint8_t { L2, HAPD, CTRL, AMON, SURVEY };
@@ -61,6 +62,8 @@ bool Daemon::setupTransport() noexcept
 bool Daemon::init(const char *cfgPath, bool debugAll) noexcept
 {
 	bool ok = loadConfig(mCfg, cfgPath);
+
+	mStartMs = os::nowMs();
 
 	if (ok) {
 		logging::setAll(mCfg.logLevel);
@@ -127,6 +130,10 @@ void Daemon::runTimers() noexcept
 	if (now >= mNextLb) {
 		runLbRound();
 		mNextLb = now + static_cast<Millis>(mCfg.pol.lbIntervalMs);
+	}
+	if (now >= mNextCheck) {
+		checkConsistency();
+		mNextCheck = now + CHECK_INTERVAL_MS;
 	}
 	tickSteer(now);
 	tickAmon(now);

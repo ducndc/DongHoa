@@ -781,6 +781,101 @@ def signed_frame(passphrase, seed, mtype, msg_id, boot_id, origin, tlvs=b""):
     return eth + hdr + body + bytes([0xFF]) + struct.pack(">H", 16) + tag
 
 
+PROM_LINE = re.compile(r'^donghoa_[a-z0-9_]+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? -?[0-9]+$')
+
+
+def prom_value(text, series):
+    """Value of one series in METRICS output; 0 when absent (zero values
+    are left out)."""
+    for line in text.splitlines():
+        if line.startswith(series + " "):
+            return int(line.split()[-1])
+    return 0
+
+
+def scenario_metrics_check(world, procs, logs, socks, tmp, base):
+    """S25: METRICS counts what the earlier scenarios did, in Prometheus text
+    form; CHECK and the check log name an 802.11r mobility domain and a
+    steering threshold that differ between two APs of one ESS, and clear
+    once the second AP is configured like the first."""
+    mark(logs, "S25 METRICS counters, CHECK finds inconsistent APs")
+    m1, m2 = cli(socks[0], "METRICS"), cli(socks[1], "METRICS")
+    for text in (m1, m2):
+        for line in text.splitlines():
+            assert line.startswith("#") or PROM_LINE.match(line), "not Prometheus text: " + line
+    assert prom_value(m1, 'donghoa_steer_total{bss="ap1-wl0",reason="rssi",result="success"}') >= 1, m1
+    assert prom_value(m1, 'donghoa_btm_sent_total{bss="ap1-wl0",reason="rssi"}') >= 1, m1
+    assert prom_value(m1, 'donghoa_btm_accept_total{bss="ap1-wl0",reason="rssi"}') >= 1, m1
+    assert prom_value(m1, 'donghoa_steer_gain_db_count{bss="ap1-wl0",reason="rssi"}') >= 1, m1
+    assert prom_value(m1, 'donghoa_arcp_drop_total{reason="auth"}') >= 1, "AP3's wrong key: " + m1
+    assert prom_value(m1, "donghoa_arcp_rx_total") > 0 and prom_value(m1, "donghoa_arcp_tx_total") > 0
+    assert prom_value(m1, 'donghoa_steer_in_total{bss="ap1-wl0",status="accept"}') >= 1, m1
+    assert prom_value(m2, 'donghoa_steer_in_total{bss="ap2-wl0",status="accept"}') >= 1, m2
+    assert prom_value(m2, 'donghoa_lb_offload_total{bss="ap2-wl0"}') >= 3, m2
+    assert prom_value(m2, 'donghoa_lb_futile_total{bss="ap2-wl0"}') >= 2, m2
+    assert prom_value(m2, 'donghoa_lb_pause_total{bss="ap2-wl0"}') >= 1, m2
+    assert prom_value(m1, "donghoa_peers") == 1 and prom_value(m1, "donghoa_config_issues") == 0, m1
+    assert prom_value(m1, 'donghoa_bss_up{bss="ap1-wl0"}') == 1, m1
+    assert cli(socks[0], "CHECK").strip().endswith("issues=0"), cli(socks[0], "CHECK")
+
+    ports = [base + 50, base + 51]
+    hdirs = [os.path.join(tmp, "cchapd%d" % i) for i in (0, 1)]
+    for h in hdirs:
+        os.makedirs(h, exist_ok=True)
+    world.add_bss(hdirs[0], "cc0-wl0", "02:00:00:00:70:00", "cc-net", 5180, 36, util=20)
+    world.add_bss(hdirs[1], "cc1-wl0", "02:00:00:00:71:00", "cc-net", 5745, 149, util=20)
+    csocks, clogs, cprocs = [], [], []
+
+    def start(i, extra, mdid="a1b2"):
+        cfg, sock = os.path.join(tmp, "cc%d.conf" % i), os.path.join(tmp, "ccctrl%d" % i)
+        write_cfg(cfg, "02:00:00:00:00:%02x" % (0x70 + i), "cc%d" % i, hdirs[i], sock, ports[i],
+                  [ports[1 - i]], "check-mesh-key", extra=extra)
+        with open(cfg) as f:
+            text = f.read()
+        with open(cfg, "w") as f:
+            f.write(text.replace("mdid=a1b2", "mdid=" + mdid))
+        log = open(os.path.join(tmp, "cc%d.log" % i), "a")
+        p = subprocess.Popen(DONGHOA + ["-c", cfg, "-d"], stderr=log)
+        procs.append(p)
+        return sock, log, p
+
+    def stop(p):
+        p.send_signal(signal.SIGTERM)
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+    for i, extra, mdid in ((0, "", "a1b2"), (1, "rssi_low -70\nload_balancing 0\n", "beef")):
+        sock, log, p = start(i, extra, mdid)
+        csocks.append(sock)
+        clogs.append(log)
+        cprocs.append(p)
+    try:
+        wait_for(lambda: "mdid_differs" in cli(csocks[0], "CHECK"), 10, "CHECK to find the mobility domains")
+        out = cli(csocks[0], "CHECK")
+        assert "peer 02:00:00:00:00:71 bss 02:00:00:00:71:00 (mdid a1b2 / beef)" in out, out
+        assert "policy_differs peer 02:00:00:00:00:71 (here/there): load_balancing 1/0 rssi_low -75/-70" in out, out
+        assert out.strip().endswith("issues=2"), out
+        wait_for(lambda: "steers with other settings" in open(clogs[0].name).read(), 12,
+                 "the check log line on cc0")
+        log0 = open(clogs[0].name).read()
+        assert "check: bss cc0-wl0 and 02:00:00:00:71:00 of peer 02:00:00:00:00:71: different 802.11r " \
+               "mobility domains" in log0, log0[-2000:]
+        assert prom_value(cli(csocks[0], "METRICS"), "donghoa_config_issues") == 2
+        # cc1 configured like cc0 (its BYE removes it, it joins again as a
+        # new peer): nothing left to report
+        stop(cprocs[1])
+        csocks[1], clogs[1], cprocs[1] = start(1, "")
+        wait_for(lambda: cli(csocks[0], "CHECK").strip() == "issues=0", 10, "CHECK to clear")
+        assert prom_value(cli(csocks[0], "METRICS"), "donghoa_config_issues") == 0
+    finally:
+        for p in cprocs:
+            stop(p)
+    print("PASS 25: METRICS counts steers, BTM, steer-ins, LB verdicts and ARCP drops (Prometheus text); "
+          "CHECK flags a different mobility domain and thresholds, and clears when fixed")
+
+
 def scenario_signatures(world, procs, logs, tmp, base):
     """S23: per-AP signatures. A and B sign and list each other; C has the
     group key (as a stolen AP config would) and a key of its own, but is not
@@ -1304,6 +1399,7 @@ def main():
         scenario_idle_signal(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_disconnect(world, procs, logs, socks, tmp, ap1, ap2)
         scenario_lb_feedback(world, procs, logs, socks, tmp, ap1, ap2)
+        scenario_metrics_check(world, procs, logs, socks, tmp, base)
         scenario_signatures(world, procs, logs, tmp, base)
         scenario_enroll(world, procs, logs, tmp, base)
         scenario_many_bss(world, procs, logs, tmp, base)

@@ -80,6 +80,7 @@ enum class Tlv : std::uint8_t {
 	RESPONSE = 0x19U,
 	ENROLL_KEY = 0x1AU,
 	TRUST_REC = 0x1BU,
+	POLICY = 0x1CU, // HELLO: this AP's steering thresholds (consistency check)
 	SIG = 0xFEU,
 	AUTH = 0xFFU,
 };
@@ -318,6 +319,30 @@ struct TrustRecord {
 	std::uint32_t gen{0U};
 };
 
+// HELLO: the steering settings every AP of a mesh should share. A peer
+// whose values differ is reported (consistency check, feature 18).
+constexpr std::size_t POLICY_LEN = 13U;
+constexpr std::uint16_t POL_RSSI_STEERING = 0x0001U;
+constexpr std::uint16_t POL_LOAD_BALANCING = 0x0002U;
+constexpr std::uint16_t POL_BAND_STEERING = 0x0004U;
+constexpr std::uint16_t POL_BAND_STEER_6G = 0x0008U;
+constexpr std::uint16_t POL_LP_NO_STEER = 0x0010U;
+constexpr std::uint16_t POL_ROAM_THR_LEARN = 0x0020U;
+constexpr std::uint16_t POL_LB_ONLY_IDLE = 0x0040U;
+struct PolicySum {
+	std::uint16_t flags{0U}; // POL_*
+	std::int8_t rssiLow{0};
+	std::uint8_t rssiHysteresis{0U};
+	std::int8_t rssiMinTarget{0};
+	std::int8_t bandSteerRssi{0};
+	std::int8_t bandSteer6gRssi{0};
+	std::uint8_t utilHigh{0U};
+	std::uint8_t utilAdmitMax{0U};
+	std::uint8_t lbMargin{0U};
+	std::uint8_t scoreModel{0U};
+	std::uint16_t steerCooldownS{0U};
+};
+
 struct StaMonitorStatus {
 	std::uint32_t txn{0U};
 	Mac sta{};
@@ -357,6 +382,7 @@ public:
 	// CHALLENGE or RESPONSE TLV
 	bool addNonce(Tlv type, const Nonce &n) noexcept;
 	bool add(const TrustRecord &v) noexcept;
+	bool add(const PolicySum &v) noexcept;
 	bool addEnrollKey(const ed25519::PublicKey &pub) noexcept;
 
 	// Sets the length; with a signer appends the SIG TLV (Ed25519 over the
@@ -445,6 +471,7 @@ bool ctEqual(ByteView a, ByteView b) noexcept;
 // CHALLENGE / RESPONSE TLV value
 bool decodeNonce(ByteView v, Nonce &n) noexcept;
 bool decode(ByteView v, TrustRecord &o) noexcept;
+bool decode(ByteView v, PolicySum &o) noexcept;
 bool decodeEnrollKey(ByteView v, ed25519::PublicKey &pub) noexcept;
 std::string_view monitorStatusName(std::uint8_t status) noexcept;
 bool decodeAck(ByteView v, std::uint32_t &msgId) noexcept;

@@ -11,6 +11,8 @@
 #include <linux/nl80211.h>
 
 #include "config.hpp"
+#include "consistency.hpp"
+#include "metrics.hpp"
 #include "hapd_parse.hpp"
 #include "log.hpp"
 #include "nlparse.hpp"
@@ -1827,6 +1829,140 @@ void testNlParse()
 	CHECK(!nl::parseStation(ByteView(msg.data(), 10U)).has_value());
 }
 
+arcp::BssInfo essBss(std::uint8_t last, std::string_view ssid, std::uint16_t caps, std::uint16_t mdid,
+		     bool secured)
+{
+	arcp::BssInfo b;
+	b.bssid = Mac{{2U, 0U, 0U, 0U, 1U, last}};
+	b.ssidLen = static_cast<std::uint8_t>(ssid.size());
+	for (std::size_t i = 0U; i < ssid.size(); i++) {
+		b.ssid[i] = static_cast<std::uint8_t>(ssid[i]);
+	}
+	b.caps = caps;
+	b.mdid = mdid;
+	b.bssidInfo = secured ? rrm::BI_SECURITY : 0U;
+	return b;
+}
+
+void testConsistency()
+{
+	using namespace consistency;
+	const std::uint16_t ft = arcp::CAP_FT | arcp::CAP_BTM;
+	const arcp::BssInfo a = essBss(1U, "Home", ft, 0x1234U, true);
+	CHECK(checkPair(a, essBss(2U, "Home", ft, 0x1234U, true)) == 0U);
+	CHECK(checkPair(a, essBss(2U, "Home", ft, 0x4321U, true)) == MDID_DIFFERS);
+	CHECK(checkPair(a, essBss(2U, "Home", arcp::CAP_BTM, 0U, true)) == FT_ONE_SIDED);
+	CHECK(checkPair(a, essBss(2U, "Home", ft | arcp::CAP_FT_OVER_DS, 0x1234U, true)) == FT_DS_DIFFERS);
+	CHECK(checkPair(a, essBss(2U, "Home", ft, 0x1234U, false)) == SECURITY_DIFFERS);
+	CHECK(checkPair(a, essBss(2U, "Home", arcp::CAP_BTM, 0U, false)) == (FT_ONE_SIDED | SECURITY_DIFFERS));
+	// other ESS, the same BSS, links of one AP MLD: nothing to compare
+	CHECK(checkPair(a, essBss(2U, "Guest", 0U, 0U, false)) == 0U);
+	CHECK(checkPair(a, a) == 0U);
+	arcp::BssInfo l1 = essBss(3U, "Home", ft, 0x1111U, true);
+	arcp::BssInfo l2 = essBss(4U, "Home", ft, 0x2222U, true);
+	l1.mldAddr = Mac{{2U, 9U, 9U, 9U, 9U, 9U}};
+	l2.mldAddr = l1.mldAddr;
+	CHECK(checkPair(l1, l2) == 0U);
+	CHECK(pairIssueName(MDID_DIFFERS) == "mdid_differs");
+	CHECK(!pairIssueHint(SECURITY_DIFFERS).empty());
+	CHECK(pairIssueName(0x100U) == "?");
+
+	PolicyConfig p;
+	const arcp::PolicySum s0 = summarize(p);
+	CHECK(s0.rssiLow == -75 && s0.utilHigh == 70 && s0.steerCooldownS == 30U);
+	CHECK((s0.flags & arcp::POL_RSSI_STEERING) != 0U && (s0.flags & arcp::POL_LOAD_BALANCING) != 0U);
+	CHECK(diffPolicy(s0, s0) == 0U);
+	PolicyConfig q;
+	q.rssiLow = -70;
+	q.utilHigh = 80;
+	q.loadBalancing = false;
+	const arcp::PolicySum s1 = summarize(q);
+	const std::uint32_t d = diffPolicy(s0, s1);
+	CHECK(d == (POL_RSSI_LOW | POL_UTIL_HIGH | POL_FEATURES));
+	DiffText t;
+	describePolicyDiff(t, s0, s1, d);
+	CHECK(t.view() == "load_balancing 1/0 rssi_low -75/-70 util_high 70/80");
+	// out-of-range values saturate instead of wrapping
+	q.rssiLow = -300;
+	q.steerCooldownMs = 100000000;
+	CHECK(summarize(q).rssiLow == -128 && summarize(q).steerCooldownS == 65535U);
+
+	// POLICY TLV round trip, and a longer TLV from a newer peer
+	arcp::Message m;
+	m.begin(arcp::MsgType::HELLO, 0U, Mac{{2U}}, 1U, 1U);
+	CHECK(m.add(s1));
+	CHECK(m.finish(ByteView()));
+	const std::optional<arcp::Header> h = arcp::parseHeader(m.bytes());
+	CHECK(h.has_value());
+	if (!h.has_value()) {
+		return;
+	}
+	arcp::TlvReader rd(m.bytes(), *h);
+	std::uint8_t ty = 0U;
+	ByteView v;
+	arcp::PolicySum o;
+	CHECK(rd.next(ty, v) && ty == arcp::raw(arcp::Tlv::POLICY) && v.size() == arcp::POLICY_LEN);
+	CHECK(arcp::decode(v, o) && diffPolicy(o, s1) == 0U);
+	CHECK(!arcp::decode(v.first(arcp::POLICY_LEN - 1U), o));
+	std::array<std::uint8_t, arcp::POLICY_LEN + 4U> longer{};
+	for (std::size_t i = 0U; i < v.size(); i++) {
+		longer[i] = v[i];
+	}
+	arcp::PolicySum o2;
+	CHECK(arcp::decode(viewOf(longer), o2) && diffPolicy(o2, s1) == 0U);
+	CHECK(arcp::tlvName(arcp::raw(arcp::Tlv::POLICY)) == "POLICY");
+}
+
+void testMetrics()
+{
+	using namespace metrics;
+	CHECK(reasonIndex(arcp::SteerReason::RSSI) == 0U);
+	CHECK(reasonIndex(arcp::SteerReason::MANUAL) == 3U);
+	CHECK(reasonIndex(static_cast<arcp::SteerReason>(0U)) == REASONS);
+	CHECK(reasonIndex(static_cast<arcp::SteerReason>(9U)) == REASONS);
+
+	BssCounters c;
+	SteerCounters &r = c.steer[reasonIndex(arcp::SteerReason::RSSI)];
+	r.started = 3U;
+	addOutcome(r, arcp::SteerOutcome::SUCCESS, true, 12, 800U);
+	addOutcome(r, arcp::SteerOutcome::SUCCESS, false, 0, 1200U);
+	addOutcome(r, arcp::SteerOutcome::BTM_REJECT, true, 20, 300U);
+	CHECK(r.result[0] == 2U && r.result[1] == 1U);
+	CHECK(r.gainCount == 1U && r.gainSumDb == 12 && r.durSumMs == 2000U);
+	r.result[RESULT_NO_CANDIDATE]++;
+	c.in.status[0] = 2U;
+	c.lb.futile = 1U;
+
+	Text t;
+	formatBss(t, "wlan0", c);
+	const std::string_view v = t.view();
+	CHECK(v.find("donghoa_steer_started_total{bss=\"wlan0\",reason=\"rssi\"} 3\n") != std::string_view::npos);
+	CHECK(v.find("donghoa_steer_total{bss=\"wlan0\",reason=\"rssi\",result=\"success\"} 2\n") !=
+	      std::string_view::npos);
+	CHECK(v.find("result=\"no_candidate\"} 1\n") != std::string_view::npos);
+	CHECK(v.find("donghoa_steer_gain_db_sum{bss=\"wlan0\",reason=\"rssi\"} 12\n") != std::string_view::npos);
+	CHECK(v.find("donghoa_steer_in_total{bss=\"wlan0\",status=\"accept\"} 2\n") != std::string_view::npos);
+	CHECK(v.find("donghoa_lb_futile_total{bss=\"wlan0\"} 1\n") != std::string_view::npos);
+	// zero values are left out
+	CHECK(v.find("reason=\"load\"") == std::string_view::npos);
+	CHECK(v.find("btm_timeout") == std::string_view::npos);
+
+	ArcpCounters a;
+	a.rx = 5U;
+	a.rxAuthFail = 2U;
+	Text u;
+	formatArcp(u, a);
+	CHECK(u.view() == "donghoa_arcp_rx_total 5\ndonghoa_arcp_drop_total{reason=\"auth\"} 2\n");
+	// negative gain sums print signed
+	SteerCounters n;
+	addOutcome(n, arcp::SteerOutcome::SUCCESS, true, -4, 10U);
+	BssCounters nc;
+	nc.steer[0] = n;
+	Text w;
+	formatBss(w, "x", nc);
+	CHECK(w.view().find("steer_gain_db_sum{bss=\"x\",reason=\"rssi\"} -4\n") != std::string_view::npos);
+}
+
 int main()
 {
 	testSha256();
@@ -1850,6 +1986,8 @@ int main()
 	testNlParse();
 	testReplayWindow();
 	testChallengeTlvs();
+	testConsistency();
+	testMetrics();
 	(void)std::printf("%d/%d checks passed\n", sChecks - sFails, sChecks);
 	return (sFails != 0) ? 1 : 0;
 }

@@ -297,6 +297,25 @@ bool Message::add(const StaMonitorStatus &v) noexcept
 	return putTlv(Tlv::STA_MONITOR_STATUS, viewOf(b));
 }
 
+bool Message::add(const PolicySum &v) noexcept
+{
+	std::array<std::uint8_t, POLICY_LEN> b{};
+	const ByteSpan s = spanOf(b);
+
+	putBe16(s, 0U, v.flags);
+	b[2U] = static_cast<std::uint8_t>(v.rssiLow);
+	b[3U] = v.rssiHysteresis;
+	b[4U] = static_cast<std::uint8_t>(v.rssiMinTarget);
+	b[5U] = static_cast<std::uint8_t>(v.bandSteerRssi);
+	b[6U] = static_cast<std::uint8_t>(v.bandSteer6gRssi);
+	b[7U] = v.utilHigh;
+	b[8U] = v.utilAdmitMax;
+	b[9U] = v.lbMargin;
+	b[10U] = v.scoreModel;
+	putBe16(s, 11U, v.steerCooldownS);
+	return putTlv(Tlv::POLICY, viewOf(b));
+}
+
 bool Message::add(const TrustRecord &v) noexcept
 {
 	std::array<std::uint8_t, TRUST_REC_LEN> b{};
@@ -734,6 +753,25 @@ bool decode(ByteView v, StaClass &o) noexcept
 	return ok;
 }
 
+bool decode(ByteView v, PolicySum &o) noexcept
+{
+	const bool ok = v.size() >= POLICY_LEN;
+	if (ok) {
+		o.flags = getBe16(v, 0U);
+		o.rssiLow = static_cast<std::int8_t>(v[2U]);
+		o.rssiHysteresis = v[3U];
+		o.rssiMinTarget = static_cast<std::int8_t>(v[4U]);
+		o.bandSteerRssi = static_cast<std::int8_t>(v[5U]);
+		o.bandSteer6gRssi = static_cast<std::int8_t>(v[6U]);
+		o.utilHigh = v[7U];
+		o.utilAdmitMax = v[8U];
+		o.lbMargin = v[9U];
+		o.scoreModel = v[10U];
+		o.steerCooldownS = getBe16(v, 11U);
+	}
+	return ok;
+}
+
 bool decode(ByteView v, TrustRecord &o) noexcept
 {
 	const bool ok = (v.size() >= TRUST_REC_LEN) && (v[38U] <= 1U);
@@ -827,6 +865,7 @@ std::string_view tlvName(std::uint8_t type) noexcept
 	case raw(Tlv::SIG): n = "SIG"; break;
 	case raw(Tlv::ENROLL_KEY): n = "ENROLL_KEY"; break;
 	case raw(Tlv::TRUST_REC): n = "TRUST_REC"; break;
+	case raw(Tlv::POLICY): n = "POLICY"; break;
 	case raw(Tlv::AUTH): n = "AUTH"; break;
 	default: break;
 	}

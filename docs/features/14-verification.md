@@ -1,17 +1,18 @@
 # 14. Verification
 
 > **Source:** `tests/test_unit.cpp`, `tests/itest.py`,
-> `tests/mock_hostapd.py`, `openwrt/qemu/systest.sh` · **Requirements:**
+> `tests/mock_hostapd.py`, `openwrt/qemu/systest.sh`, `fuzz/` · **Requirements:**
 > NFR-MNT, verification matrix in [SRS.md](../SRS.md) §6
 
 ## Test levels
 
 ```mermaid
 flowchart TB
-    U["Unit tests (make test)<br/>pure modules only, 661 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–24"]
+    U["Unit tests (make test)<br/>pure modules only, 707 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–25"]
     I --> Q["System test (openwrt/qemu/systest.sh)<br/>2 OpenWrt VMs: real hostapd, mac80211_hwsim,<br/>wpa_supplicant STA, raw-socket ARCP<br/>~7 min, S1–S16"]
     Q --> H["Real hardware<br/>(AP2: pending)"]
     S["Static and dynamic checks:<br/>strict warnings, cppcheck, ASan/UBSan,<br/>check-deps (libc only)"] -.-> U
+    F["Fuzzing (make fuzz)<br/>libFuzzer + ASan/UBSan on every parser<br/>of outside input"] -.-> U
     S -.-> I
 ```
 
@@ -24,7 +25,7 @@ flowchart TB
 ## Unit tests (`tests/test_unit.cpp`)
 
 One binary linking only the pure modules (`text`, `proto`, `rrm`, `policy`,
-`config`, `sha256`, `sha512`, `ed25519`, `trust`, `hapd_parse`, `nlparse`, plus `log`/`os` helpers).
+`config`, `sha256`, `sha512`, `ed25519`, `trust`, `consistency`, `metrics`, `hapd_parse`, `nlparse`, plus `log`/`os` helpers).
 
 | Group | Covers |
 |---|---|
@@ -44,6 +45,8 @@ One binary linking only the pure modules (`text`, `proto`, `rrm`, `policy`,
 | `testSha512`, `testEd25519` | SHA-512 vectors; RFC 8032 tests 1-3; rejection of another key, changed R / S / message, S + L, an invalid point |
 | `testSignedMessage` | SIG TLV from `finish`, `verifySig` with and without AUTH, wrong key, changed byte, unsigned message |
 | `testTrust` | trust table merge order (stale copy, revocation, re-approval, ties), approve / revoke, file round trip, fingerprint, TRUST_REC / ENROLL_KEY TLVs |
+| `testConsistency` | each BSS-pair finding, pairs not compared (other SSID, MLD links), policy diff and text, clamping, POLICY TLV |
+| `testMetrics` | outcome recording, sums, Prometheus text form |
 
 ## Integration test (`tests/itest.py`)
 
@@ -78,6 +81,7 @@ all APs by time (`DONGHOA_KEEP_LOGS=1` keeps them).
 | 22 | Liveness challenge: AP2 restart verified; replayed BYE (earlier / unseen boot) and replayed HELLO after removal refused | 1, 2 |
 | 23 | Ed25519 signatures: unlisted box with the group key refused; BYE forged with the group key (wrong or no signature) refused, signed by the AP accepted; bad signing configs refused | 1 |
 | 24 | Key enrollment: keys created, approval by fingerprint and welcome, approval spread through the mesh, unapproved box and forgeries kept out, revocation spread, persistence across restart | 17 |
+| 25 | `METRICS` counts the earlier scenarios (Prometheus text); `CHECK` finds a different mobility domain and thresholds between two APs, clears when fixed | 12, 18 |
 
 `DONGHOA_ITEST_EXTRA="score_model 1"` reruns everything under the
 throughput model (7–9 are skipped there by design: the mock BSSes are all
@@ -107,6 +111,30 @@ daemons before starting either (no class records survive), and restores
 Run with `openwrt/qemu/systest.sh` (all) or `systest.sh S4 S9` (S3 always
 runs; S5 also runs S4).
 
+## Fuzzing (`fuzz/`, `make fuzz`)
+
+libFuzzer targets, built with clang and ASan/UBSan, for every parser that
+reads bytes from outside the daemon. The pure layer makes each target a
+direct call:
+
+| Target | Inputs |
+|---|---|
+| `fuzz_arcp` | a received ARCP frame: header, HMAC check, Ed25519 signature check, every TLV through its decoder, replay window; non-frames as a raw (key, signature, message) for Ed25519 point decoding |
+| `fuzz_radio` | radiotap frames from a monitor interface, nl80211 station-dump messages, Supported Operating Classes and Extended Capabilities bytes |
+| `fuzz_text` | hostapd `STATUS`, `STA` replies and events, hex 802.11 elements (beacon report, beacon request, neighbor report), AKM strings, the configuration file, the trust table file |
+
+`make fuzz` builds them into `build/fuzz/`, writes a seed corpus
+(`fuzz/make_seeds.py`: one valid example of each input) and runs each target
+for `FUZZ_TIME` seconds (default 60), keeping the corpus in
+`build/fuzz/corpus/` between runs. A crash stops the run with the sanitizer
+report; `make fuzz-repro T=arcp F=build/fuzz/crash-arcp-…` replays the saved
+input. Needs clang with libFuzzer (`FUZZ_CXX`, default `clang++-19`).
+
+First results: 10 minutes per target (about 290 million radio inputs,
+800,000 text inputs, 500,000 ARCP frames; the ARCP target is slower because
+inputs that carry a SIG reach Ed25519) found no crash, leak or undefined
+behaviour.
+
 ## Static and dynamic checks
 
 | Check | Command |
@@ -115,6 +143,7 @@ runs; S5 also runs S4).
 | libc only | `make check-deps` |
 | Static analysis | `make cppcheck` (in a container if missing) |
 | Sanitizers | `make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli && make itest`, then grep the kept logs for `runtime error` |
+| Fuzzing | `make fuzz` (`FUZZ_TIME=600` for a longer run) |
 | Mutation checks | each new rule was disabled once to confirm its test fails |
 
 ## Not yet verified

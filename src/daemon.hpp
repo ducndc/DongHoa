@@ -13,9 +13,11 @@
 #include <string_view>
 
 #include "config.hpp"
+#include "consistency.hpp"
 #include "hapd.hpp"
 #include "hapd_parse.hpp"
 #include "l2.hpp"
+#include "metrics.hpp"
 #include "os.hpp"
 #include "policy.hpp"
 #include "proto.hpp"
@@ -208,6 +210,12 @@ struct Peer {
 	std::array<RemoteBss, MAX_BSS> bss{};
 	std::array<arcp::RfInfo, MAX_RADIO> rf{};
 	std::size_t nRf{0U};
+	// Consistency check (check.cpp): the peer's steering settings from its
+	// HELLO, and the findings last logged (to log changes only).
+	arcp::PolicySum policy{};
+	bool hasPolicy{false};
+	std::uint32_t pairIssues{0U}; // consistency::* pair bits, any BSS pair
+	std::uint32_t policyDiff{0U}; // consistency::POL_* bits
 };
 
 struct RemoteSta {
@@ -560,6 +568,11 @@ private:
 	void cmdRl(FixedString<8192U> &o, std::string_view args) noexcept;
 	void cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept;
 	void cmdBandit(FixedString<8192U> &o, std::string_view args) noexcept;
+	void cmdMetrics(FixedString<8192U> &o) const noexcept;
+	// check.cpp: configuration consistency across the mesh
+	void checkConsistency() noexcept;
+	void cmdCheck(FixedString<8192U> &o) const noexcept;
+	std::size_t countIssues() const noexcept;
 	// main.cpp helpers
 	bool setupTransport() noexcept;
 	void runTimers() noexcept;
@@ -637,6 +650,13 @@ private:
 	Millis mNextRfStatus{0U};
 	Millis mNextStaPoll{0U};
 	Millis mNextLb{0U};
+	Millis mNextCheck{0U};
+
+	// Outcome counters (METRICS), indexed like mBss.
+	std::array<metrics::BssCounters, MAX_BSS> mMetrics{};
+	metrics::ArcpCounters mArcpMetrics{};
+	Millis mStartMs{0U};
+	std::uint32_t mOwnIssues{0U}; // pair issues among this AP's own BSSes, last logged
 };
 
 } // namespace donghoa
