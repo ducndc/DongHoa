@@ -103,6 +103,7 @@ void Daemon::multicast(arcp::Message &m) noexcept
 					      : ((mL2.size() == 1U) ? mL2.port(0U).name.view()
 								    : std::string_view("-"));
 		trace("tx", m.bytes(), nullptr, port, 1);
+		mArcpMetrics.tx++;
 		for (std::size_t i = 0U; i < mL2.size(); i++) {
 			(void)mL2.send(i, arcp::GROUP_ADDR, m.bytes());
 		}
@@ -122,6 +123,7 @@ bool Daemon::unicast(const Mac &peerId, arcp::Message &m) noexcept
 	if (ok) {
 		trace("tx", m.bytes(), &peerId, mL2.port(*p->port).name.view(), 1);
 		(void)mL2.send(*p->port, p->l2addr, m.bytes());
+		mArcpMetrics.tx++;
 		if ((m.flags() & arcp::FLAG_ACK_REQ) != 0U) {
 			bool queued = false;
 			for (PendingTx &t : mPending) {
@@ -136,6 +138,7 @@ bool Daemon::unicast(const Mac &peerId, arcp::Message &m) noexcept
 				}
 			}
 			if (!queued) {
+				mArcpMetrics.queueFull++;
 				logging::warn(LOG_MODULE, "tx: pending queue full, no retransmission");
 			}
 		}
@@ -152,11 +155,13 @@ void Daemon::retransmit(Millis now) noexcept
 				logging::warn(LOG_MODULE, "tx: {} msg {} to {} not acknowledged",
 					      arcp::msgName(t.msg.type()), t.msgId, t.peer);
 				t.used = false;
+				mArcpMetrics.ackTimeout++;
 			} else {
 				t.tries++;
 				trace("tx", t.msg.bytes(), &t.peer, mL2.port(*p->port).name.view(), t.tries);
 				(void)mL2.send(*p->port, p->l2addr, t.msg.bytes());
 				t.nextTry = now + RETX_INTERVAL_MS;
+				mArcpMetrics.retransmit++;
 			}
 		}
 	}
@@ -176,6 +181,7 @@ void Daemon::sendDirect(std::size_t port, const Mac &dst, arcp::Message &m) noex
 	if ((port < mL2.size()) && finish(m)) {
 		trace("tx", m.bytes(), nullptr, mL2.port(port).name.view(), 1);
 		(void)mL2.send(port, dst, m.bytes());
+		mArcpMetrics.tx++;
 	}
 }
 
@@ -295,6 +301,7 @@ void Daemon::sendAck(const Mac &peer, std::uint32_t id) noexcept
 // that overflows is not sent at all: raising MAX_BSS must keep them inside
 // MAX_PAYLOAD (header, worst-case TLVs, SIG, AUTH).
 static_assert((arcp::HDR_LEN + (arcp::TLV_HDR_LEN + arcp::AP_INFO_MAX_LEN) +
+	       (arcp::TLV_HDR_LEN + arcp::POLICY_LEN) +
 	       (MAX_BSS * (arcp::TLV_HDR_LEN + arcp::BSS_INFO_MAX_LEN)) + arcp::TLV_HDR_LEN +
 	       arcp::SIG_LEN + arcp::TLV_HDR_LEN + arcp::AUTH_LEN) <=
 		      arcp::MAX_PAYLOAD,
@@ -322,6 +329,7 @@ void Daemon::sendHello() noexcept
 	}
 	beginMsg(m, arcp::MsgType::HELLO, 0U);
 	(void)m.add(ai);
+	(void)m.add(consistency::summarize(mCfg.pol));
 	for (std::size_t i = 0U; i < mNBss; i++) {
 		if (mBss[i].up) {
 			(void)m.add(mBss[i].info);
@@ -440,6 +448,9 @@ void Daemon::handleTlvs(Peer &p, ByteView frame, const arcp::Header &h) noexcept
 			}
 			break;
 		}
+		case arcp::Tlv::POLICY:
+			p.hasPolicy = arcp::decode(v, p.policy);
+			break;
 		case arcp::Tlv::BSS_INFO: {
 			arcp::BssInfo bi;
 			if (arcp::decode(v, bi)) {
@@ -574,19 +585,26 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		}
 		const ByteView frame = viewOf(buf).first(n);
 		const std::optional<arcp::Header> h = arcp::parseHeader(frame);
-		if (!h.has_value() || (h->origin == mApId)) {
+		if (!h.has_value()) {
+			mArcpMetrics.rxBadHeader++;
 			continue;
 		}
+		if (h->origin == mApId) {
+			continue; // our own multicast, looped back
+		}
 		if (!arcp::verify(frame, *h, mCfg.keyView())) {
+			mArcpMetrics.rxAuthFail++;
 			logging::dbg(LOG_MODULE, "rx: {} from {} failed authentication",
 				     arcp::msgName(h->type), h->origin);
 			continue;
 		}
 		if (mCfg.enroll && (trustedKeyFor(h->origin) == nullptr)) {
+			mArcpMetrics.rxUntrusted++;
 			onUntrusted(frame, *h); // enrollment request, or the welcome
 			continue;
 		}
 		if (((mCfg.nTrusted > 0U) || mCfg.enroll) && !isSignatureOk(frame, *h)) {
+			mArcpMetrics.rxSigFail++;
 			continue;
 		}
 		if (mCfg.enroll && (h->type == arcp::raw(arcp::MsgType::ENROLL_REQ))) {
@@ -630,6 +648,7 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 			verified = (h->type == arcp::raw(arcp::MsgType::RESPONSE)) &&
 				   isResponseValid(frame, *h);
 			if (!verified) {
+				mArcpMetrics.rxUnverified++;
 				if (h->type != arcp::raw(arcp::MsgType::BYE)) {
 					sendChallenge(port, src, h->origin);
 				}
@@ -660,6 +679,7 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 			p->seqWin = w.seqWin;
 		} else if (!acceptPeerSeq(*p, h->bootId, h->msgId)) {
 			// Duplicate (other path or retransmission): ACK again.
+			mArcpMetrics.rxDuplicate++;
 			if ((h->flags & arcp::FLAG_ACK_REQ) != 0U) {
 				sendAck(p->id, h->msgId);
 			}
@@ -673,6 +693,7 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		p->l2addr = src;
 		p->lastSeen = os::nowMs();
 		trace("rx", frame, &h->origin, mL2.port(port).name.view(), 1);
+		mArcpMetrics.rx++;
 		if ((h->flags & arcp::FLAG_ACK_REQ) != 0U) {
 			sendAck(p->id, h->msgId);
 		}

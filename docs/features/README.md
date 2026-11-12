@@ -31,12 +31,13 @@ These documents explain. The reference documents they link to define:
 | 9 | [AP-side measurement](09-ap-side-measurement.md) | STAs without 802.11k are measured by the other APs (monitor or driver API) |
 | 10 | [Low-power device classification](10-low-power-classification.md) | IoT devices are recognised from their traffic and kept out of automatic steering |
 | 11 | [Wi-Fi 7 MLO awareness](11-mlo.md) | AP MLDs and MLD STAs are handled as one device, never steered between their own links |
-| 12 | [Control interface and logging](12-control-logging.md) | `donghoa_cli` commands and per-module logging |
+| 12 | [Control interface and logging](12-control-logging.md) | `donghoa_cli` commands, per-module logging and outcome counters (`METRICS`, Prometheus text) |
 | 13 | [Configuration and OpenWrt integration](13-configuration-openwrt.md) | Config file, UCI-generated `bss` lines, procd service, package |
-| 14 | [Verification](14-verification.md) | Unit tests, integration test, QEMU system test, what each one proves |
+| 14 | [Verification](14-verification.md) | Unit tests, integration test, QEMU system test, fuzzing, what each one proves |
 | 15 | [Q-learning: when to roam](15-rl-roaming.md) | A small integer Q-table learns from outcomes when to wait and when to steer; off by default; shadow (learn only) or active via `rl_roam` or `RL mode` |
 | 16 | [Contextual bandit: which target](16-target-bandit.md) | Learns from outcomes which kind of eligible candidate works and orders candidates by it; off by default (`bandit_target`, `BANDIT mode`) |
 | 17 | [Automatic key enrollment](17-key-enrollment.md) | APs create their own signing keys; a new AP is admitted by approving its fingerprint on any trusted AP, and the trust table spreads to all APs (`enroll`, `ENROLL`) |
+| 18 | [Configuration consistency check](18-consistency-check.md) | Every AP compares its 802.11r, security and steering settings with its peers' and reports what differs (`CHECK`, log module `check`) |
 
 ## System overview
 

@@ -44,6 +44,14 @@ information, and they coordinate:
   asynchronous nl80211 station dumps, channel utilisation from the nl80211
   survey; steering ignores stale signal from idle STAs and ends a
   measurement as soon as the STA's reports stop.
+- **Outcome counters:** `donghoa_cli METRICS` reports what steering, load
+  balancing and ARCP did (success rate, BTM acceptance, level gain, drops
+  by reason) in the Prometheus text format, for node_exporter or any
+  monitoring agent.
+- **Consistency check:** every AP compares its 802.11r mobility domain, FT
+  and security settings and its steering thresholds with the other APs and
+  warns about what differs, the usual reason fast roaming silently fails
+  (`donghoa_cli CHECK`, `docs/features/18-consistency-check.md`).
 
 ARCP runs over any interface that carries Ethernet frames, such as wired LAN,
 bridges, 4-address/WDS or 802.11s Wi-Fi backhaul. Messages are authenticated
@@ -57,6 +65,7 @@ make            # donghoa + donghoa_cli (C++17, no exceptions/RTTI/heap; needs o
 make test       # unit tests
 make check-deps # verify the binaries need no libstdc++.so
 make itest      # end-to-end: 3 daemons + mock hostapd over the UDP sim transport (no root)
+make fuzz       # libFuzzer + ASan/UBSan on every parser of outside input (needs clang)
 ```
 
 To cross-compile, set `CXX`, for example
@@ -72,6 +81,8 @@ donghoa -g                                 # optional: per-AP signing key (sign_
 donghoa_cli /var/run/donghoa.sock ENROLL approve <ap_id>   # after checking its fingerprint
 donghoa -c /etc/donghoa.conf               # needs CAP_NET_RAW; -d all debug, -s syslog
 donghoa_cli /var/run/donghoa.sock PEERS    # STATUS | PEERS | STAS | STEERS | DEVCLASS | PING
+donghoa_cli /var/run/donghoa.sock METRICS  # counters, Prometheus text
+donghoa_cli /var/run/donghoa.sock CHECK    # settings that differ from the other APs
 donghoa_cli /var/run/donghoa.sock LOG debug steer msg   # debug two modules, no restart
 donghoa_cli /var/run/donghoa.sock STEER aa:bb:cc:dd:ee:ff [target-bssid]
 ```
@@ -114,7 +125,7 @@ rrm: wl0 RX BSS-TM-RESP aa:bb:cc:dd:ee:01 dialog_token=1 status_code=0 bss_termi
 rrm: wl0   11v BTM response <- aa:bb:cc:dd:ee:01: status 0 (accept) target 02:00:00:00:02:00
 ```
 
-Modules: main l2 msg peer hapd local steer policy amon survey ctrl config rrm class.
+Modules: main l2 msg peer hapd local steer policy amon survey ctrl config rrm class enroll check.
 
 hostapd needs `bss_transition=1`, `rrm_neighbor_report=1`,
 `rrm_beacon_report=1` and an FT configuration whose `mobility_domain` matches
@@ -126,7 +137,7 @@ the `mdid=` of each `bss` line. See `docs/ARCHITECTURE.md`.
   peer discovery, neighbor reports, local monitoring, steering engine, RSSI
   roaming, band steering, load balancing, AP-side measurement, low-power
   classification, MLO, control and logging, configuration and OpenWrt,
-  verification), each with data flow, algorithm, diagrams and explanation.
+  verification, learning, key enrollment, consistency check), each with data flow, algorithm, diagrams and explanation.
   Start at `docs/features/README.md`.
 - `docs/PROTOCOL.md`: ARCP wire format, messages, reliability, security,
   steering sequence.

@@ -84,6 +84,8 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `enroll.cpp` | coord. | Automatic key enrollment: seed file, ENROLL_REQ, pending list, welcome, TRUST sync, `ENROLL` | `initEnroll`, `tickEnroll`, `onUntrusted`, `onTrust`, `sendWelcome`, `cmdEnroll` | FR-SEC-8..11 |
 | `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
 | `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
+| `consistency.{hpp,cpp}` | pure | Configuration consistency: BSS-pair findings (mobility domain, FT, security), steering settings summary (POLICY TLV) and their differences | `checkPair`, `summarize`, `diffPolicy`, `describePolicyDiff` | FR-OBS-2 |
+| `metrics.{hpp,cpp}` | pure | Outcome counters, update rule, Prometheus text form | `addOutcome`, `formatBss`, `formatArcp` | FR-OBS-1 |
 | `nlparse.{hpp,cpp}` | pure | nl80211 attribute lookup and station-dump entry parsing | `nl::findAttr`, `nl::parseStation` | NFR-PRF-4 |
 | `config.{hpp,cpp}` | pure | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
 | `log.{hpp,cpp}` | pure | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
@@ -99,6 +101,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
 | `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
 | `steer.cpp` | coord. | Source-side state machine, target-side admission and reservations | `startSteer`, `tickSteer`, `on*` handlers, `runLbRound` | FR-TRG, FR-STR, FR-ADM |
+| `check.cpp` | coord. | Consistency check every 10 s against the peers, log on change, `CHECK` | `checkConsistency`, `cmdCheck`, `countIssues` | FR-OBS-2 |
 | `devclass.cpp` | coord. | Low-power device classification per local STA, device class table, STA_CLASS exchange | `sampleTraffic`, `restoreDevClass`, `saveDevClass`, `onStaClass`, `onPeerStaAssoc`, `syncDevClass` | FR-LPC |
 | `tools/donghoa_cli.cpp` | tool | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
 
@@ -184,7 +187,7 @@ as `std::array` members. Measured sizes on x86-64:
 | `resv[]` — reservations | 32 | 1,280 | |
 | `watch[]` — air monitor watches | 16 | 2,048 | Up to 4 frequencies each |
 | `bss[]`, config, L2 ports, etc. | 16 BSS / 8 ports | remainder | |
-| **Total** `sizeof(Daemon)` | | **460,832** | Re-measured in v2.11 (`nm -S`, x86-64; includes the 64-entry `peer_key` table); the per-table figures above date from v1.4 |
+| **Total** `sizeof(Daemon)` | | **470,760** | Re-measured in v2.14 (`nm -S`, x86-64; includes the 64-entry `peer_key` table and the outcome counters, ~5.5 KB per 16 BSSes); the per-table figures above date from v1.4 |
 
 Lookups are linear scans. With these sizes a scan costs microseconds, and it
 avoids hash tables and allocation. Each table entry has a `used` flag. Free
@@ -597,6 +600,15 @@ one datagram (≤ 255 bytes). The reply is built in an 8 KiB `FixedString` and
 sent back to the sender's address. Output that does not fit is truncated. The
 commands only read state, except `STEER`.
 
+`METRICS` formats the counters of `Daemon::mMetrics` (one
+`metrics::BssCounters` per local BSS) and `mArcpMetrics`; they are plain
+integers incremented where the event happens (`startSteer`, `endTxn`,
+`failTxnNoCandidate`, `sendBtm`, `onBtmResp`, `onSteerReq`,
+`onSteerResult`, `runLbRound`, `receiveMsg`, `unicast`, `retransmit`), so
+counting costs nothing measurable. Zero values are left out to keep the
+reply in one datagram. `CHECK` recomputes the consistency findings from the
+current peer table (feature 18).
+
 ### 6.8 Configuration (`config.cpp`) [IR-1, FR-SEC-3]
 
 `parseConfigLine` strips comments, splits key and value, and handles string keys
@@ -971,3 +983,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.11 | 2026-11-08 | Per-AP Ed25519 signatures: modules `sha512`, `ed25519`; §6.9 threat row; D23; payload limit 1450 bytes; data size re-measured (460,832 bytes) |
 | 2.12 | 2026-11-08 | Automatic key enrollment: modules `trust`, `enroll`; threat row; D24 |
 | 2.13 | 2026-11-08 | Security off by default: `liveness_check` key (default 0); shipped configurations without `key` |
+| 2.14 | 2026-11-12 | Observability: modules `metrics`, `consistency`, `check.cpp`; §6.7 `METRICS`, `CHECK`; POLICY TLV in HELLO; fuzz targets (`fuzz/`); data size re-measured (470,760 bytes) |

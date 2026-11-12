@@ -30,12 +30,14 @@ make check-deps      # binaries must need libc only (no libstdc++.so)
 make cppcheck        # static analysis (run in a container if cppcheck is missing)
 make style           # convention rules the compiler misses: 110 columns, tabs, braces,
                      # else/switch/for structure, naming, macros, heap, DEV-05 state
+make fuzz            # libFuzzer + ASan/UBSan on every parser of outside input (fuzz/, clang),
+                     # FUZZ_TIME=60 s per target; make fuzz-repro T=arcp F=<crash file>
 make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli && make itest
 ```
 
 The unit tests form one binary with no filter. To focus on one area,
 comment out calls in `main()` of `tests/test_unit.cpp`. Run `make itest`
-after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 24`.
+after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 25`.
 
 ## Architecture essentials
 
@@ -43,14 +45,14 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 24`.
   exceptions, no RTTI** (`-fno-exceptions -fno-rtti`). All state is
   `std::array`s in class `Daemon` (`daemon.hpp`), one static object in
   `main.cpp`. The coordination modules (`msg`, `peer`, `local`, `steer`,
-  `devclass`, `amon`, `enroll`, `ctrl`) are member functions of `Daemon`, split across
+  `devclass`, `amon`, `enroll`, `check`, `ctrl`) are member functions of `Daemon`, split across
   files.
 - **`os.cpp` is the only file that touches POSIX:** system calls,
   `reinterpret_cast` to `sockaddr`, `<cstring>`, signals. Other files use
   `os::` functions with `os::Fd` (RAII), `ByteView`/`ByteSpan` and
   `std::string_view`. A new system call goes into `os.cpp`.
 - **Pure, unit-testable layer:** `text`, `proto`, `rrm`, `policy`, `config`,
-  `sha256`, `sha512`, `ed25519` (per-AP signatures), `trust` (enrollment trust table), `hapd_parse` and `nlparse` (nl80211 message parsing). Keep I/O out of these modules. Put new decision
+  `sha256`, `sha512`, `ed25519` (per-AP signatures), `trust` (enrollment trust table), `consistency` (config comparison with peers), `metrics` (outcome counters), `hapd_parse` and `nlparse` (nl80211 message parsing). Keep I/O out of these modules. A new parser of outside input also goes into a `fuzz/` target. Put new decision
   logic in `policy.cpp` and new 802.11 byte layouts in `rrm.cpp`.
 - **I/O layer:** `l2.cpp` (raw sockets), `hapd.cpp` (hostapd control socket),
   `survey.cpp` (nl80211 via raw genetlink, deliberately no libnl dependency:
@@ -79,6 +81,11 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 24`.
   signature. `donghoa -g` makes a key pair. With `enroll 1` keys manage
   themselves (`enroll.cpp`, docs/features/17): approve a new AP's
   fingerprint with `donghoa_cli <sock> ENROLL approve <ap_id>`.
+- **Observability:** `METRICS` (Prometheus text) prints counters that the
+  code bumps where the event happens (`mMetrics[bss]`, `mArcpMetrics`); a new
+  outcome or drop path should get a counter. `CHECK` / log module `check`
+  (`check.cpp`, every 10 s) compare 802.11r / security of BSS pairs of one SSID
+  and the steering settings each peer sends in the POLICY TLV of HELLO.
 - **Path learning:** the port that delivers the first copy of each new
   message becomes the unicast path to that peer (`receiveMsg`). This is how
   unicast fails over between wired and Wi-Fi backhaul.

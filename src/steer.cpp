@@ -58,6 +58,14 @@ std::uint8_t raw(arcp::SteerOutcome o) noexcept
 	return static_cast<std::uint8_t>(o);
 }
 
+// METRICS counters of a source BSS and trigger; nullptr if out of range.
+metrics::SteerCounters *steerCounters(std::array<metrics::BssCounters, MAX_BSS> &m, std::size_t bss,
+				      arcp::SteerReason r) noexcept
+{
+	const std::size_t ri = metrics::reasonIndex(r);
+	return ((bss < m.size()) && (ri < metrics::REASONS)) ? &m[bss].steer[ri] : nullptr;
+}
+
 const Measurement *measLookup(const Sta &s, const Mac &bssid, MeasSrc src) noexcept
 {
 	const Millis now = os::nowMs();
@@ -227,6 +235,13 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	logging::info(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta,
 		      reasonName(t.reason), outcomeName(raw(outcome)), now - t.started);
 	sendResult(t, outcome, btmStatus);
+	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
+	if (mc != nullptr) {
+		const bool gainKnown =
+			(t.cur < t.nCand) && (t.cand[t.cur].rcpi <= 220U) && (t.startRssi != 0);
+		const int gainDb = gainKnown ? (rrm::rcpiToDbm(t.cand[t.cur].rcpi) - t.startRssi) : 0;
+		metrics::addOutcome(*mc, outcome, gainKnown, gainDb, now - t.started);
+	}
 	// Contextual bandit: the outcome of the candidate tried last.
 	if ((outcome != arcp::SteerOutcome::ABORTED) && (t.cur < t.nCand) && (t.state >= SteerState::BTM)) {
 		int g = 0;
@@ -298,6 +313,10 @@ void Daemon::failTxnNoCandidate(SteerTxn &t) noexcept
 
 	logging::info(LOG_MODULE, "steer #{} {} ({}): no suitable candidate", t.id, t.sta,
 		      reasonName(t.reason));
+	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
+	if (mc != nullptr) {
+		mc->result[metrics::RESULT_NO_CANDIDATE]++;
+	}
 	if (t.rlArmed) {
 		rlLearn(t.sta, t.rlState, policy::RlAction::STEER, policy::RL_R_NO_CANDIDATE, true, 0U);
 	}
@@ -350,6 +369,10 @@ void Daemon::sendBtm(SteerTxn &t) noexcept
 	}
 	logging::info(LOG_MODULE, "steer #{} {}: BTM request -> {} ch {} (score {})", t.id, t.sta, c.bssid,
 		      c.info.channel, c.score);
+	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
+	if (mc != nullptr) {
+		mc->btmSent++;
+	}
 	t.state = SteerState::BTM;
 	t.deadline = os::nowMs() + static_cast<Millis>(p.btmTimeoutMs);
 }
@@ -823,9 +846,16 @@ bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noe
 		t->forcedTarget = *target;
 	}
 	buildPool(*t);
+	metrics::SteerCounters *const mc = steerCounters(mMetrics, s.bss, reason);
 	if (t->nCand == 0U) {
 		s.nextSteerMs = os::nowMs() + static_cast<Millis>(mCfg.pol.steerCooldownMs);
+		if (mc != nullptr) {
+			mc->noPool++;
+		}
 		return false;
+	}
+	if (mc != nullptr) {
+		mc->started++;
 	}
 	t->used = true;
 	t->state = SteerState::MEASURE;
@@ -976,6 +1006,7 @@ void Daemon::runLbRound() noexcept
 			}
 			lb.lbCheck = false;
 			if (gone) {
+				mMetrics[b].lb.noVerdict++;
 				logging::info(LOG_MODULE,
 					      "bss {}: {} disconnected instead of moving: no verdict on the "
 					      "offload", lb.cfg->ifname, lb.lbSta);
@@ -983,8 +1014,10 @@ void Daemon::runLbRound() noexcept
 			if (moved && lb.lbByUtil) {
 				if (policy::isLbMoveEffective(p, lb.lbUtilBefore, utilPct)) {
 					lb.lbFutile = 0;
+					mMetrics[b].lb.effective++;
 				} else {
 					lb.lbFutile++;
+					mMetrics[b].lb.futile++;
 					logging::info(LOG_MODULE,
 						      "bss {}: offloading {} did not lower utilisation ({}% "
 						      "-> {}%), {} in a row",
@@ -992,6 +1025,7 @@ void Daemon::runLbRound() noexcept
 						      lb.lbFutile);
 					if (lb.lbFutile >= p.lbMaxFutile) {
 						lb.lbFutile = 0;
+						mMetrics[b].lb.pauses++;
 						lb.lbHoldUntil = now + static_cast<Millis>(p.lbHoldMs);
 						logging::warn(LOG_MODULE,
 							      "bss {}: load balancing paused for {} s: "
@@ -1023,6 +1057,7 @@ void Daemon::runLbRound() noexcept
 			logging::info(LOG_MODULE, "bss {} overloaded (util {}%, {} STA): offloading {}",
 				      lb.cfg->ifname, utilPct, lb.load.staCount, pick->addr);
 			if (startSteer(*pick, arcp::SteerReason::LOAD, nullptr)) {
+				mMetrics[b].lb.offloads++;
 				const bool byCount = (lb.cfg->maxSta != 0) &&
 						     (lb.load.staCount >= lb.cfg->maxSta);
 				lb.lbCheck = true;
@@ -1097,6 +1132,14 @@ void Daemon::onBtmResp(const hapd::BtmResp &r) noexcept
 
 	if ((t == nullptr) || (t->state != SteerState::BTM)) {
 		return;
+	}
+	metrics::SteerCounters *const mc = steerCounters(mMetrics, t->bss, t->reason);
+	if (mc != nullptr) {
+		if (r.status != 0) {
+			mc->btmReject++;
+		} else {
+			mc->btmAccept++;
+		}
 	}
 	if (r.status != 0) {
 		// 802.11v status: 1 reject, 2 insufficient beacons, 3 capacity,
@@ -1256,6 +1299,12 @@ void Daemon::onSteerReq(const Peer &from, const arcp::SteerReq &r) noexcept
 		}
 	}
 	resp.status = static_cast<std::uint8_t>(status);
+	const std::size_t si = static_cast<std::size_t>(status);
+	if (b.has_value() && (si < mMetrics[*b].in.status.size())) {
+		mMetrics[*b].in.status[si]++;
+	} else {
+		mArcpMetrics.steerInUnknownBss++;
+	}
 	logging::info(LOG_MODULE, "steer-in request #{} from {}: sta {} -> {} ({}, rcpi {}): {}", r.txn,
 		      from.id, r.sta, r.tgtBssid, reasonNameRaw(r.reason), r.rcpi,
 		      (status == arcp::SteerStatus::ACCEPT) ? "accept" : "reject");
@@ -1269,6 +1318,13 @@ void Daemon::onSteerResult(const Peer &from, const arcp::SteerResult &r) noexcep
 	for (Reservation &rv : mResv) {
 		if (rv.used && (rv.txn == r.txn) && (rv.srcAp == from.id)) {
 			rv.used = false;
+			if (rv.bss < mMetrics.size()) {
+				if (r.outcome == raw(arcp::SteerOutcome::SUCCESS)) {
+					mMetrics[rv.bss].in.success++;
+				} else {
+					mMetrics[rv.bss].in.failed++;
+				}
+			}
 		}
 	}
 	logging::info(LOG_MODULE, "steer #{} from {} sta {}: {}", r.txn, from.id, r.sta,

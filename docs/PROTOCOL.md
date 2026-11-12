@@ -81,6 +81,7 @@ later versions can add fields there.
 | 0x19 | RESPONSE | nonce 16 bytes (copied from the CHALLENGE) |
 | 0x1A | ENROLL_KEY | public key 32 bytes (Ed25519) of the AP asking to be enrolled (§10) |
 | 0x1B | TRUST_REC | ap_id 6, public key 32, state u8 (1 trusted, 0 revoked), generation u32 (§10) |
+| 0x1C | POLICY | the sender's steering settings, for the consistency check (§11): flags u16 (bit0 rssi_steering, bit1 load_balancing, bit2 band_steering, bit3 band_steer_6g, bit4 lp_no_steer, bit5 roam_thr_learn, bit6 lb_only_idle), rssi_low i8, rssi_hysteresis u8, rssi_min_target i8, band_steer_rssi i8, band_steer_6g_rssi i8, util_high u8, util_admit_max u8, lb_margin u8, score_model u8, steer_cooldown_s u16. Values outside a field's range are clamped |
 | 0xFE | SIG | 64 bytes: Ed25519 signature (RFC 8032) of the header and the TLVs before it (§5) |
 | 0xFF | AUTH | 16 bytes: HMAC-SHA256 truncated |
 
@@ -101,7 +102,7 @@ Report (dBm = RCPI/2 − 110). 255 means it is not available.
 
 | Type | Name | Delivery | TLVs | Period / trigger |
 |---|---|---|---|---|
-| 0x01 | HELLO | multicast | AP_INFO, BSS_INFO* | `hello_interval_ms`; also sent right away after a new peer is seen |
+| 0x01 | HELLO | multicast | AP_INFO, POLICY, BSS_INFO* | `hello_interval_ms`; also sent right away after a new peer is seen |
 | 0x02 | BSS_STATUS | multicast | (BSS_INFO, BSS_LOAD)* | `bss_status_interval_ms` |
 | 0x03 | STA_STATUS | multicast | STA_ENTRY* (split over several messages if needed) | `sta_status_interval_ms` |
 | 0x04 | RF_STATUS | multicast | RF_INFO* (one per operating channel) | `rf_status_interval_ms` |
@@ -392,3 +393,21 @@ merge). An AP whose table changed multicasts the whole table 0.3 s later;
 every AP also sends it every 60 s and to a new or restarted peer. A peer
 whose record turns to revoked is removed at once.
 
+## 11. Configuration consistency
+
+Each HELLO carries a POLICY TLV with the sender's steering settings. A
+receiver compares them with its own, and compares its BSSes with the
+advertised BSS_INFO of every BSS of the same SSID (its own and the peers'):
+
+| Finding | Condition |
+|---|---|
+| `mdid_differs` | both BSSes advertise FT, with different mdid |
+| `ft_one_sided` | only one of them advertises FT |
+| `ft_over_ds_differs` | same mobility domain, FT over DS on one only |
+| `security_differs` | the Security bit of bssid_info differs |
+| `policy_differs` | any POLICY field differs |
+
+Links of one AP MLD are not compared with each other. Findings are only
+reported (log module `check`, the `CHECK` command); they change no
+behaviour. A peer that sends no POLICY (an older version) is listed as
+`policy_unknown` and is not counted as an issue.
