@@ -56,7 +56,8 @@ LogLevel level(LogModule m) noexcept;
 void setLevel(LogModule m, LogLevel l) noexcept;
 void setAll(LogLevel l) noexcept;
 // RFC 5424 keyword ("err", "warning", "notice", ...), its common alias
-// ("error", "warn"), or its number 0..7; 0..2 / emerg, alert, crit give ERR.
+// ("error", "warn"), or its number 0..7 as one digit; 0..2 / emerg, alert,
+// crit give ERR.
 std::optional<LogLevel> parseLevel(std::string_view s) noexcept;
 std::optional<LogModule> parseModule(std::string_view s) noexcept;
 std::string_view levelName(LogLevel l) noexcept;

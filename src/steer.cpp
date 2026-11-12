@@ -311,8 +311,8 @@ void Daemon::failTxnNoCandidate(SteerTxn &t) noexcept
 	Sta *const s = findSta(t.sta);
 	const Millis now = os::nowMs();
 
-	logging::info(LOG_MODULE, "steer #{} {} ({}): no suitable candidate", t.id, t.sta,
-		      reasonName(t.reason));
+	logging::notice(LOG_MODULE, "steer #{} {} ({}): no suitable candidate", t.id, t.sta,
+			reasonName(t.reason));
 	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
 	if (mc != nullptr) {
 		mc->result[metrics::RESULT_NO_CANDIDATE]++;

@@ -94,7 +94,7 @@ void cmdLog(Out &o, std::string_view args) noexcept
 	if (t.next(a)) {
 		const std::optional<LogLevel> lvl = logging::parseLevel(a);
 		if (!lvl.has_value()) {
-			formatTo(o, "FAIL usage: LOG [err|warn|info|debug [<module>...]]\n");
+			formatTo(o, "FAIL usage: LOG [err|warning|notice|info|debug|0..7 [<module>...]]\n");
 			return;
 		}
 		std::string_view m;

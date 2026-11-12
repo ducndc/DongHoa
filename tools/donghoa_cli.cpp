@@ -18,7 +18,7 @@ void usage(std::string_view prog) noexcept
 			   "usage: {} <ctrl_socket> "
 			   "STATUS|PEERS|STAS|STEERS|DEVCLASS|CALIB|RL|BANDIT|DROPRX|PING|"
 			   "STEER <sta> [<bssid>]|MONITOR <sta> [<ms>]|\n"
-			   "LOG [err|warn|info|debug [<module>...]]\n", prog);
+			   "LOG [err|warning|notice|info|debug|0..7 [<module>...]]\n", prog);
 	donghoa::os::writeStderr(u.view());
 }
 

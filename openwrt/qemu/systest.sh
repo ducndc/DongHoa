@@ -157,9 +157,9 @@ s6() {
 	out=$(rv 1 'cool; m=S6-$$; mark $m
 donghoa_cli $C STEER '"$STA $B2_5G"' >/dev/null
 waitlog $m "finished|no suitable" 20
-since $m | grep -E "asking AP|BTM rejected|finished" | sed "s/.*\[INF\] //"')
+since $m | grep -E "asking AP|BTM rejected|finished" | sed "s/.*\[[A-Z][A-Z][A-Z]\] //"')
 	sleep 2
-	out2=$(rv 2 'since S6-ap2 | grep -E "steer-in request|btm-reject" | sed "s/.*\[INF\] //"
+	out2=$(rv 2 'since S6-ap2 | grep -E "steer-in request|btm-reject" | sed "s/.*\[[A-Z][A-Z][A-Z]\] //"
 echo "resv=$(donghoa_cli $C STEERS | grep -c reservation)"')
 	echo "$out" | grep -q "asking AP" && echo "$out" | grep -q "BTM rejected, status 7" &&
 		echo "$out2" | grep -q "accept" && echo "$out2" | grep -q "btm-reject" &&
@@ -185,7 +185,7 @@ down ap-5g; up ap-5g; waitlink
 if [ "$(link)" != '"$B1_2G"' ]; then cool; donghoa_cli $C STEER '"$STA $B1_2G"' >/dev/null; sleep 3; fi
 m=S8-$$; mark $m
 waitlog $m "\(band\) finished" 45
-since $m | grep -E "BTM request|\(band\)" | tail -2 | sed "s/.*\[INF\] //"; echo "link=$(link)"
+since $m | grep -E "BTM request|\(band\)" | tail -2 | sed "s/.*\[[A-Z][A-Z][A-Z]\] //"; echo "link=$(link)"
 uci set wireless.radio1.htmode=HT20; uci commit wireless; wifi 2>/dev/null
 sed -i "/^score_model/d" /etc/donghoa.conf; restart; up ap-5g; waitlink')
 	echo "$out" | grep -q "(band) finished: success" && echo "$out" | grep -q "link=$B1_5G"

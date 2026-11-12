@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.9, 2026-11-08 (history in Appendix B) |
+| Document version | 2.15, 2026-11-12 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -506,5 +506,5 @@ real hardware runs (survey utilisation source, station dumps, client
 | 2.11 | 2026-11-08 | New FR-SEC-6, FR-SEC-7 (per-AP Ed25519 signatures, `sign_seed`, `peer_key`, `donghoa -g`); IR-8 payload 1450 bytes |
 | 2.12 | 2026-11-08 | New FR-SEC-8..11 (automatic key enrollment: keys created, requests, approval by fingerprint, trust table sync and persistence, welcome); IR-3: `ENROLL` |
 | 2.13 | 2026-11-08 | Security off by default: `liveness_check` (FR-DSC-6, NFR-SEC-2), shipped configurations without `key` (NFR-SEC-1) |
-| 2.15 | 2026-11-12 | IR-5: RFC 5424 severities, new level notice, names and numbers accepted |
 | 2.14 | 2026-11-12 | New §4.14: FR-OBS-1 (outcome counters, `METRICS`, Prometheus text), FR-OBS-2 (configuration consistency check, POLICY TLV in HELLO, `CHECK`); NFR-MNT-4 (fuzzing); IR-3; verification level T-F |
+| 2.15 | 2026-11-12 | IR-5: RFC 5424 severities, new level notice, names and numbers accepted |

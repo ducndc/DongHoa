@@ -1250,6 +1250,11 @@ void testLog()
 {
 	Config c;
 
+	// Every module, the last one included, starts at info. Checked before
+	// anything here sets a level.
+	for (std::size_t i = 0U; i < logging::MODULES; i++) {
+		CHECK(logging::level(logging::moduleAt(i)) == LogLevel::INFO);
+	}
 	CHECK(logging::parseLevel("debug") == std::optional<LogLevel>(LogLevel::DEBUG));
 	CHECK(logging::parseLevel("err") == std::optional<LogLevel>(LogLevel::ERR));
 	CHECK(!logging::parseLevel("verbose").has_value());
@@ -1267,6 +1272,10 @@ void testLog()
 	CHECK(logging::parseLevel("7") == std::optional<LogLevel>(LogLevel::DEBUG));
 	CHECK(!logging::parseLevel("8").has_value() && !logging::parseLevel("-1").has_value());
 	CHECK(!logging::parseLevel("").has_value());
+	// A number is one digit: no sign, no leading zeros
+	CHECK(!logging::parseLevel("-0").has_value() && !logging::parseLevel("00").has_value());
+	CHECK(!logging::parseLevel("007").has_value() && !logging::parseLevel("+5").has_value());
+	CHECK(!logging::parseLevel("5 ").has_value() && !logging::parseLevel("-").has_value());
 	CHECK(static_cast<int>(LogLevel::ERR) == 3 && static_cast<int>(LogLevel::NOTICE) == 5 &&
 	      static_cast<int>(LogLevel::DEBUG) == 7);
 	CHECK(logging::levelName(LogLevel::NOTICE) == "notice");
@@ -1279,8 +1288,8 @@ void testLog()
 	CHECK(logging::parseModule("steer") == std::optional<LogModule>(LogModule::STEER));
 	CHECK(logging::parseModule("config") == std::optional<LogModule>(LogModule::CONFIG));
 	CHECK(logging::parseModule("rrm") == std::optional<LogModule>(LogModule::RRM));
-	// Every module, the last one included, starts at info
-	CHECK(logging::level(LogModule::RRM) == LogLevel::INFO && logging::level(LogModule::MAIN) == LogLevel::INFO);
+	CHECK(logging::levelName(static_cast<LogLevel>(1U)) == "?" &&
+	      logging::levelName(static_cast<LogLevel>(8U)) == "?");
 	CHECK(!logging::parseModule("nosuch").has_value());
 	CHECK(logging::moduleName(LogModule::AMON) == "amon" && logging::levelName(LogLevel::WARN) == "warning");
 
