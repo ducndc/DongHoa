@@ -50,7 +50,7 @@ answered in the same loop iteration, so the reply is a consistent snapshot.
 | `METRICS` | outcome counters and gauges, Prometheus text format (below) |
 | `CHECK` | configuration findings against the peers: 802.11r / security of BSS pairs, steering settings (feature 18) |
 | `LOG` | each module's level |
-| `LOG <level> [<module>…]` | set the level (`err`, `warn`, `info`, `debug`) of all or some modules |
+| `LOG <level> [<module>…]` | set the level (`err`, `warning`, `notice`, `info`, `debug`, or the RFC 5424 number 3–7) of all or some modules |
 
 Unknown commands get `UNKNOWN COMMAND`; bad arguments get `FAIL <usage>`.
 
@@ -63,12 +63,29 @@ Unknown commands get `UNKNOWN COMMAND`; bad arguments get `FAIL <usage>`.
 382192.699 [INF] steer: steer #2 aa:…:17: BTM request -> 02:…:47:00 ch 36 (score -51)
 ```
 
-Tags `ERR`, `WRN`, `INF`, `DBG`. Modules: `main`, `l2`, `msg`, `peer`,
+Tags `ERR`, `WRN`, `NTC`, `INF`, `DBG`. Modules: `main`, `l2`, `msg`, `peer`,
 `hapd`, `local`, `steer`, `policy`, `amon`, `survey`, `ctrl`, `config`,
 `rrm`, `class`, `enroll`, `check`. The monotonic time matches `time.monotonic()`, so test
 markers and logs of several APs can be merged by time.
 
 ### Levels
+
+The levels are the RFC 5424 (syslog) severities, with their numbers. With
+`-s` each line goes to syslog with exactly that priority, so `logread`,
+remote syslog servers and log filters see standard severities.
+
+| Level (number) | Tag | Used for | Examples |
+|---|---|---|---|
+| `err` (3) | `ERR` | the daemon cannot do something it should | socket or config failure, key file not writable |
+| `warning` (4) | `WRN` | something is wrong but handled | message not acknowledged, hostapd rejected a BTM request, a setting differs from a peer's |
+| `notice` (5) | `NTC` | normal but significant events | start / stop, peer discovered / lost / restarted, BSS up, hostapd connected, steer finished (with outcome), device class change, enrollment requests and decisions, findings cleared |
+| `info` (6) | `INF` | routine operation | each step of a steer, STA association, measurements, offload decisions, records learned from peers |
+| `debug` (7) | `DBG` | traces | ARCP frames, hostapd commands, per-poll values |
+
+The default is `info`. `log_level notice` keeps only the significant
+events, which suits the small `logread` buffer of a router. Names and
+numbers are both accepted: `warn` and `error` are aliases, `emerg`,
+`alert`, `crit` and 0–2 set `err` (the daemon has nothing more severe).
 
 ```mermaid
 flowchart LR
@@ -137,7 +154,7 @@ with the wrong key.
 | Key | Default | Meaning |
 |---|---|---|
 | `ctrl_socket` | none (OpenWrt: `/var/run/donghoa.sock`) | Control socket path |
-| `log_level` | info | Level of every module |
+| `log_level` | info | Level of every module: `err`, `warning`, `notice`, `info`, `debug` or 3–7 |
 | `log_debug <m1>,<m2> …` | — | Modules at debug |
 | command line `-d` / `-s` / `-c <file>` | — | all debug / syslog / config file |
 

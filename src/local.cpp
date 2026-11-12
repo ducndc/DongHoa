@@ -413,9 +413,9 @@ void Daemon::refreshBss(std::size_t i) noexcept
 	b.load.flags = (adm == arcp::SteerStatus::ACCEPT) ? arcp::LOAD_ACCEPTING : 0U;
 	b.up = true;
 	if (!wasUp) {
-		logging::info(LOG_MODULE, "bss {} up: {} ch {} band {} ssid '{}'{}", b.cfg->ifname,
-			      b.info.bssid, b.info.channel, b.info.band, SsidText{b.info.ssidView()},
-			      (b.info.mdid != 0U) ? " FT" : "");
+		logging::notice(LOG_MODULE, "bss {} up: {} ch {} band {} ssid '{}'{}", b.cfg->ifname,
+			        b.info.bssid, b.info.channel, b.info.band, SsidText{b.info.ssidView()},
+			        (b.info.mdid != 0U) ? " FT" : "");
 	}
 	if (!wasUp || (old != b.info)) {
 		// Sibling neighbor entries depend on this BSS: reinstall all.

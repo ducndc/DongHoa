@@ -51,7 +51,7 @@ Peer *Daemon::getPeer(const Mac &id) noexcept
 			p = Peer{};
 			p.used = true;
 			p.id = id;
-			logging::info(LOG_MODULE, "peer {} discovered", id);
+			logging::notice(LOG_MODULE, "peer {} discovered", id);
 			r = &p;
 		}
 	}
@@ -116,7 +116,7 @@ RemoteBss *Daemon::lookupRemoteBss(const Mac &bssid, Peer **owner) noexcept
 
 void Daemon::removePeer(Peer &p) noexcept
 {
-	logging::info(LOG_MODULE, "peer {} ({}) lost", p.id, p.name);
+	logging::notice(LOG_MODULE, "peer {} ({}) lost", p.id, p.name);
 	onPeerLost(p);
 	for (const RemoteBss &b : p.bss) {
 		if (b.used) {

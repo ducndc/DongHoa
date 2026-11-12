@@ -93,7 +93,7 @@ bool Conn::open(const Path &dir, const IfName &ifname) noexcept
 	bool ok = mCmd.valid() && mEv.valid() && os::sendText(mEv, "ATTACH", false) &&
 		  recvReply(mEv, r, CMD_TIMEOUT_MS) && startsWith(r.view(), "OK");
 	if (ok) {
-		logging::info(LOG_MODULE, "connected to {}", mPath);
+		logging::notice(LOG_MODULE, "connected to {}", mPath);
 	} else {
 		close();
 	}

@@ -6,8 +6,10 @@ name ap-livingroom
 #ap_id 02:00:00:00:00:01
 
 # ---- logging ----
-# Level for every module: err, warn, info (default), debug. Modules logged at
-# debug: main l2 msg peer hapd local steer policy amon survey ctrl config rrm class
+# Level for every module (RFC 5424 syslog severities, name or number):
+# err (3), warning (4), notice (5: significant events only), info (6, default),
+# debug (7). Modules for log_debug:
+# main l2 msg peer hapd local steer policy amon survey ctrl config rrm class enroll check
 # (msg at debug traces every ARCP frame). -d sets all to debug; levels can
 # also be changed at run time: donghoa_cli <socket> LOG debug steer
 #log_level info

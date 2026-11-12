@@ -177,8 +177,11 @@ void closeSyslog() noexcept
 
 void writeSyslog(std::uint8_t prio, std::string_view line) noexcept
 {
-	static constexpr int PRIO[4] = {LOG_ERR, LOG_WARNING, LOG_INFO, LOG_DEBUG};
-	const int p = (prio < 4U) ? PRIO[prio] : LOG_INFO;
+	// prio is the RFC 5424 severity code, the same numbers as LOG_EMERG..
+	// LOG_DEBUG; spelled out rather than assumed.
+	static constexpr int PRIO[8] = {LOG_EMERG,   LOG_ALERT,  LOG_CRIT, LOG_ERR,
+					LOG_WARNING, LOG_NOTICE, LOG_INFO, LOG_DEBUG};
+	const int p = (prio < 8U) ? PRIO[prio] : LOG_INFO;
 	syslog(p, "%.*s", static_cast<int>(line.size()), line.data());
 }
 

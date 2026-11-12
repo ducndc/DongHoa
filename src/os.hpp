@@ -34,7 +34,7 @@ void writeStderr(std::string_view line) noexcept;
 void writeStdout(std::string_view text) noexcept;
 void openSyslog() noexcept;
 void closeSyslog() noexcept;
-// prio: 0 err, 1 warning, 2 info, 3 debug
+// prio: RFC 5424 severity 0..7 (3 err, 4 warning, 5 notice, 6 info, 7 debug)
 void writeSyslog(std::uint8_t prio, std::string_view line) noexcept;
 
 // ---- signals ----

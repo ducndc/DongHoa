@@ -232,8 +232,8 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	Sta *const s = findSta(t.sta);
 	const Millis now = os::nowMs();
 
-	logging::info(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta,
-		      reasonName(t.reason), outcomeName(raw(outcome)), now - t.started);
+	logging::notice(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta,
+		        reasonName(t.reason), outcomeName(raw(outcome)), now - t.started);
 	sendResult(t, outcome, btmStatus);
 	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
 	if (mc != nullptr) {

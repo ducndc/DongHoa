@@ -42,7 +42,7 @@ void Daemon::checkConsistency() noexcept
 		}
 	}
 	if ((ownIssues == 0U) && (mOwnIssues != 0U)) {
-		logging::info(LOG_MODULE, "own BSSes consistent again");
+		logging::notice(LOG_MODULE, "own BSSes consistent again");
 	}
 	mOwnIssues = ownIssues;
 
@@ -72,7 +72,7 @@ void Daemon::checkConsistency() noexcept
 			}
 		}
 		if ((issues == 0U) && (p.pairIssues != 0U)) {
-			logging::info(LOG_MODULE, "peer {}: BSS settings consistent again", p.id);
+			logging::notice(LOG_MODULE, "peer {}: BSS settings consistent again", p.id);
 		}
 		p.pairIssues = issues;
 
@@ -83,7 +83,7 @@ void Daemon::checkConsistency() noexcept
 			logging::warn(LOG_MODULE, "peer {} steers with other settings (here/there): {}", p.id,
 				      d);
 		} else if ((diff == 0U) && (p.policyDiff != 0U)) {
-			logging::info(LOG_MODULE, "peer {}: steering settings match again", p.id);
+			logging::notice(LOG_MODULE, "peer {}: steering settings match again", p.id);
 		} else {
 			// unchanged
 		}
