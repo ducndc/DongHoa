@@ -54,7 +54,7 @@ bool loadOrCreateSeed(const Path &file, ed25519::Seed &seed) noexcept
 		(void)out.pushBack('\n');
 		ok = os::writeTextFile(file.cStr(), out.view());
 		if (ok) {
-			logging::info(LOG_MODULE, "new signing key created in {}", file);
+			logging::notice(LOG_MODULE, "new signing key created in {}", file);
 		} else {
 			logging::err(LOG_MODULE, "cannot write {}: {}", file, os::lastError());
 		}
@@ -120,9 +120,9 @@ bool Daemon::initEnroll() noexcept
 		}
 		mTrust.enrolled = mTrust.enrolled || (trust::countTrustedOthers(mTrust, mApId) > 0U);
 		saveTrust();
-		logging::info(LOG_MODULE, "key fingerprint {} ({}), {}", trust::fingerprint(mCfg.signKey.pub),
-			      mApId,
-			      mTrust.enrolled ? "enrolled" : "not enrolled: asking to be approved");
+		logging::notice(LOG_MODULE, "key fingerprint {} ({}), {}",
+				trust::fingerprint(mCfg.signKey.pub), mApId,
+				mTrust.enrolled ? "enrolled" : "not enrolled: asking to be approved");
 	}
 	return ok;
 }
@@ -248,11 +248,11 @@ void Daemon::onUntrusted(ByteView frame, const arcp::Header &h) noexcept
 			e->keyChange = (rec != nullptr) && (rec->pub != pub);
 			e->last = now;
 			if (isNew) {
-				logging::info(LOG_MODULE,
-					      "enrollment request from {}, fingerprint {}{}: approve with "
-							  "'ENROLL approve {}'", h.origin,
-							  trust::fingerprint(pub),
-					      e->keyChange ? " (KEY CHANGE)" : "", h.origin);
+				logging::notice(LOG_MODULE,
+						"enrollment request from {}, fingerprint {}{}: approve with "
+						"'ENROLL approve {}'",
+						h.origin, trust::fingerprint(pub),
+						e->keyChange ? " (KEY CHANGE)" : "", h.origin);
 			}
 		}
 		return;
@@ -289,8 +289,8 @@ void Daemon::onUntrusted(ByteView frame, const arcp::Header &h) noexcept
 	}
 	mTrust.enrolled = true;
 	saveTrust();
-	logging::info(LOG_MODULE, "enrolled: welcomed by {} (fingerprint {}); check it is a trusted AP",
-		      h.origin, trust::fingerprint(*senderPub));
+	logging::notice(LOG_MODULE, "enrolled: welcomed by {} (fingerprint {}); check it is a trusted AP",
+		        h.origin, trust::fingerprint(*senderPub));
 	mNextHello = 0U;
 	mNextTrustSync = os::nowMs() + TRUST_SYNC_SOON_MS;
 }
@@ -325,9 +325,9 @@ void Daemon::onTrustRecord(const arcp::TrustRecord &r, bool &changed) noexcept
 			logging::warn(LOG_MODULE, "the mesh {} this AP's key", r.revoked ? "revoked" :
 				      "replaced");
 		} else {
-			logging::info(LOG_MODULE, "{} {} (fingerprint {}, generation {})", r.revoked ?
-				      "revoked" : "trusted",
-				      r.apId, trust::fingerprint(r.pub), r.gen);
+			logging::notice(LOG_MODULE, "{} {} (fingerprint {}, generation {})",
+					r.revoked ? "revoked" : "trusted", r.apId, trust::fingerprint(r.pub),
+					r.gen);
 		}
 	}
 }
@@ -382,7 +382,7 @@ void Daemon::cmdEnroll(FixedString<8192U> &o, std::string_view args) noexcept
 			return;
 		}
 		mTrust.enrolled = true;
-		logging::info(LOG_MODULE, "approved {} (fingerprint {})", *id, trust::fingerprint(pub));
+		logging::notice(LOG_MODULE, "approved {} (fingerprint {})", *id, trust::fingerprint(pub));
 		afterTrustChange();
 		sendWelcome(*id);
 		formatTo(o, "OK approved {} fingerprint {}\n", *id, trust::fingerprint(pub));
@@ -392,7 +392,7 @@ void Daemon::cmdEnroll(FixedString<8192U> &o, std::string_view args) noexcept
 		} else if (!trust::revoke(mTrust, *id)) {
 			formatTo(o, "FAIL {} is not in the trust table\n", *id);
 		} else {
-			logging::info(LOG_MODULE, "revoked {}", *id);
+			logging::notice(LOG_MODULE, "revoked {}", *id);
 			afterTrustChange();
 			formatTo(o, "OK revoked {}\n", *id);
 		}

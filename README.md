@@ -109,6 +109,11 @@ timeout, not on a fixed schedule — that is normal cleanup lag, not a sign
 the roam failed; check the *target* AP's `STATUS`/`STAS` for the STA to
 confirm it actually arrived.
 
+**Log levels** are the RFC 5424 syslog severities: `err`, `warning`,
+`notice`, `info` (default) and `debug`, by name or number (3–7), and syslog
+(`-s`) gets the same priority. `log_level notice` keeps only significant
+events: peers joining and leaving, steering outcomes, enrollment decisions.
+
 **Debugging.** Log lines name their module, for example `steer:` or `msg:`.
 `LOG` shows each module's level; `LOG debug <module>...` raises it at run time
 and `LOG info` resets all. With `msg` at debug, every ARCP frame is traced:

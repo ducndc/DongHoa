@@ -115,7 +115,10 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 25`.
   `std::from_chars`).
 - Logging is per module: a `.cpp` file that logs defines
   `constexpr LogModule LOG_MODULE{LogModule::<NAME>};` in its unnamed namespace and
-  calls `logging::info(LOG_MODULE, "...", args)` (add a new module to
+  calls `logging::info(LOG_MODULE, "...", args)`. Levels are the RFC 5424
+  severities: `err` (cannot do its job), `warn` (wrong but handled),
+  `notice` (significant: peer/BSS up or down, steer outcome, enrollment
+  decisions), `info` (routine steps), `dbg` (traces). (Add a new module to
   `enum class LogModule` and `MODULE_NAMES` in `log.cpp`). Do not repeat the
   module name in messages; the tag adds it. `donghoa_cli <sock> LOG debug <module>`
   changes levels at run time.

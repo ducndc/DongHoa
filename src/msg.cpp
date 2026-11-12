@@ -670,7 +670,7 @@ void Daemon::receiveMsg(std::size_t port) noexcept
 		const bool restarted = verified && (p->bootId != 0U);
 		if (verified) {
 			if (restarted) {
-				logging::info(LOG_MODULE, "peer {} restarted", p->id);
+				logging::notice(LOG_MODULE, "peer {} restarted", p->id);
 			}
 			arcp::ReplayWindow w;
 			arcp::resetSeq(w, h->bootId, h->msgId);

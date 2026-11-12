@@ -53,7 +53,7 @@ bool Daemon::setupTransport() noexcept
 				     "(public key {})", mApId, pub);
 			ok = false;
 		} else {
-			logging::info(LOG_MODULE, "signing as {}: peer_key {} hex:{}", mApId, mApId, pub);
+			logging::notice(LOG_MODULE, "signing as {}: peer_key {} hex:{}", mApId, mApId, pub);
 		}
 	}
 	return ok;
@@ -96,8 +96,8 @@ bool Daemon::init(const char *cfgPath, bool debugAll) noexcept
 		if (mCfg.signing) {
 			auth = mCfg.keyView().empty() ? " (Ed25519 signed)" : " (Ed25519 signed + HMAC)";
 		}
-		logging::info(LOG_MODULE, "DongHoa '{}' ap_id {} boot {}{}", mCfg.name, mApId,
-			      hex(mBootId, 8U), auth);
+		logging::notice(LOG_MODULE, "DongHoa '{}' ap_id {} boot {}{}", mCfg.name, mApId,
+			        hex(mBootId, 8U), auth);
 	}
 	return ok;
 }
@@ -224,7 +224,7 @@ void Daemon::shutdown() noexcept
 		mBss[i].hapd.close();
 	}
 	closeCtrl();
-	logging::info(LOG_MODULE, "DongHoa stopped");
+	logging::notice(LOG_MODULE, "DongHoa stopped");
 }
 
 } // namespace donghoa

@@ -1253,13 +1253,36 @@ void testLog()
 	CHECK(logging::parseLevel("debug") == std::optional<LogLevel>(LogLevel::DEBUG));
 	CHECK(logging::parseLevel("err") == std::optional<LogLevel>(LogLevel::ERR));
 	CHECK(!logging::parseLevel("verbose").has_value());
+	// RFC 5424 keywords, common aliases and numeric codes
+	CHECK(logging::parseLevel("warning") == std::optional<LogLevel>(LogLevel::WARN));
+	CHECK(logging::parseLevel("warn") == std::optional<LogLevel>(LogLevel::WARN));
+	CHECK(logging::parseLevel("notice") == std::optional<LogLevel>(LogLevel::NOTICE));
+	CHECK(logging::parseLevel("error") == std::optional<LogLevel>(LogLevel::ERR));
+	CHECK(logging::parseLevel("crit") == std::optional<LogLevel>(LogLevel::ERR));
+	CHECK(logging::parseLevel("emerg") == std::optional<LogLevel>(LogLevel::ERR));
+	CHECK(logging::parseLevel("0") == std::optional<LogLevel>(LogLevel::ERR));
+	CHECK(logging::parseLevel("2") == std::optional<LogLevel>(LogLevel::ERR));
+	CHECK(logging::parseLevel("3") == std::optional<LogLevel>(LogLevel::ERR));
+	CHECK(logging::parseLevel("5") == std::optional<LogLevel>(LogLevel::NOTICE));
+	CHECK(logging::parseLevel("7") == std::optional<LogLevel>(LogLevel::DEBUG));
+	CHECK(!logging::parseLevel("8").has_value() && !logging::parseLevel("-1").has_value());
+	CHECK(!logging::parseLevel("").has_value());
+	CHECK(static_cast<int>(LogLevel::ERR) == 3 && static_cast<int>(LogLevel::NOTICE) == 5 &&
+	      static_cast<int>(LogLevel::DEBUG) == 7);
+	CHECK(logging::levelName(LogLevel::NOTICE) == "notice");
+	logging::setAll(LogLevel::NOTICE);
+	CHECK(logging::enabled(LogModule::PEER, LogLevel::NOTICE) && logging::enabled(LogModule::PEER, LogLevel::WARN) &&
+	      !logging::enabled(LogModule::PEER, LogLevel::INFO));
+	logging::setAll(static_cast<LogLevel>(1U)); // invalid: ignored
+	CHECK(logging::level(LogModule::PEER) == LogLevel::NOTICE);
+	logging::setAll(LogLevel::INFO);
 	CHECK(logging::parseModule("steer") == std::optional<LogModule>(LogModule::STEER));
 	CHECK(logging::parseModule("config") == std::optional<LogModule>(LogModule::CONFIG));
 	CHECK(logging::parseModule("rrm") == std::optional<LogModule>(LogModule::RRM));
 	// Every module, the last one included, starts at info
 	CHECK(logging::level(LogModule::RRM) == LogLevel::INFO && logging::level(LogModule::MAIN) == LogLevel::INFO);
 	CHECK(!logging::parseModule("nosuch").has_value());
-	CHECK(logging::moduleName(LogModule::AMON) == "amon" && logging::levelName(LogLevel::WARN) == "warn");
+	CHECK(logging::moduleName(LogModule::AMON) == "amon" && logging::levelName(LogLevel::WARN) == "warning");
 
 	logging::setAll(LogLevel::INFO);
 	logging::setLevel(LogModule::STEER, LogLevel::DEBUG);
@@ -1274,6 +1297,8 @@ void testLog()
 
 	CHECK(c.logLevel == LogLevel::INFO && c.logDebugMask == 0U);
 	CHECK(parseConfigLine(c, "log_level warn") && c.logLevel == LogLevel::WARN);
+	CHECK(parseConfigLine(c, "log_level notice") && c.logLevel == LogLevel::NOTICE);
+	CHECK(parseConfigLine(c, "log_level 6") && c.logLevel == LogLevel::INFO);
 	CHECK(parseConfigLine(c, "log_debug steer,amon msg") &&
 	      c.logDebugMask == ((1U << static_cast<std::uint32_t>(LogModule::STEER)) |
 				   (1U << static_cast<std::uint32_t>(LogModule::AMON)) |

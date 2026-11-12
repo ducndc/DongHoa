@@ -235,9 +235,9 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 			// same stale record coming back); bump it so the correction
 			// is not silently dropped by a peer holding the old count.
 			s.lpSamples++;
-			logging::info(LOG_MODULE,
-				      "sta {} classified normal (its PHY overrides the traffic shape)",
-				      s.addr);
+			logging::notice(LOG_MODULE,
+				        "sta {} classified normal (its PHY overrides the traffic shape)",
+				        s.addr);
 			const DevClassRec &r = storeDevClass(s.addr, false, 0, s.lpSamples, mApId);
 			for (const Peer &peer : mPeers) {
 				if (peer.used) {
@@ -270,8 +270,8 @@ void Daemon::sampleTraffic(Sta &s, std::uint64_t upBytes, std::uint64_t downByte
 	s.lowPower = low;
 	FixedString<16U> sText;
 	formatScore(sText, s.lpS100);
-	logging::info(LOG_MODULE, "sta {} classified {} (score {}/{}, S {}, {} samples)", s.addr,
-		      low ? "low-power" : "normal", s.lpScore, p.lpThreshold, sText, s.lpSamples);
+	logging::notice(LOG_MODULE, "sta {} classified {} (score {}/{}, S {}, {} samples)", s.addr,
+		        low ? "low-power" : "normal", s.lpScore, p.lpThreshold, sText, s.lpSamples);
 	const DevClassRec &r = storeDevClass(s.addr, s.lowPower, s.lpScore, s.lpSamples, mApId);
 	for (const Peer &peer : mPeers) {
 		if (peer.used) {

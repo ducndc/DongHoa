@@ -1178,9 +1178,11 @@ def main():
         assert bssid_info & 0x400, "Mobility Domain bit expected (same MDID)"
         # Run-time log control
         out = cli(socks[2], "LOG", "warn")
-        assert "steer=warn" in out and "msg=warn" in out, out
+        assert "steer=warning" in out and "msg=warning" in out, out
         out = cli(socks[2], "LOG", "debug", "steer", "amon")
-        assert "steer=debug" in out and "amon=debug" in out and "msg=warn" in out, out
+        assert "steer=debug" in out and "amon=debug" in out and "msg=warning" in out, out
+        out = cli(socks[2], "LOG", "5")
+        assert "steer=notice" in out and "check=notice" in out, out
         assert cli(socks[2], "LOG", "loud").startswith("FAIL"), "bad level must fail"
         cli(socks[2], "LOG", "debug")
         print("PASS 1: discovery, BSS/load exchange, 11k neighbor DB (FT MD bit set)")
