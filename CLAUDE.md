@@ -61,7 +61,11 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 25`.
   frame parser itself is pure, in `rrm.cpp`), `vendor_rssi.cpp` (that driver
   API: vendor placeholder marked TODO(vendor), plus the `sta_rssi_sim` file
   simulation the itest uses) and `ctrl.cpp`.
-- **Steering transaction:** `steer.cpp` runs MEASURE → NEGOTIATE → BTM → ROAM.
+- **Steering transaction:** `steer.cpp` runs MEASURE → NEGOTIATE → BTM → ROAM;
+  the rest of steering is in `steer_trigger.cpp` (triggers, load-balancing
+  rounds), `steer_measure.cpp` (candidate pool, 11k / air-monitor requests),
+  `steer_target.cpp` (admission, reservations) and `steer_learn.cpp` (Q-learning,
+  bandit). Helpers they share are in `steer_util.hpp`, namespace `steer`.
   NEGOTIATE (STEER_REQ/RESP with the target AP) is skipped for this AP's own
   sibling BSSes. Success means a `STA_EVENT` assoc arrives from the target. On
   failure the STA gets an exponential backoff (`policy::backoffMs`). The

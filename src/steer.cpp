@@ -1,27 +1,61 @@
 // SPDX-License-Identifier: MIT
-// Steering transaction state machine (source AP) and admission control
-// (target AP). See docs/SDD.md section 6.6.
+// Steering transaction state machine (source AP). See docs/SDD.md section 6.6.
 //
 //   IDLE -> MEASURE (11k beacon request + air monitors) -> NEGOTIATE
 //   (STEER_REQ/RESP with the target AP; skipped for local BSSes) -> BTM
 //   (11v BSS TM Request) -> ROAM (wait for the association) -> done
+//
+// This file: start, candidate walk, BTM, the end of a transaction, the
+// events and timers that move it (the reservation clean-up of the target
+// side included, where one event serves both sides). The rest of steering:
+//   steer_trigger.cpp  when to steer: per-STA triggers, load-balancing rounds
+//   steer_measure.cpp  MEASURE: candidate pool, 11k / air-monitor requests, levels
+//   steer_target.cpp   target AP: admission of STEER_REQ, reservations
+//   steer_learn.cpp    Q-learning of when to roam, bandit for the target choice
 #include "daemon.hpp"
 #include "log.hpp"
 #include "policy.hpp"
+#include "steer_util.hpp"
 
 namespace donghoa {
 
 namespace {
 
 constexpr LogModule LOG_MODULE{LogModule::STEER};
-constexpr Millis MEAS_FRESH_MS = 10000U;
-constexpr Millis POOL_HINT_MS = 120000U; // measurement age that still orders the pool
 constexpr Millis REMOTE_HOLD_SLACK_MS = 1500U; // covers ARCP retransmissions
 constexpr Millis AMON_REPORT_SLACK_MS = 500U; // monitor report delivery after the watch
-constexpr Millis LB_ROAM_MS = 2000U;          // roam time allowed before judging an offload
 constexpr Millis SELF_ROAM_FRESH_MS = 5000U; // own roam: last RSSI here at most this old
-constexpr Millis BCN_QUIET_BASE_MS = 200U;    // + 2 channel times: no new beacon report -> 11k over
 constexpr std::uint8_t NO_STATUS = 0xffU;
+
+constexpr std::array<std::string_view, 6U> OUTCOME_NAMES{"success",      "btm-reject",   "btm-timeout",
+							"roam-timeout", "wrong-target", "aborted"};
+
+// METRICS counters of a source BSS and trigger; nullptr if out of range.
+metrics::SteerCounters *steerCounters(std::array<metrics::BssCounters, MAX_BSS> &m, std::size_t bss,
+				      arcp::SteerReason r) noexcept
+{
+	const std::size_t ri = metrics::reasonIndex(r);
+	return ((bss < m.size()) && (ri < metrics::REASONS)) ? &m[bss].steer[ri] : nullptr;
+}
+
+// Best score first. Insertion sort: at most MAX_CAND entries, stable, and
+// no comparator subtraction that could overflow.
+void sortCandidates(std::array<Candidate, MAX_CAND> &c, std::size_t n) noexcept
+{
+	for (std::size_t i = 1U; i < n; i++) {
+		const Candidate key = c[i];
+		std::size_t j = i;
+		while ((j > 0U) && (c[j - 1U].score < key.score)) {
+			c[j] = c[j - 1U];
+			j--;
+		}
+		c[j] = key;
+	}
+}
+
+} // namespace
+
+namespace steer {
 
 std::string_view reasonName(arcp::SteerReason r) noexcept
 {
@@ -41,9 +75,6 @@ std::string_view reasonNameRaw(std::uint8_t r) noexcept
 	return ((r >= 1U) && (r <= 4U)) ? reasonName(static_cast<arcp::SteerReason>(r)) : "?";
 }
 
-constexpr std::array<std::string_view, 6U> OUTCOME_NAMES{"success",      "btm-reject",   "btm-timeout",
-							"roam-timeout", "wrong-target", "aborted"};
-
 std::string_view outcomeName(std::uint8_t o) noexcept
 {
 	std::string_view name{"?"};
@@ -53,66 +84,7 @@ std::string_view outcomeName(std::uint8_t o) noexcept
 	return name;
 }
 
-std::uint8_t raw(arcp::SteerOutcome o) noexcept
-{
-	return static_cast<std::uint8_t>(o);
-}
-
-// METRICS counters of a source BSS and trigger; nullptr if out of range.
-metrics::SteerCounters *steerCounters(std::array<metrics::BssCounters, MAX_BSS> &m, std::size_t bss,
-				      arcp::SteerReason r) noexcept
-{
-	const std::size_t ri = metrics::reasonIndex(r);
-	return ((bss < m.size()) && (ri < metrics::REASONS)) ? &m[bss].steer[ri] : nullptr;
-}
-
-const Measurement *measLookup(const Sta &s, const Mac &bssid, MeasSrc src) noexcept
-{
-	const Millis now = os::nowMs();
-	const Measurement *r = nullptr;
-	for (std::size_t i = 0U; (i < s.nMeas) && (r == nullptr); i++) {
-		const Measurement &m = s.meas[i];
-		if ((m.src == src) && (m.bssid == bssid) && ((now - m.ts) < MEAS_FRESH_MS)) {
-			r = &m;
-		}
-	}
-	return r;
-}
-
-// STA-measured (11k beacon report) level of bssid.
-const Measurement *bcnLookup(const Sta &s, const Mac &bssid) noexcept
-{
-	return measLookup(s, bssid, MeasSrc::STA_11K);
-}
-
-// Best available level: the STA's own report, else an air monitor's.
-const Measurement *levelLookup(const Sta &s, const Mac &bssid) noexcept
-{
-	const Measurement *m = measLookup(s, bssid, MeasSrc::STA_11K);
-	return (m != nullptr) ? m : measLookup(s, bssid, MeasSrc::AIR_MONITOR);
-}
-
-bool freshSince(const Measurement *m, Millis since) noexcept
-{
-	return (m != nullptr) && (m->ts >= since);
-}
-
-// Best score first. Insertion sort: at most MAX_CAND entries, stable, and
-// no comparator subtraction that could overflow.
-void sortCandidates(std::array<Candidate, MAX_CAND> &c, std::size_t n) noexcept
-{
-	for (std::size_t i = 1U; i < n; i++) {
-		const Candidate key = c[i];
-		std::size_t j = i;
-		while ((j > 0U) && (c[j - 1U].score < key.score)) {
-			c[j] = c[j - 1U];
-			j--;
-		}
-		c[j] = key;
-	}
-}
-
-} // namespace
+} // namespace steer
 
 std::string_view steerStateName(SteerState s) noexcept
 {
@@ -157,56 +129,6 @@ SteerTxn *Daemon::findTxnById(std::uint32_t id) noexcept
 	return r;
 }
 
-int Daemon::countReservations(std::size_t bss, Millis now) const noexcept
-{
-	int n = 0;
-	for (const Reservation &r : mResv) {
-		if (r.used && (r.bss == bss) && (r.expiry > now)) {
-			n++;
-		}
-	}
-	return n;
-}
-
-Measurement &Daemon::storeMeasurement(Sta &s, const Mac &bssid, MeasSrc src, std::uint8_t rcpi,
-				      std::uint8_t opClass, std::uint8_t channel, Millis ts) noexcept
-{
-	Measurement *e = nullptr;
-	for (std::size_t i = 0U; (i < s.nMeas) && (e == nullptr); i++) {
-		if ((s.meas[i].src == src) && (s.meas[i].bssid == bssid)) {
-			e = &s.meas[i];
-		}
-	}
-	if (e == nullptr) {
-		if (s.nMeas < s.meas.size()) {
-			e = &s.meas[s.nMeas];
-			s.nMeas++;
-		} else {
-			e = &s.meas[0U];
-			for (std::size_t i = 1U; i < s.nMeas; i++) {
-				if (s.meas[i].ts < e->ts) {
-					e = &s.meas[i];
-				}
-			}
-		}
-	}
-	e->bssid = bssid;
-	e->src = src;
-	e->rcpi = rcpi;
-	e->opClass = opClass;
-	e->channel = channel;
-	e->ts = ts;
-	e->ulDbm = 0;
-	e->paired = false; // a new value: usable for calibration again
-	// A level on a band proves the STA can use it.
-	const std::uint8_t bit = rrm::opClassBandBit(opClass);
-	s.bandsSeen = static_cast<std::uint8_t>(s.bandsSeen | bit);
-	if ((bit & (rrm::BANDS_5G | rrm::BANDS_6G)) != 0U) {
-		s.bandEmpty = 0;
-	}
-	return *e;
-}
-
 // ---- transaction end ----
 
 void Daemon::sendResult(const SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmStatus) noexcept
@@ -218,7 +140,7 @@ void Daemon::sendResult(const SteerTxn &t, arcp::SteerOutcome outcome, std::uint
 		arcp::Message m;
 		r.txn = t.id;
 		r.sta = t.sta;
-		r.outcome = raw(outcome);
+		r.outcome = steer::raw(outcome);
 		r.btmStatus = btmStatus;
 		beginMsg(m, arcp::MsgType::STEER_RESULT, arcp::FLAG_ACK_REQ);
 		(void)m.add(r);
@@ -233,7 +155,8 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 	const Millis now = os::nowMs();
 
 	logging::notice(LOG_MODULE, "steer #{} {} ({}) finished: {} after {} ms", t.id, t.sta,
-		        reasonName(t.reason), outcomeName(raw(outcome)), now - t.started);
+		        steer::reasonName(t.reason), steer::outcomeName(steer::raw(outcome)),
+		        now - t.started);
 	sendResult(t, outcome, btmStatus);
 	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
 	if (mc != nullptr) {
@@ -248,7 +171,8 @@ void Daemon::endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmSta
 		if ((t.cand[t.cur].rcpi <= 220U) && (t.startRssi != 0)) {
 			g = rrm::rcpiToDbm(t.cand[t.cur].rcpi) - t.startRssi;
 		}
-		banditCredit(t.cand[t.cur], policy::rlRewardSteer(outcome, g), outcomeName(raw(outcome)));
+		banditCredit(t.cand[t.cur], policy::rlRewardSteer(outcome, g),
+			     steer::outcomeName(steer::raw(outcome)));
 		if (outcome == arcp::SteerOutcome::SUCCESS) {
 			banditWatchPingPong(t);
 		}
@@ -312,7 +236,7 @@ void Daemon::failTxnNoCandidate(SteerTxn &t) noexcept
 	const Millis now = os::nowMs();
 
 	logging::notice(LOG_MODULE, "steer #{} {} ({}): no suitable candidate", t.id, t.sta,
-			reasonName(t.reason));
+			steer::reasonName(t.reason));
 	metrics::SteerCounters *const mc = steerCounters(mMetrics, t.bss, t.reason);
 	if (mc != nullptr) {
 		mc->result[metrics::RESULT_NO_CANDIDATE]++;
@@ -445,14 +369,14 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 	if (p.scoreModel == ScoreModel::TPUT) {
 		// Compare like with like: the STA's own downlink measurement of
 		// the serving BSS, as for the candidates, when it has one.
-		const Measurement *const cur = bcnLookup(*s, src.info.bssid);
+		const Measurement *const cur = steer::bcnLookup(*s, src.info.bssid);
 		if (cur != nullptr) {
 			ctx.curRssi = rrm::rcpiToDbm(cur->rcpi);
 		}
 	}
 	for (std::size_t i = 0U; i < t.nCand; i++) {
 		Candidate &c = t.cand[i];
-		const Measurement *const be = levelLookup(*s, c.bssid);
+		const Measurement *const be = steer::levelLookup(*s, c.bssid);
 		policy::CandInput in;
 		bool known = true;
 
@@ -566,255 +490,6 @@ void Daemon::evaluate(SteerTxn &t) noexcept
 
 // ---- start ----
 
-void Daemon::buildPool(SteerTxn &t) noexcept
-{
-	const arcp::BssInfo &cur = mBss[t.bss].info;
-	Sta *const s = findSta(t.sta);
-	const Millis now = os::nowMs();
-	// Skip bands the STA does not advertise (unless measured there) and
-	// 6 GHz for a WPA2-PSK STA; a manual steer goes where the operator says.
-	// An MLD STA never goes to another link of its own AP MLD: link
-	// selection inside the AP MLD is the MLD's job, not BTM's.
-	const auto usable = [&t, s, &cur](const arcp::BssInfo &bi) {
-		const bool ownMld = (s != nullptr) && s->mld && arcp::isSameMld(bi, cur);
-		return !ownMld &&
-		       ((t.reason == arcp::SteerReason::MANUAL) || (s == nullptr) ||
-			policy::isBandUsable(policy::StaBands{s->bandsAdv, s->bandsSeen, s->bandsBlocked},
-					     bi.band));
-	};
-	// Best level the STA was measured at for bssid in the last
-	// POOL_HINT_MS (11k or AP-side): a hint for the pool order only.
-	const auto hint = [s, now](const Mac &bssid) {
-		int r = policy::NO_HINT;
-		for (std::size_t i = 0U; (s != nullptr) && (i < s->nMeas); i++) {
-			const Measurement &m = s->meas[i];
-			if ((m.bssid == bssid) && (m.rcpi <= 220U) && ((now - m.ts) < POOL_HINT_MS) &&
-			    (static_cast<int>(m.rcpi) > r)) {
-				r = static_cast<int>(m.rcpi);
-			}
-		}
-		return r;
-	};
-	// The pool holds MAX_CAND BSSes. When more qualify, a new one replaces
-	// the lowest-ranked entry if it ranks strictly higher (the last added
-	// of equal rank goes first), so with nothing known the peers visited
-	// first stay. firstDrop: visit position of the first unknown remote
-	// BSS left out, where the next steer of this STA starts.
-	std::size_t firstDrop = MAX_PEERS;
-	const auto add = [&t, &usable, &hint, &firstDrop](const arcp::BssInfo &bi, const Mac &ap, bool local,
-							  std::size_t pos) {
-		if ((!t.forcedTarget.isZero() && (t.forcedTarget != bi.bssid)) || !usable(bi)) {
-			return;
-		}
-		Candidate c;
-		c.bssid = bi.bssid;
-		c.ap = ap;
-		c.local = local;
-		c.info = bi;
-		c.poolRank = policy::candidatePoolRank(local, hint(bi.bssid));
-		c.poolPos = pos;
-		if (t.nCand < t.cand.size()) {
-			t.cand[t.nCand] = c;
-			t.nCand++;
-			return;
-		}
-		std::size_t worst = 0U;
-		for (std::size_t i = 1U; i < t.nCand; i++) {
-			if (t.cand[i].poolRank <= t.cand[worst].poolRank) {
-				worst = i;
-			}
-		}
-		const Candidate *out = &c; // the BSS left out
-		if (c.poolRank > t.cand[worst].poolRank) {
-			const Candidate evicted = t.cand[worst];
-			t.cand[worst] = c;
-			out = &evicted;
-			if (!out->local && (out->poolRank == 0) && (out->poolPos < firstDrop)) {
-				firstDrop = out->poolPos;
-			}
-		} else if (!out->local && (out->poolRank == 0) && (out->poolPos < firstDrop)) {
-			firstDrop = out->poolPos;
-		} else {
-			// a ranked BSS that did not fit
-		}
-	};
-	const bool band = t.reason == arcp::SteerReason::BAND;
-	const std::size_t start = (s != nullptr) ? (s->poolStart % MAX_PEERS) : 0U;
-
-	t.nCand = 0U;
-	for (std::size_t i = 0U; i < mNBss; i++) {
-		if ((i != t.bss) && mBss[i].up && arcp::isSameEss(mBss[i].info, cur) &&
-		    (!band || (mBss[i].info.band > cur.band))) {
-			add(mBss[i].info, mApId, true, 0U);
-		}
-	}
-	for (std::size_t k = 0U; k < MAX_PEERS; k++) {
-		const Peer &p = mPeers[(start + k) % MAX_PEERS];
-		if (!p.used) {
-			continue;
-		}
-		for (const RemoteBss &rb : p.bss) {
-			if (rb.used && arcp::isSameEss(rb.info, cur) && (!band ||
-									 (rb.info.band > cur.band))) {
-				add(rb.info, p.id, false, k);
-			}
-		}
-	}
-	// Measure the most promising first (requestBeacons takes channels in
-	// pool order); evaluate() sorts by score afterwards.
-	for (std::size_t i = 1U; i < t.nCand; i++) {
-		const Candidate c = t.cand[i];
-		std::size_t j = i;
-		while ((j > 0U) && (t.cand[j - 1U].poolRank < c.poolRank)) {
-			t.cand[j] = t.cand[j - 1U];
-			j--;
-		}
-		t.cand[j] = c;
-	}
-	if ((s != nullptr) && (firstDrop < MAX_PEERS)) {
-		s->poolStart = (start + firstDrop) % MAX_PEERS;
-		logging::info(LOG_MODULE,
-			      "steer #{} {}: more BSSes than the {} the pool holds, next pool starts at peer "
-			      "slot {}", t.id, t.sta, MAX_CAND, s->poolStart);
-	}
-}
-
-bool Daemon::requestBeacons(SteerTxn &t, Sta &s) noexcept
-{
-	const PolicyConfig &p = mCfg.pol;
-	LocalBss &src = mBss[t.bss];
-	rrm::OpChanList chans{};
-	std::size_t n = 0U;
-	FixedString<256U> hexreq;
-	FixedString<320U> cmd;
-	hapd::Reply reply;
-
-	// The tput model also measures the serving channel (first).
-	const bool serving = p.scoreModel == ScoreModel::TPUT;
-	for (std::size_t i = 0U; (i < (t.nCand + (serving ? 1U : 0U))) && (n < chans.size()); i++) {
-		const arcp::BssInfo &bi = (serving &&
-					   (i == 0U)) ? src.info : t.cand[serving ? (i - 1U) : i].info;
-		bool dup = false;
-		for (std::size_t k = 0U; k < n; k++) {
-			dup = dup || ((chans[k].opClass == bi.opClass) && (chans[k].channel == bi.channel));
-		}
-		if (!dup) {
-			chans[n] = rrm::OpChan{bi.opClass, bi.channel};
-			n++;
-		}
-	}
-	// One request for all channels: a STA refuses a second beacon
-	// measurement while the first runs. hostapd refuses (FAIL, nothing
-	// sent) a mode the STA did not advertise in its RM Enabled
-	// Capabilities, which the control interface does not expose: try the
-	// configured mode, then active, then passive, and remember the first
-	// accepted. Table mode only repeats cached results: not a fallback.
-	std::array<rrm::BeaconMode, 3U> modes{p.beaconMode, rrm::BeaconMode::ACTIVE,
-						       rrm::BeaconMode::PASSIVE};
-	std::size_t nModes = modes.size();
-	if (s.bcnMode.has_value()) {
-		modes[0U] = *s.bcnMode;
-		nModes = 1U;
-	}
-	for (std::size_t i = 0U; i < nModes; i++) {
-		const rrm::BeaconMode mode = modes[i];
-		bool tried = false;
-		for (std::size_t k = 0U; k < i; k++) {
-			tried = tried || (modes[k] == mode);
-		}
-		if (tried) {
-			continue;
-		}
-		std::uint16_t dur = static_cast<std::uint16_t>(p.beaconDuration);
-		if ((mode == rrm::BeaconMode::PASSIVE) && (dur < rrm::PASSIVE_MIN_TU)) {
-			dur = rrm::PASSIVE_MIN_TU;
-		}
-		// Reports may come per channel: allow two channel times of silence.
-		t.bcnQuietMs = BCN_QUIET_BASE_MS + ((2U * static_cast<Millis>(dur) * 1024U) / 1000U);
-		if (!rrm::buildBcnReqHex(chans, n, mode, dur, nullptr, src.info.ssidView(), hexreq)) {
-			return false;
-		}
-		cmd.clear();
-		formatTo(cmd, "REQ_BEACON {} {}", s.addr, hexreq);
-		if (!src.hapd.runCommand(cmd.view(), reply)) {
-			return false;
-		}
-		if (!startsWith(reply.view(), "FAIL")) {
-			if (!(s.bcnMode.has_value() && (*s.bcnMode == mode))) {
-				logging::info(LOG_MODULE, "sta {}: {} beacon reports", s.addr,
-					      rrm::beaconModeName(mode));
-			}
-			s.bcnMode = mode;
-			return true;
-		}
-	}
-	logging::info(LOG_MODULE, "sta {}: beacon report not supported (no active or passive mode)", s.addr);
-	s.bcnMode.reset();
-	s.bcnUnsupported = true;
-	s.flags = static_cast<std::uint8_t>(s.flags & static_cast<std::uint8_t>(~arcp::STA_F11K));
-	return false;
-}
-
-// Ask every candidate owner that has an air monitor to listen for the STA.
-// Step 1 of an AP-side measurement: multicast STA_MONITOR_REQ to every
-// peer, and start this AP's own watch when one of its BSSes is a candidate.
-// MEASURE then waits for a STA_MONITOR_STATUS from this AP and from each
-// peer that owns a candidate (others may answer too). Returns the number of
-// APs waited for.
-std::size_t Daemon::requestMonitors(SteerTxn &t, const Sta &s) noexcept
-{
-	const PolicyConfig &p = mCfg.pol;
-	const arcp::BssInfo &src = mBss[t.bss].info;
-	bool anyPeer = false;
-
-	t.nMonWait = 0U;
-	if (!p.amonRequest) {
-		return 0U;
-	}
-	for (std::size_t i = 0U; i < t.nCand; i++) {
-		const Candidate &c = t.cand[i];
-		const Mac ap = c.local ? mApId : c.ap;
-		bool dup = false;
-		for (std::size_t k = 0U; k < t.nMonWait; k++) {
-			dup = dup || (t.monWait[k] == ap);
-		}
-		if (dup) {
-			continue;
-		}
-		if (c.local) {
-			const arcp::MonitorStatus st =
-				startAmonWatch(s.addr, mApId, t.id, p.amonDurationMs, src.opClass,
-					       src.channel);
-			if (st != arcp::MonitorStatus::MEASURED) {
-				continue;
-			}
-		} else if (findPeer(c.ap) == nullptr) {
-			continue;
-		} else {
-			anyPeer = true;
-		}
-		t.monWait[t.nMonWait] = ap;
-		t.nMonWait++;
-	}
-	if (anyPeer) {
-		arcp::StaMonitorReq r;
-		r.txn = t.id;
-		r.sta = s.addr;
-		r.durationMs = static_cast<std::uint16_t>(p.amonDurationMs);
-		r.opClass = src.opClass;
-		r.channel = src.channel;
-		arcp::Message m;
-		beginMsg(m, arcp::MsgType::STA_MONITOR_REQ, 0U);
-		(void)m.add(r);
-		multicast(m);
-	}
-	if (t.nMonWait > 0U) {
-		logging::info(LOG_MODULE, "steer #{} {}: measurement requested, waiting for {} AP(s)", t.id,
-			      s.addr, t.nMonWait);
-	}
-	return t.nMonWait;
-}
-
 bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noexcept
 {
 	SteerTxn *t = nullptr;
@@ -860,7 +535,7 @@ bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noe
 	t->used = true;
 	t->state = SteerState::MEASURE;
 	logging::info(LOG_MODULE, "steer #{} {} start: reason {}, rssi {}, {} candidate BSS", t->id, s.addr,
-		      reasonName(reason), s.rssi, t->nCand);
+		      steer::reasonName(reason), s.rssi, t->nCand);
 
 	// 11k (STA-measured) and air monitors (AP-measured) in parallel: a STA
 	// without 11k, or too busy to answer, is still measured.
@@ -882,249 +557,7 @@ bool Daemon::startSteer(Sta &s, arcp::SteerReason reason, const Mac *target) noe
 	return true;
 }
 
-// ---- triggers ----
-
-void Daemon::onStaPoll(Sta &s) noexcept
-{
-	const PolicyConfig &p = mCfg.pol;
-
-	if (s.away || (os::nowMs() < s.nextSteerMs) || ((s.flags & arcp::STA_F11V) == 0U) ||
-	    (findTxnBySta(s.addr) != nullptr) || (s.lowPower && p.lpNoSteer)) {
-		return;
-	}
-	const std::uint8_t band = mBss[s.bss].info.band;
-	// The learned threshold drifts back towards rssi_low when nothing new
-	// is learned (not shared: a decay step is not an event).
-	if (p.roamThrLearn && (s.roamThr != 0) && ((os::nowMs() - s.roamThrTs) > policy::ROAM_THR_DECAY_MS)) {
-		s.roamThr = policy::decayRoamThr(p, s.roamThr);
-		s.roamThrTs = os::nowMs();
-	}
-	const int roamThr = policy::roamThreshold(p, s.roamThr);
-	const bool rssiTrig = policy::isRssiTriggered(p, s.rssi, s.lowCount, roamThr);
-	const policy::RlMode mode = rlMode();
-	bool steer = rssiTrig;
-	bool rec = false;
-	std::size_t st = 0U;
-	// Q-learning: a decision on each fresh sample (shadow: also when the rule
-	// fires on an old one, to learn from every steer it makes).
-	if ((mode != policy::RlMode::OFF) && !s.mld && (s.rssi != 0) &&
-	    (s.sampleFresh || ((mode == policy::RlMode::SHADOW) && rssiTrig))) {
-		policy::RlFeatures f;
-		f.rssi = s.rssi;
-		f.slope = s.rssi - s.rssiPrev;
-		f.refusals = s.steerFailures;
-		f.lowStreak = s.lowCount >= p.rssiLowCount;
-		for (std::size_t i = 0U; i < s.nMeas; i++) {
-			const Measurement &m = s.meas[i];
-			if ((m.bssid != mBss[s.bss].info.bssid) && (m.rcpi <= 220U) &&
-			    ((os::nowMs() - m.ts) < POOL_HINT_MS)) {
-				const int g = rrm::rcpiToDbm(m.rcpi) - s.rssi;
-				f.gapDb = (!f.gapKnown || (g > f.gapDb)) ? g : f.gapDb;
-				f.gapKnown = true;
-			}
-		}
-		st = policy::rlState(f);
-		if (s.rlWaiting) {
-			rlLearn(s.addr, s.rlState, policy::RlAction::WAIT, policy::rlRewardWait(s.rssi),
-				false, st);
-			s.rlWaiting = false;
-		}
-		if (s.rssi < policy::RL_MIN_RSSI) {
-			if (mode == policy::RlMode::ACTIVE) {
-				bool explored = false;
-				steer = policy::rlChoose(mRl, st, p.rlEpsilonPct, nextRandom(), explored) ==
-					policy::RlAction::STEER;
-				mRlStats.explored += explored ? 1U : 0U;
-			}
-			rec = true;
-			mRlStats.decisions++;
-		} else if (mode == policy::RlMode::ACTIVE) {
-			steer = false; // strong signal: always wait
-		} else {
-			// shadow: the rule decides
-		}
-	} else if ((mode == policy::RlMode::ACTIVE) && !s.mld) {
-		steer = false; // active: decisions only on fresh samples
-	} else {
-		// off, MLD STA (rule), or shadow without a fresh sample
-	}
-	s.sampleFresh = false;
-	if (steer) {
-		mRlNextArmed = rec;
-		mRlNextState = st;
-		mRlStats.steers += rec ? 1U : 0U;
-		if (!startSteer(s, arcp::SteerReason::RSSI, nullptr) && mRlNextArmed) {
-			// no transaction at all (empty pool): nothing to move to
-			rlLearn(s.addr, st, policy::RlAction::STEER, policy::RL_R_NO_CANDIDATE, true, 0U);
-		}
-		mRlNextArmed = false;
-	} else if (rec) {
-		s.rlWaiting = true;
-		s.rlState = st;
-	} else {
-		// no recorded decision
-	}
-	if (steer) {
-		// RSSI steer started (or tried)
-	} else if (!s.mld && policy::isBandTriggered(p, band, s.rssi) && (os::nowMs() >= s.nextBandMs) &&
-		   policy::hasHigherBand(policy::StaBands{s.bandsAdv, s.bandsSeen, s.bandsBlocked}, band)) {
-		(void)startSteer(s, arcp::SteerReason::BAND, nullptr);
-	} else {
-		// no trigger
-	}
-}
-
-void Daemon::runLbRound() noexcept
-{
-	const PolicyConfig &p = mCfg.pol;
-	const Millis now = os::nowMs();
-	// Time for the smoothed utilisation to follow a move (EWMA 1/4 per poll)
-	// plus the roam itself.
-	const Millis settle = (5U * static_cast<Millis>(mCfg.staPollMs)) + LB_ROAM_MS;
-
-	for (std::size_t b = 0U; b < mNBss; b++) {
-		LocalBss &lb = mBss[b];
-		Sta *pick = nullptr;
-		const int utilPct = policy::utilToPct(lb.load.util);
-
-		if (!lb.up || (now < lb.lbHoldUntil)) {
-			continue;
-		}
-		if (lb.lbCheck) {
-			// Judge the last offload before starting another one.
-			// Moved = seen associated elsewhere: on another local BSS, or
-			// reported by a peer. A STA that just disconnected left no
-			// evidence about the offload: no verdict either way.
-			const Sta *const prev = findSta(lb.lbSta);
-			const bool elsewhere = (prev != nullptr) ? ((prev->bss != b) || prev->away)
-								 : (findRemoteSta(lb.lbSta) != nullptr);
-			const bool gone = (prev == nullptr) && !elsewhere;
-			const bool moved = elsewhere;
-			const bool running = findTxnBySta(lb.lbSta) != nullptr;
-			if (running || (moved && (now < (lb.lbStartMs + settle)))) {
-				continue; // too early to tell
-			}
-			lb.lbCheck = false;
-			if (gone) {
-				mMetrics[b].lb.noVerdict++;
-				logging::info(LOG_MODULE,
-					      "bss {}: {} disconnected instead of moving: no verdict on the "
-					      "offload", lb.cfg->ifname, lb.lbSta);
-			}
-			if (moved && lb.lbByUtil) {
-				if (policy::isLbMoveEffective(p, lb.lbUtilBefore, utilPct)) {
-					lb.lbFutile = 0;
-					mMetrics[b].lb.effective++;
-				} else {
-					lb.lbFutile++;
-					mMetrics[b].lb.futile++;
-					logging::info(LOG_MODULE,
-						      "bss {}: offloading {} did not lower utilisation ({}% "
-						      "-> {}%), {} in a row",
-						      lb.cfg->ifname, lb.lbSta, lb.lbUtilBefore, utilPct,
-						      lb.lbFutile);
-					if (lb.lbFutile >= p.lbMaxFutile) {
-						lb.lbFutile = 0;
-						mMetrics[b].lb.pauses++;
-						lb.lbHoldUntil = now + static_cast<Millis>(p.lbHoldMs);
-						logging::warn(LOG_MODULE,
-							      "bss {}: load balancing paused for {} s: "
-							      "moving STAs does not lower "
-							      "utilisation (airtime of other networks or "
-							      "interference?)",
-							      lb.cfg->ifname, p.lbHoldMs / 1000);
-						continue;
-					}
-				}
-			}
-		}
-		if (!policy::isBssOverloaded(p, utilPct, lb.load.staCount, lb.cfg->maxSta)) {
-			lb.lbFutile = 0;
-			continue;
-		}
-		// Weakest eligible STA first: it costs the most airtime per bit.
-		for (Sta &s : mSta) {
-			const bool eligible = s.used && !s.away && (s.bss == b) && (s.rssi != 0) &&
-					      (now >= s.nextSteerMs) && ((s.flags & arcp::STA_F11V) != 0U) &&
-					      (findTxnBySta(s.addr) == nullptr) && !(s.lowPower &&
-										     p.lpNoSteer) &&
-					      policy::isLbStaEligible(p, s.tputKbps);
-			if (eligible && ((pick == nullptr) || (s.rssi < pick->rssi))) {
-				pick = &s;
-			}
-		}
-		if (pick != nullptr) {
-			logging::info(LOG_MODULE, "bss {} overloaded (util {}%, {} STA): offloading {}",
-				      lb.cfg->ifname, utilPct, lb.load.staCount, pick->addr);
-			if (startSteer(*pick, arcp::SteerReason::LOAD, nullptr)) {
-				mMetrics[b].lb.offloads++;
-				const bool byCount = (lb.cfg->maxSta != 0) &&
-						     (lb.load.staCount >= lb.cfg->maxSta);
-				lb.lbCheck = true;
-				lb.lbSta = pick->addr;
-				lb.lbStartMs = now;
-				lb.lbUtilBefore = utilPct;
-				lb.lbByUtil = !byCount;
-			}
-		}
-	}
-}
-
 // ---- events into the source-side state machine ----
-
-// True when MEASURE can end before its deadline.
-bool Daemon::isMeasureComplete(const SteerTxn &t, const Sta &s) const noexcept
-{
-	bool all11k = true;
-	bool allAny = true;
-
-	for (std::size_t i = 0U; i < t.nCand; i++) {
-		all11k = all11k && freshSince(bcnLookup(s, t.cand[i].bssid), t.started);
-		allAny = allAny && freshSince(levelLookup(s, t.cand[i].bssid), t.started);
-	}
-	// The tput model also needs the STA's own level of the serving BSS.
-	if ((mCfg.pol.scoreModel == ScoreModel::TPUT) && t.bcnOutstanding &&
-	    !freshSince(bcnLookup(s, mBss[t.bss].info.bssid), t.started)) {
-		all11k = false;
-	}
-	// STA-measured levels win; monitor levels only once 11k is over.
-	return all11k || (!t.bcnOutstanding && allAny);
-}
-
-void Daemon::onBeaconReport(Sta &s, const std::optional<rrm::BeaconReport> &r) noexcept
-{
-	SteerTxn *const t = findTxnBySta(s.addr);
-
-	if (r.has_value()) {
-		(void)storeMeasurement(s, r->bssid, MeasSrc::STA_11K, r->rcpi, r->opClass, r->channel,
-				       os::nowMs());
-		pairUlDl(s, r->bssid);
-	}
-	if ((t == nullptr) || (t->state != SteerState::MEASURE)) {
-		return;
-	}
-	if (!r.has_value()) {
-		// Refused or empty report: the one 11k measurement is over.
-		// Without monitor reports to wait for, evaluate now.
-		t->bcnOutstanding = false;
-		if (!t->amonPending || isMeasureComplete(*t, s)) {
-			evaluate(*t);
-		}
-	} else if (isMeasureComplete(*t, s)) {
-		evaluate(*t);
-	} else {
-		// More may come; tickSteer ends the 11k part after a quiet period.
-		t->bcnQuietUntil = os::nowMs() + t->bcnQuietMs;
-	}
-}
-
-void Daemon::onMonitorResult(Sta &s) noexcept
-{
-	SteerTxn *const t = findTxnBySta(s.addr);
-	if ((t != nullptr) && (t->state == SteerState::MEASURE) && isMeasureComplete(*t, s)) {
-		evaluate(*t);
-	}
-}
 
 void Daemon::onBtmResp(const hapd::BtmResp &r) noexcept
 {
@@ -1259,78 +692,6 @@ void Daemon::onPeerLost(const Peer &p) noexcept
 	}
 }
 
-// ---- target side ----
-
-void Daemon::onSteerReq(const Peer &from, const arcp::SteerReq &r) noexcept
-{
-	const PolicyConfig &p = mCfg.pol;
-	const Millis now = os::nowMs();
-	const std::optional<std::size_t> b = findLocalBss(r.tgtBssid);
-	arcp::SteerStatus status = arcp::SteerStatus::ACCEPT;
-	arcp::SteerResp resp;
-	arcp::Message m;
-
-	resp.txn = r.txn;
-	if (!b.has_value()) {
-		status = arcp::SteerStatus::UNKNOWN_BSS;
-	} else if (findTxnBySta(r.sta) != nullptr) {
-		status = arcp::SteerStatus::BUSY;
-	} else {
-		status = policy::admit(p, policy::utilToPct(mBss[*b].load.util), mBss[*b].load.staCount,
-				       countReservations(*b, now), mBss[*b].cfg->maxSta);
-	}
-	if (status == arcp::SteerStatus::ACCEPT) {
-		Reservation *rv = nullptr;
-		for (Reservation &x : mResv) {
-			if ((rv == nullptr) && (!x.used || (x.expiry <= now))) {
-				rv = &x;
-			}
-		}
-		if (rv == nullptr) {
-			status = arcp::SteerStatus::BUSY;
-		} else {
-			rv->used = true;
-			rv->sta = r.sta;
-			rv->srcAp = from.id;
-			rv->bss = *b;
-			rv->txn = r.txn;
-			rv->expiry = now + static_cast<Millis>(p.reserveHoldMs);
-			resp.holdMs = static_cast<std::uint16_t>(p.reserveHoldMs);
-		}
-	}
-	resp.status = static_cast<std::uint8_t>(status);
-	const std::size_t si = static_cast<std::size_t>(status);
-	if (b.has_value() && (si < mMetrics[*b].in.status.size())) {
-		mMetrics[*b].in.status[si]++;
-	} else {
-		mArcpMetrics.steerInUnknownBss++;
-	}
-	logging::info(LOG_MODULE, "steer-in request #{} from {}: sta {} -> {} ({}, rcpi {}): {}", r.txn,
-		      from.id, r.sta, r.tgtBssid, reasonNameRaw(r.reason), r.rcpi,
-		      (status == arcp::SteerStatus::ACCEPT) ? "accept" : "reject");
-	beginMsg(m, arcp::MsgType::STEER_RESP, arcp::FLAG_ACK_REQ);
-	(void)m.add(resp);
-	(void)unicast(from.id, m);
-}
-
-void Daemon::onSteerResult(const Peer &from, const arcp::SteerResult &r) noexcept
-{
-	for (Reservation &rv : mResv) {
-		if (rv.used && (rv.txn == r.txn) && (rv.srcAp == from.id)) {
-			rv.used = false;
-			if (rv.bss < mMetrics.size()) {
-				if (r.outcome == raw(arcp::SteerOutcome::SUCCESS)) {
-					mMetrics[rv.bss].in.success++;
-				} else {
-					mMetrics[rv.bss].in.failed++;
-				}
-			}
-		}
-	}
-	logging::info(LOG_MODULE, "steer #{} from {} sta {}: {}", r.txn, from.id, r.sta,
-		      outcomeName(r.outcome));
-}
-
 // ---- timers ----
 
 void Daemon::tickSteer(Millis now) noexcept
@@ -1402,104 +763,6 @@ void Daemon::tickSteer(Millis now) noexcept
 		if (r.used && (r.expiry <= now)) {
 			r.used = false;
 		}
-	}
-}
-
-// ---- Q-learning of when to roam ----
-
-policy::RlMode Daemon::rlMode() const noexcept
-{
-	const int m = (mRlModeOverride >= 0) ? mRlModeOverride : mCfg.pol.rlRoam;
-	return (m == 2) ? policy::RlMode::ACTIVE : ((m == 1) ? policy::RlMode::SHADOW : policy::RlMode::OFF);
-}
-
-std::uint32_t Daemon::nextRandom() noexcept
-{
-	// xorshift32: exploration only, no security role
-	mRng ^= mRng << 13U;
-	mRng ^= mRng >> 17U;
-	mRng ^= mRng << 5U;
-	return mRng;
-}
-
-void Daemon::rlLearn(const Mac &sta, std::size_t s, policy::RlAction a, int rewardDb, bool terminal,
-		     std::size_t next) noexcept
-{
-	if (!mRlInit) {
-		policy::rlInit(mRl);
-		mRlInit = true;
-	}
-	const std::size_t ai = (a == policy::RlAction::STEER) ? 1U : 0U;
-	const int before = mRl.q[s][ai];
-	policy::rlUpdate(mRl, s, a, rewardDb, terminal, next);
-	mRlStats.updates++;
-	logging::dbg(LOG_MODULE, "rl sta {}: state {} {} reward {} -> Q {} -> {} (x256)", sta, s,
-		     (a == policy::RlAction::STEER) ? "steer" : "wait", rewardDb, before, mRl.q[s][ai]);
-}
-
-void Daemon::rlEndWait(Sta &s, int rewardDb, std::string_view why) noexcept
-{
-	if (s.rlWaiting) {
-		logging::dbg(LOG_MODULE, "rl sta {}: waiting ended ({})", s.addr, why);
-		rlLearn(s.addr, s.rlState, policy::RlAction::WAIT, rewardDb, true, 0U);
-		s.rlWaiting = false;
-	}
-}
-
-// ---- contextual bandit: target choice ----
-
-policy::RlMode Daemon::banditMode() const noexcept
-{
-	const int m = (mBanditModeOverride >= 0) ? mBanditModeOverride : mCfg.pol.banditTarget;
-	return (m == 2) ? policy::RlMode::ACTIVE : ((m == 1) ? policy::RlMode::SHADOW : policy::RlMode::OFF);
-}
-
-void Daemon::banditCredit(const Candidate &c, int rewardDb, std::string_view why) noexcept
-{
-	if (banditMode() == policy::RlMode::OFF) {
-		return;
-	}
-	const int before = mBandit.q[c.banditCtx];
-	policy::banditUpdate(mBandit, c.banditCtx, rewardDb);
-	mBanditStats.updates++;
-	logging::dbg(LOG_MODULE, "bandit {}: context {} reward {} ({}) -> mean {} -> {} (x256)", c.bssid,
-		     c.banditCtx, rewardDb, why, before, mBandit.q[c.banditCtx]);
-}
-
-void Daemon::banditWatchPingPong(const SteerTxn &t) noexcept
-{
-	PingPongWatch *w = nullptr;
-	PingPongWatch *oldest = nullptr;
-	for (PingPongWatch &x : mPingPong) {
-		if ((w == nullptr) && (!x.used || (x.sta == t.sta))) {
-			w = &x;
-		}
-		if ((oldest == nullptr) || (x.ts < oldest->ts)) {
-			oldest = &x;
-		}
-	}
-	w = (w != nullptr) ? w : oldest;
-	w->used = true;
-	w->sta = t.sta;
-	w->srcBss = t.bss;
-	w->ctx = t.cand[t.cur].banditCtx;
-	w->ts = os::nowMs();
-}
-
-void Daemon::banditCheckPingPong(std::size_t bss, const Mac &sta) noexcept
-{
-	for (PingPongWatch &w : mPingPong) {
-		if (!w.used || (w.sta != sta)) {
-			continue;
-		}
-		if ((w.srcBss == bss) && ((os::nowMs() - w.ts) < policy::BANDIT_PING_PONG_MS) &&
-		    (banditMode() != policy::RlMode::OFF)) {
-			policy::banditUpdate(mBandit, w.ctx, policy::BANDIT_R_PING_PONG);
-			mBanditStats.updates++;
-			logging::info(LOG_MODULE,
-				      "sta {} back on the BSS it was steered away from: ping-pong", sta);
-		}
-		w.used = false;
 	}
 }
 

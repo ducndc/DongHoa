@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.14, 2026-11-12 (history in §13) |
+| Document version | 2.15, 2026-11-15 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -36,7 +36,7 @@ given so each section can be checked against the source.
  ARCP peers  <------->   | l2.cpp --> msg.cpp --> peer.cpp               ctrl.cpp     |<--> donghoa_cli
  (Ethernet 0x88B5)       |            |          |                            |
                          |            v          v                            |
-                         |          steer.cpp <-- policy.cpp (pure)               |
+                         |          steer*.cpp <-- policy.cpp (pure)              |
                          |            |                                       |
                          |          local.cpp  (BSS/STA tables, events, NR)     |
                          |          /      \                                  |
@@ -57,7 +57,7 @@ The modules fall into three layers:
    `Survey`: nl80211 generic netlink), `amon.cpp` (radiotap monitor sockets
    and STA watches) and `ctrl.cpp` (operator socket).
 3. **Coordination:** `msg.cpp` (messaging), `peer.cpp` (remote view),
-   `local.cpp` (local view) and `steer.cpp` (transactions). They are member
+   `local.cpp` (local view) and `steer*.cpp` (transactions, five files). They are member
    functions of class `Daemon` (`src/daemon.hpp`), whose definition is split
    across these files. The only instance is a static object in `main.cpp`.
 
@@ -100,7 +100,12 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
 | `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
 | `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
-| `steer.cpp` | coord. | Source-side state machine, target-side admission and reservations | `startSteer`, `tickSteer`, `on*` handlers, `runLbRound` | FR-TRG, FR-STR, FR-ADM |
+| `steer.cpp` | coord. | Source-side state machine: start, candidate walk, BTM, end of a transaction, the events and timers that move it | `startSteer`, `evaluate`, `sendBtm`, `endTxn`, `tickSteer`, `on*` handlers | FR-STR |
+| `steer_trigger.cpp` | coord. | When to steer: per-STA triggers on each poll, load-balancing rounds | `onStaPoll`, `runLbRound` | FR-TRG |
+| `steer_measure.cpp` | coord. | MEASURE: candidate pool, Beacon Requests, air-monitor requests, measured levels | `buildPool`, `requestBeacons`, `requestMonitors`, `onBeaconReport`, `onMonitorResult`, `isMeasureComplete` | FR-STR, FR-AMN |
+| `steer_target.cpp` | coord. | Target side: admission of STEER_REQ, reservations, STEER_RESULT | `onSteerReq`, `onSteerResult`, `countReservations` | FR-ADM |
+| `steer_learn.cpp` | coord. | Daemon side of the learning features: Q-learning of when to roam, bandit for the target, ping-pong watch | `rlLearn`, `rlEndWait`, `banditCredit`, `banditCheckPingPong` | FR-TRG-8, FR-STR-11 |
+| `steer_util.hpp` | coord. | Helpers the steering files share (namespace `steer`): names for log lines, measurement lookup | `reasonName`, `outcomeName`, `bcnLookup`, `levelLookup` | — |
 | `check.cpp` | coord. | Consistency check every 10 s against the peers, log on change, `CHECK` | `checkConsistency`, `cmdCheck`, `countIssues` | FR-OBS-2 |
 | `devclass.cpp` | coord. | Low-power device classification per local STA, device class table, STA_CLASS exchange | `sampleTraffic`, `restoreDevClass`, `saveDevClass`, `onStaClass`, `onPeerStaAssoc`, `syncDevClass` | FR-LPC |
 | `tools/donghoa_cli.cpp` | tool | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
@@ -419,7 +424,12 @@ policy::admit(util, sta_count, reserved, max_sta):
 policy::backoff_ms(failures) = min(steer_cooldown_ms * 2^failures, steer_backoff_max_ms)
 ```
 
-### 6.6 Steering (`steer.cpp`) [FR-STR, FR-ADM]
+### 6.6 Steering (`steer*.cpp`) [FR-STR, FR-ADM]
+
+The code is split by role: `steer.cpp` holds the state machine (§6.6.1),
+`steer_measure.cpp` the MEASURE state, `steer_target.cpp` the target side
+(§6.6.3), `steer_trigger.cpp` the triggers (§6.6.4) and `steer_learn.cpp` the
+learning features. All are member functions of `Daemon`.
 
 #### 6.6.1 Source-side state machine
 
@@ -984,3 +994,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.12 | 2026-11-08 | Automatic key enrollment: modules `trust`, `enroll`; threat row; D24 |
 | 2.13 | 2026-11-08 | Security off by default: `liveness_check` key (default 0); shipped configurations without `key` |
 | 2.14 | 2026-11-12 | Observability: modules `metrics`, `consistency`, `check.cpp`; §6.7 `METRICS`, `CHECK`; POLICY TLV in HELLO; fuzz targets (`fuzz/`); data size re-measured (470,760 bytes) |
+| 2.15 | 2026-11-15 | §3.2, §6.6: `steer.cpp` split by role into `steer.cpp`, `steer_trigger.cpp`, `steer_measure.cpp`, `steer_target.cpp`, `steer_learn.cpp` and `steer_util.hpp`; no change of behaviour |

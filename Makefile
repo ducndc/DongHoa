@@ -12,7 +12,8 @@ DH_LDFLAGS := -Wl,--as-needed
 CORE := src/text.cpp src/log.cpp src/os.cpp src/sha256.cpp src/sha512.cpp src/ed25519.cpp src/trust.cpp src/proto.cpp src/rrm.cpp \
         src/config.cpp src/policy.cpp src/hapd_parse.cpp src/nlparse.cpp src/consistency.cpp src/metrics.cpp
 DAEMON := $(CORE) src/l2.cpp src/hapd.cpp src/survey.cpp src/peer.cpp src/local.cpp \
-          src/msg.cpp src/steer.cpp src/amon.cpp src/ctrl.cpp src/rrm_log.cpp src/devclass.cpp src/vendor_rssi.cpp \
+          src/msg.cpp src/steer.cpp src/steer_measure.cpp src/steer_trigger.cpp src/steer_target.cpp \
+          src/steer_learn.cpp src/amon.cpp src/ctrl.cpp src/rrm_log.cpp src/devclass.cpp src/vendor_rssi.cpp \
           src/enroll.cpp src/check.cpp \
           src/main.cpp
 CLI := src/text.cpp src/os.cpp tools/donghoa_cli.cpp

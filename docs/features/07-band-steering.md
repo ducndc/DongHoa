@@ -1,9 +1,9 @@
 # 7. Band steering
 
-> **Source:** `src/steer.cpp` (`onStaPoll`, `buildPool`,
-> `failTxnNoCandidate`), `src/policy.cpp` (`isBandTriggered`,
-> `isBandUsable`, `hasHigherBand`), `src/hapd_parse.cpp` (Supported
-> Operating Classes, AKM) · **Requirements:** FR-TRG-2, FR-STR-2
+> **Source:** `src/steer_trigger.cpp` (`onStaPoll`), `src/steer_measure.cpp`
+> (`buildPool`), `src/steer.cpp` (`failTxnNoCandidate`), `src/policy.cpp`
+> (`isBandTriggered`, `isBandUsable`, `hasHigherBand`), `src/hapd_parse.cpp`
+> (Supported Operating Classes, AKM) · **Requirements:** FR-TRG-2, FR-STR-2
 
 ## What it does
 

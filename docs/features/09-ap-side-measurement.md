@@ -1,7 +1,7 @@
 # 9. AP-side measurement (STAs without 802.11k)
 
 > **Source:** `src/amon.cpp`, `src/vendor_rssi.{hpp,cpp}`, `src/rrm.cpp`
-> (`parseRadiotap`), `src/steer.cpp` (`requestMonitors`), `src/os.cpp`
+> (`parseRadiotap`), `src/steer_measure.cpp` (`requestMonitors`), `src/os.cpp`
 > (`openMonitor`, BPF) · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §7 ·
 > **Requirements:** FR-AMN, IR-13
 

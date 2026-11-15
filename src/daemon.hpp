@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // DongHoa daemon state and behaviour. All state lives in fixed-size tables
 // inside one Daemon object (no heap). The member functions are implemented
-// per area: msg.cpp, peer.cpp, local.cpp, steer.cpp, amon.cpp, ctrl.cpp,
+// per area: msg.cpp, peer.cpp, local.cpp, steer*.cpp, amon.cpp, ctrl.cpp,
 // main.cpp.
 #ifndef DONGHOA_DAEMON_HPP
 #define DONGHOA_DAEMON_HPP
@@ -415,7 +415,7 @@ public:
 	void removeNeighbor(const arcp::BssInfo &bi) noexcept;
 	arcp::StaEntry fillEntry(const Sta &s) const noexcept;
 
-	// ---- steer.cpp ----
+	// ---- steer*.cpp (steer.cpp lists the files) ----
 	void tickSteer(Millis now) noexcept;
 	void runLbRound() noexcept;
 	void onStaPoll(Sta &s) noexcept;
@@ -463,7 +463,7 @@ public:
 	void onStaRoam(const Peer &from, const arcp::StaRoam &r) noexcept;
 	// A roaming-threshold event of a local STA: store, share on change.
 	void noteRoamThr(Sta &s, int thresholdDbm, std::string_view why) noexcept;
-	// Q-learning of when to roam (steer.cpp).
+	// Q-learning of when to roam (steer_learn.cpp).
 	policy::RlMode rlMode() const noexcept;
 	void rlLearn(const Mac &sta, std::size_t s, policy::RlAction a, int rewardDb, bool terminal,
 		     std::size_t next) noexcept;
@@ -540,7 +540,7 @@ private:
 	void onHapdDisconnected(std::size_t bss, const Mac &addr) noexcept;
 	void onHapdBeaconResp(std::string_view args) noexcept;
 	void setNeighbor(LocalBss &lb, const arcp::BssInfo &bi) noexcept;
-	// steer.cpp helpers
+	// steer*.cpp helpers
 	void sendResult(const SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmStatus) noexcept;
 	void endTxn(SteerTxn &t, arcp::SteerOutcome outcome, std::uint8_t btmStatus,
 		     bool countFailure) noexcept;
@@ -614,7 +614,7 @@ private:
 	std::uint32_t mRng{0x9e3779b9U};
 	// Fault injection (DROPRX): drop the next mDropCount received messages
 	// of type mDropType, before ACK and processing, as if lost.
-	// Contextual bandit for the target choice (steer.cpp).
+	// Contextual bandit for the target choice (steer_learn.cpp).
 	policy::BanditTable mBandit{};
 	struct BanditStats {
 		std::uint32_t reordered{0U};

@@ -2,8 +2,8 @@
 
 > **Source:** `src/local.cpp` (`updateStaLink`, `aggregateLinks`,
 > `pruneStaLinks`, `getSta`), `src/hapd_parse.cpp` (MLD fields),
-> `src/proto.{hpp,cpp}` (BSS_INFO trailer, `isSameMld`), `src/steer.cpp`
-> (`buildPool`, `onStaEvent`) · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §3
+> `src/proto.{hpp,cpp}` (BSS_INFO trailer, `isSameMld`), `src/steer_measure.cpp`
+> (`buildPool`), `src/steer.cpp` (`onStaEvent`) · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §3
 > (BSS_INFO) · **Requirements:** FR-MLO
 
 ## What it does

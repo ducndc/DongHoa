@@ -1,8 +1,8 @@
 # 16. Contextual bandit: which target
 
 > **Source:** `src/policy.{hpp,cpp}` (`banditCtx`, `banditPriorDb`,
-> `banditValue`, `banditUpdate`), `src/steer.cpp` (`evaluate`,
-> `banditCredit`, ping-pong watch), `src/local.cpp` (ping-pong check),
+> `banditValue`, `banditUpdate`), `src/steer.cpp` (`evaluate`),
+> `src/steer_learn.cpp` (`banditCredit`, ping-pong watch), `src/local.cpp` (ping-pong check),
 > `src/ctrl.cpp` (`BANDIT`) · **Requirements:** FR-STR-11
 
 ## What it does

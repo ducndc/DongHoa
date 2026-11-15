@@ -90,7 +90,7 @@ flowchart TB
         MSG["msg.cpp<br/>ARCP rx/tx, reliability"]
         PEER["peer.cpp<br/>peer table, remote BSS/STA"]
         LOCAL["local.cpp<br/>BSS + STA table, events, neighbor DB"]
-        STEER["steer.cpp<br/>steering transactions, LB"]
+        STEER["steer*.cpp<br/>steering transactions, LB"]
         AMONC["amon.cpp<br/>AP-side measurement"]
         DEV["devclass.cpp<br/>low-power classes"]
     end

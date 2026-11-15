@@ -2,8 +2,10 @@
 
 How DongHoa moves a station (STA) to a better BSS. The source AP, which
 serves the STA, runs one transaction per STA through MEASURE, NEGOTIATE,
-BTM and ROAM (`src/steer.cpp`). The decision functions are pure and live in
-`src/policy.cpp`. The state machine as ASCII, and the parameter list, are in
+BTM and ROAM (`src/steer.cpp`; triggers, MEASURE, the target side and the
+learning features are in `src/steer_*.cpp`). The decision functions are pure
+and live in `src/policy.cpp`. The state machine as ASCII, and the parameter
+list, are in
 [ARCHITECTURE.md](ARCHITECTURE.md#steering-state-machine-source-ap-one-transaction-per-sta).
 Default values are shown in brackets.
 
