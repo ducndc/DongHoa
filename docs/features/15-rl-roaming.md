@@ -1,10 +1,10 @@
 # 15. Q-learning: when to roam
 
-> **Source:** `src/policy.{hpp,cpp}` (`rlState`, `rlInit`, `rlChoose`,
-> `rlUpdate`, `rlReward*`), `src/steer_learn.cpp` (`rlLearn`, `rlEndWait`),
-> `src/steer_trigger.cpp` (`onStaPoll`), `src/steer.cpp` (`endTxn`,
-> `failTxnNoCandidate`), `src/local.cpp` (trend input, link
-> drop), `src/ctrl.cpp` (`RL`) · **Requirements:** FR-TRG-8
+> **Source:** `src/core/policy.{hpp,cpp}` (`rlState`, `rlInit`, `rlChoose`,
+> `rlUpdate`, `rlReward*`), `src/daemon/steer_learn.cpp` (`rlLearn`, `rlEndWait`),
+> `src/daemon/steer_trigger.cpp` (`onStaPoll`), `src/daemon/steer.cpp` (`endTxn`,
+> `failTxnNoCandidate`), `src/daemon/local.cpp` (trend input, link
+> drop), `src/daemon/ctrl.cpp` (`RL`) · **Requirements:** FR-TRG-8
 
 ## What it does
 

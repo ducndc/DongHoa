@@ -1,7 +1,7 @@
 # 4. Local monitoring
 
-> **Source:** `src/local.cpp`, `src/hapd.cpp`, `src/hapd_parse.cpp`,
-> `src/survey.cpp`, `src/nlparse.cpp` · **Requirements:** FR-MON,
+> **Source:** `src/daemon/local.cpp`, `src/io/hapd.cpp`, `src/core/hapd_parse.cpp`,
+> `src/io/survey.cpp`, `src/core/nlparse.cpp` · **Requirements:** FR-MON,
 > NFR-PRF-4, IR-12 · **Design:** [SDD.md](../SDD.md) §6.4
 
 ## What it does

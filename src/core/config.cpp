@@ -1,0 +1,481 @@
+// SPDX-License-Identifier: MIT
+#include "core/config.hpp"
+
+#include <limits>
+
+#include "base/os.hpp"
+#include "base/text.hpp"
+#include "core/sha256.hpp"
+
+namespace donghoa {
+
+namespace {
+
+constexpr LogModule LOG_MODULE{LogModule::CONFIG};
+
+// Integer and boolean keys, as typed pointers to members (no offsetof).
+struct PolInt {
+	std::string_view key;
+	int PolicyConfig::*field;
+};
+
+struct PolBool {
+	std::string_view key;
+	bool PolicyConfig::*field;
+};
+
+struct CfgInt {
+	std::string_view key;
+	int Config::*field;
+};
+
+constexpr std::array<CfgInt, 6U> CFG_INTS{{
+	{"hello_interval_ms", &Config::helloMs},
+	{"bss_status_interval_ms", &Config::bssStatusMs},
+	{"sta_status_interval_ms", &Config::staStatusMs},
+	{"rf_status_interval_ms", &Config::rfStatusMs},
+	{"sta_poll_interval_ms", &Config::staPollMs},
+	{"peer_timeout_ms", &Config::peerTimeoutMs},
+}};
+
+constexpr std::array<PolBool, 15U> POL_BOOLS{{
+	{"roam_thr_learn", &PolicyConfig::roamThrLearn},
+	{"amon_offset_learn", &PolicyConfig::amonOffsetLearn},
+	{"rssi_steering", &PolicyConfig::rssiSteering},
+	{"load_balancing", &PolicyConfig::loadBalancing},
+	{"band_steering", &PolicyConfig::bandSteering},
+	{"band_steer_6g", &PolicyConfig::bandSteer6g},
+	{"lb_only_idle", &PolicyConfig::lbOnlyIdle},
+	{"disassoc_imminent", &PolicyConfig::disassocImminent},
+	{"assume_kvr", &PolicyConfig::assumeKvr},
+	{"amon_request", &PolicyConfig::amonRequest},
+	{"lp_classify", &PolicyConfig::lpClassify},
+	{"lp_no_steer", &PolicyConfig::lpNoSteer},
+	{"lp_exclude_vht", &PolicyConfig::lpExcludeVht},
+	{"lp_exclude_he", &PolicyConfig::lpExcludeHe},
+	{"lp_exclude_eht", &PolicyConfig::lpExcludeEht},
+}};
+
+constexpr std::array<PolInt, 44U> POL_INTS{{
+	{"roam_thr_min", &PolicyConfig::roamThrMin},
+	{"roam_thr_max", &PolicyConfig::roamThrMax},
+	{"amon_offset_min_samples", &PolicyConfig::amonOffsetMinSamples},
+	{"rssi_low", &PolicyConfig::rssiLow},
+	{"rssi_low_count", &PolicyConfig::rssiLowCount},
+	{"rssi_hysteresis", &PolicyConfig::rssiHysteresis},
+	{"rssi_min_target", &PolicyConfig::rssiMinTarget},
+	{"band_steer_rssi", &PolicyConfig::bandSteerRssi},
+	{"band_steer_6g_rssi", &PolicyConfig::bandSteer6gRssi},
+	{"util_high", &PolicyConfig::utilHigh},
+	{"util_admit_max", &PolicyConfig::utilAdmitMax},
+	{"lb_margin", &PolicyConfig::lbMargin},
+	{"lb_rssi_tolerance", &PolicyConfig::lbRssiTolerance},
+	{"idle_kbps", &PolicyConfig::idleKbps},
+	{"lb_interval_ms", &PolicyConfig::lbIntervalMs},
+	{"lb_min_drop_pct", &PolicyConfig::lbMinDropPct},
+	{"lb_max_futile", &PolicyConfig::lbMaxFutile},
+	{"lb_hold_ms", &PolicyConfig::lbHoldMs},
+	{"util_weight", &PolicyConfig::utilWeight},
+	{"band_bonus_5g", &PolicyConfig::bandBonus5g},
+	{"band_bonus_6g", &PolicyConfig::bandBonus6g},
+	{"steer_cooldown_ms", &PolicyConfig::steerCooldownMs},
+	{"steer_backoff_max_ms", &PolicyConfig::steerBackoffMaxMs},
+	{"beacon_req_timeout_ms", &PolicyConfig::beaconReqTimeoutMs},
+	{"steer_resp_timeout_ms", &PolicyConfig::steerRespTimeoutMs},
+	{"btm_timeout_ms", &PolicyConfig::btmTimeoutMs},
+	{"roam_timeout_ms", &PolicyConfig::roamTimeoutMs},
+	{"reserve_hold_ms", &PolicyConfig::reserveHoldMs},
+	{"btm_valid_int", &PolicyConfig::btmValidInt},
+	{"disassoc_timer", &PolicyConfig::disassocTimer},
+	{"beacon_duration", &PolicyConfig::beaconDuration},
+	{"tput_rssi_mid", &PolicyConfig::tputRssiMid},
+	{"tput_gain_pct", &PolicyConfig::tputGainPct},
+	{"sta_nss", &PolicyConfig::staNss},
+	{"amon_duration_ms", &PolicyConfig::amonDurationMs},
+	{"amon_rssi_offset", &PolicyConfig::amonRssiOffset},
+	{"lp_threshold", &PolicyConfig::lpThreshold},
+	{"lp_hysteresis", &PolicyConfig::lpHysteresis},
+	{"lp_score_max", &PolicyConfig::lpScoreMax},
+	{"lp_min_samples", &PolicyConfig::lpMinSamples},
+	{"lp_max_mean_bps", &PolicyConfig::lpMaxMeanBps},
+	{"lp_alpha_2g", &PolicyConfig::lpAlpha2g},
+	{"lp_alpha_5g", &PolicyConfig::lpAlpha5g},
+	{"lp_alpha_6g", &PolicyConfig::lpAlpha6g},
+}};
+
+std::optional<int> parseInt(std::string_view v) noexcept
+{
+	std::optional<int> r;
+	const std::optional<long> n =
+		parseLong(v, 10, std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
+	if (n.has_value()) {
+		r = static_cast<int>(*n);
+	}
+	return r;
+}
+
+// UDP port 1..65535
+bool parsePort(std::string_view v, std::uint16_t &port) noexcept
+{
+	const std::optional<long> n = parseLong(v, 10, 1, 65535);
+	if (n.has_value()) {
+		port = static_cast<std::uint16_t>(*n);
+	}
+	return n.has_value();
+}
+
+// "bss <ifname> [mdid=<hex>] [max_sta=<n>] [ft_over_ds=1]"
+bool parseBss(Config &c, std::string_view args) noexcept
+{
+	Tokens t(args, " \t");
+	std::string_view tok;
+	bool ok = t.next(tok);
+
+	if (ok) {
+		BssCfg b;
+		(void)b.ifname.assign(tok);
+		while (ok && t.next(tok)) {
+			if (startsWith(tok, "mdid=")) {
+				const std::optional<long> v = parseLong(subView(tok, 5U), 16, 0, 0xffff);
+				ok = v.has_value();
+				b.mdid = ok ? static_cast<std::uint16_t>(*v) : 0U;
+			} else if (startsWith(tok, "max_sta=")) {
+				const std::optional<long> v = parseLong(subView(tok, 8U), 10, 0, 65535);
+				ok = v.has_value();
+				b.maxSta = ok ? static_cast<int>(*v) : 0;
+			} else if (tok == "ft_over_ds=1") {
+				b.ftOverDs = true;
+			} else {
+				ok = false;
+			}
+		}
+		if (ok && (c.nBss < MAX_BSS)) {
+			c.bss[c.nBss] = b;
+			c.nBss++;
+		} else if (ok) {
+			if (c.nBssSkipped == 0U) {
+				c.bssSkippedFirst = b.ifname;
+			}
+			c.nBssSkipped++;
+		} else {
+			// invalid line
+		}
+	}
+	return ok;
+}
+
+// "hex:<32..128 hex digits>", or a passphrase (8..KEY_PASSPHRASE_MAX
+// characters) stretched to 32 bytes with PBKDF2-HMAC-SHA256 (KEY_KDF_SALT,
+// KEY_KDF_ITERATIONS), so a captured frame does not allow fast offline
+// guessing of the passphrase.
+bool parseKey(Config &c, std::string_view v) noexcept
+{
+	bool ok = false;
+	if (v == KEY_PLACEHOLDER) {
+		c.keyPlaceholder = true;
+	} else if (startsWith(v, "hex:")) {
+		const std::optional<std::size_t> n = hexDecode(subView(v, 4U), spanOf(c.key));
+		ok = n.has_value() && (*n >= 16U);
+		c.keyLen = ok ? *n : 0U;
+	} else if ((v.size() >= 8U) && (v.size() <= KEY_PASSPHRASE_MAX)) {
+		std::array<std::uint8_t, KEY_PASSPHRASE_MAX> pw{};
+		std::array<std::uint8_t, KEY_KDF_SALT.size()> salt{};
+		for (std::size_t i = 0U; i < v.size(); i++) {
+			pw[i] = static_cast<std::uint8_t>(v[i]);
+		}
+		for (std::size_t i = 0U; i < salt.size(); i++) {
+			salt[i] = static_cast<std::uint8_t>(KEY_KDF_SALT[i]);
+		}
+		const Digest d = pbkdf2Sha256(viewOf(pw).first(v.size()), viewOf(salt), KEY_KDF_ITERATIONS);
+		c.keyLen = copyBytes(spanOf(c.key), viewOf(d));
+		ok = true;
+	} else {
+		// too short
+	}
+	return ok;
+}
+
+// "hex:<64 hex digits>" -> exactly 32 bytes
+bool parseHex32(std::string_view v, std::array<std::uint8_t, 32U> &out) noexcept
+{
+	bool ok = startsWith(v, "hex:");
+	if (ok) {
+		std::array<std::uint8_t, 33U> tmp{};
+		const std::optional<std::size_t> n = hexDecode(subView(v, 4U), spanOf(tmp));
+		ok = n.has_value() && (*n == 32U);
+		for (std::size_t i = 0U; ok && (i < 32U); i++) {
+			out[i] = tmp[i];
+		}
+	}
+	return ok;
+}
+
+// "sign_seed hex:<64>": this AP's Ed25519 private seed
+bool parseSignSeed(Config &c, std::string_view v) noexcept
+{
+	ed25519::Seed seed{};
+	const bool ok = parseHex32(v, seed);
+	if (ok) {
+		c.signKey = ed25519::keyPairFromSeed(seed);
+		c.signing = true;
+	}
+	return ok;
+}
+
+// "peer_key <ap_id> hex:<64>": a trusted AP and its public key (once each)
+bool parsePeerKey(Config &c, std::string_view v) noexcept
+{
+	Tokens t(v, " \t");
+	std::string_view macTok;
+	std::string_view keyTok;
+	std::string_view extra;
+	TrustedKey k;
+	bool ok = t.next(macTok) && t.next(keyTok) && !t.next(extra);
+	if (ok) {
+		const std::optional<Mac> m = parseMac(macTok);
+		ok = m.has_value() && parseHex32(keyTok, k.pub) && ed25519::isValidPublicKey(k.pub);
+		k.apId = m.has_value() ? *m : Mac{};
+	}
+	ok = ok && (c.findTrusted(k.apId) == nullptr) && (c.nTrusted < c.trusted.size());
+	if (ok) {
+		c.trusted[c.nTrusted] = k;
+		c.nTrusted++;
+	}
+	return ok;
+}
+
+// "log_debug steer,amon msg": modules logged at debug level
+bool parseLogDebug(Config &c, std::string_view v) noexcept
+{
+	Tokens t(v, " \t,");
+	std::string_view tok;
+	bool ok = false;
+
+	while (t.next(tok)) {
+		const std::optional<LogModule> m = logging::parseModule(tok);
+		if (!m.has_value()) {
+			return false;
+		}
+		c.logDebugMask |= 1U << static_cast<std::uint32_t>(*m);
+		ok = true;
+	}
+	return ok;
+}
+
+bool parseNumeric(Config &c, std::string_view k, std::string_view v, bool &known) noexcept
+{
+	bool ok = false;
+	known = false;
+
+	for (const CfgInt &o : CFG_INTS) {
+		if (!known && (k == o.key)) {
+			known = true;
+			const std::optional<int> n = parseInt(v);
+			ok = n.has_value();
+			if (ok) {
+				c.*(o.field) = *n;
+			}
+		}
+	}
+	for (const PolInt &o : POL_INTS) {
+		if (!known && (k == o.key)) {
+			known = true;
+			const std::optional<int> n = parseInt(v);
+			ok = n.has_value();
+			if (ok) {
+				c.pol.*(o.field) = *n;
+			}
+		}
+	}
+	for (const PolBool &o : POL_BOOLS) {
+		if (!known && (k == o.key)) {
+			known = true;
+			const std::optional<int> n = parseInt(v);
+			ok = n.has_value();
+			if (ok) {
+				c.pol.*(o.field) = (*n != 0);
+			}
+		}
+	}
+	return ok;
+}
+
+} // namespace
+
+bool parseConfigLine(Config &c, std::string_view line) noexcept
+{
+	std::string_view s = line;
+	const std::size_t hash = s.find('#');
+
+	if (hash != std::string_view::npos) {
+		s = subView(s, 0U, hash);
+	}
+	s = trim(s);
+	if (s.empty()) {
+		return true;
+	}
+	std::size_t sp = 0U;
+	while ((sp < s.size()) && !isSpace(s[sp])) {
+		sp++;
+	}
+	const std::string_view k = subView(s, 0U, sp);
+	const std::string_view v = trim(subView(s, sp));
+	bool ok = true;
+
+	if (k == "name") {
+		(void)c.name.assign(v);
+	} else if (k == "ap_id") {
+		const std::optional<Mac> m = parseMac(v);
+		ok = m.has_value();
+		if (ok) {
+			c.apId = *m;
+			c.apIdSet = true;
+		}
+	} else if (k == "iface") {
+		ok = (c.nIfaces < MAX_L2_PORTS) && !v.empty();
+		if (ok) {
+			(void)c.ifaces[c.nIfaces].assign(v);
+			c.nIfaces++;
+		}
+	} else if (k == "sim_port") {
+		ok = parsePort(v, c.simPort);
+	} else if (k == "sim_peer") {
+		ok = (c.nSimPeers < MAX_SIM_PEERS) && parsePort(v, c.simPeers[c.nSimPeers]);
+		if (ok) {
+			c.nSimPeers++;
+		}
+	} else if (k == "hostapd_ctrl_dir") {
+		ok = c.hostapdDir.assign(v);
+	} else if (k == "ctrl_socket") {
+		ok = c.ctrlSocket.assign(v);
+	} else if (k == "log_level") {
+		const std::optional<LogLevel> l = logging::parseLevel(v);
+		ok = l.has_value();
+		if (ok) {
+			c.logLevel = *l;
+		}
+	} else if (k == "log_debug") {
+		ok = parseLogDebug(c, v);
+	} else if (k == "air_monitor") {
+		ok = (c.nMonitors < MAX_MONITORS) && !v.empty();
+		if (ok) {
+			(void)c.monitors[c.nMonitors].assign(v);
+			c.nMonitors++;
+		}
+	} else if (k == "air_monitor_sim") {
+		ok = parsePort(v, c.monitorSimPort);
+	} else if (k == "sta_rssi_api") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		if (ok) {
+			c.staRssiApi = *n == 1;
+		}
+	} else if (k == "sta_rssi_sim") {
+		ok = !v.empty() && c.staRssiSim.assign(v);
+		c.staRssiApi = c.staRssiApi || ok;
+	} else if (k == "bss") {
+		ok = parseBss(c, v);
+	} else if (k == "key") {
+		ok = parseKey(c, v);
+	} else if (k == "sign_seed") {
+		ok = parseSignSeed(c, v);
+	} else if (k == "peer_key") {
+		ok = parsePeerKey(c, v);
+	} else if (k == "liveness_check") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		c.livenessCheck = ok && (*n == 1);
+	} else if (k == "enroll") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		c.enroll = ok && (*n == 1);
+	} else if (k == "seed_file") {
+		ok = !v.empty() && c.seedFile.assign(v);
+	} else if (k == "trust_file") {
+		ok = !v.empty() && c.trustFile.assign(v);
+	} else if (k == "bandit_target") {
+		const std::optional<long> n = parseLong(v, 10, 0, 2);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.banditTarget = static_cast<int>(*n);
+		}
+	} else if (k == "bandit_epsilon_pct") {
+		const std::optional<long> n = parseLong(v, 10, 0, 100);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.banditEpsilonPct = static_cast<int>(*n);
+		}
+	} else if (k == "rl_roam") {
+		const std::optional<long> n = parseLong(v, 10, 0, 2);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.rlRoam = static_cast<int>(*n);
+		}
+	} else if (k == "rl_epsilon_pct") {
+		const std::optional<long> n = parseLong(v, 10, 0, 100);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.rlEpsilonPct = static_cast<int>(*n);
+		}
+	} else if (k == "score_model") {
+		const std::optional<long> n = parseLong(v, 10, 0, 1);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.scoreModel = (*n == 1) ? ScoreModel::TPUT : ScoreModel::LINEAR;
+		}
+	} else if (k == "beacon_mode") {
+		const std::optional<long> n = parseLong(v, 10, 0, 2);
+		ok = n.has_value();
+		if (ok) {
+			c.pol.beaconMode = (*n == 0) ? rrm::BeaconMode::PASSIVE
+					    : ((*n == 1) ? rrm::BeaconMode::ACTIVE : rrm::BeaconMode::TABLE);
+		}
+	} else {
+		bool known = false;
+		ok = parseNumeric(c, k, v, known) && known;
+	}
+	return ok;
+}
+
+bool loadConfig(Config &c, const char *path) noexcept
+{
+	FixedString<16384U> text;
+	bool ok = os::readTextFile(path, text);
+
+	if (!ok) {
+		logging::err(LOG_MODULE, "cannot open {}", path);
+	}
+	std::string_view rest = text.view();
+	std::size_t lineno = 0U;
+	while (ok && !rest.empty()) {
+		const std::size_t eol = rest.find('\n');
+		const std::string_view line = (eol == std::string_view::npos) ? rest : subView(rest, 0U, eol);
+
+		lineno++;
+		if (!parseConfigLine(c, line)) {
+			if (c.keyPlaceholder) {
+				logging::err(LOG_MODULE, "{}:{}: 'key' is the public example value: "
+					     "set a secret of your own (the same on every AP)", path, lineno);
+			} else {
+				logging::err(LOG_MODULE, "{}:{}: invalid line", path, lineno);
+			}
+			ok = false;
+		}
+		rest = (eol == std::string_view::npos) ? std::string_view() : subView(rest, eol + 1U);
+	}
+	if (ok && !c.enroll && (c.signing != (c.nTrusted > 0U))) {
+		logging::err(LOG_MODULE, "'sign_seed' and 'peer_key' go together: set both or neither");
+		ok = false;
+	}
+	if (ok && (c.nBss == 0U)) {
+		logging::err(LOG_MODULE, "no 'bss' configured");
+		ok = false;
+	}
+	if (ok && (c.nIfaces == 0U) && (c.simPort == 0U)) {
+		logging::err(LOG_MODULE, "no 'iface' (or sim_port) configured");
+		ok = false;
+	}
+	return ok;
+}
+
+} // namespace donghoa

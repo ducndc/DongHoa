@@ -1,7 +1,7 @@
 # 2. Peer discovery and state exchange
 
-> **Source:** `src/msg.cpp` (`send*`, `handleTlvs`, `receiveMsg`),
-> `src/peer.cpp` · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §3–§4 ·
+> **Source:** `src/daemon/msg.cpp` (`send*`, `handleTlvs`, `receiveMsg`),
+> `src/daemon/peer.cpp` · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §3–§4 ·
 > **Requirements:** FR-DSC, FR-STE
 
 ## What it does

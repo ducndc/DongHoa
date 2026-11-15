@@ -39,8 +39,8 @@ Scenarios:
      key survive a restart
 
 Environment:
-  DONGHOA_BIN, DONGHOA_CLI_BIN  commands to run instead of ./donghoa and
-      ./donghoa_cli, e.g. "<sdk>/lib/ld-musl-x86_64.so.1 <pkgdir>/donghoa"
+  DONGHOA_BIN, DONGHOA_CLI_BIN  commands to run instead of build/bin/donghoa
+      and build/bin/donghoa_cli, e.g. "<sdk>/lib/ld-musl-x86_64.so.1 <pkgdir>/donghoa"
       to run binaries built with the OpenWrt SDK
   DONGHOA_ITEST_EXTRA  extra config lines for every AP, ";"-separated
   DONGHOA_ITEST_DIR    directory for configs and logs (default: a new
@@ -72,8 +72,8 @@ import ed25519_ref  # noqa: E402
 from mock_hostapd import Sta, World  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DONGHOA = shlex.split(os.environ.get("DONGHOA_BIN", os.path.join(ROOT, "donghoa")))
-CLI = shlex.split(os.environ.get("DONGHOA_CLI_BIN", os.path.join(ROOT, "donghoa_cli")))
+DONGHOA = shlex.split(os.environ.get("DONGHOA_BIN", os.path.join(ROOT, "build", "bin", "donghoa")))
+CLI = shlex.split(os.environ.get("DONGHOA_CLI_BIN", os.path.join(ROOT, "build", "bin", "donghoa_cli")))
 STA_MAC = "aa:bb:cc:dd:ee:01"
 STA2_MAC = "aa:bb:cc:dd:ee:02"  # no 802.11k
 B1, B2 = "02:00:00:00:01:00", "02:00:00:00:02:00"

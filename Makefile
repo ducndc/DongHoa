@@ -9,45 +9,83 @@ DH_CXXFLAGS := -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
 LDFLAGS ?=
 DH_LDFLAGS := -Wl,--as-needed
 
-CORE := src/text.cpp src/log.cpp src/os.cpp src/sha256.cpp src/sha512.cpp src/ed25519.cpp src/trust.cpp src/proto.cpp src/rrm.cpp \
-        src/config.cpp src/policy.cpp src/hapd_parse.cpp src/nlparse.cpp src/consistency.cpp src/metrics.cpp
-DAEMON := $(CORE) src/l2.cpp src/hapd.cpp src/survey.cpp src/peer.cpp src/local.cpp \
-          src/msg.cpp src/steer.cpp src/steer_measure.cpp src/steer_trigger.cpp src/steer_target.cpp \
-          src/steer_learn.cpp src/amon.cpp src/ctrl.cpp src/rrm_log.cpp src/devclass.cpp src/vendor_rssi.cpp \
-          src/enroll.cpp src/check.cpp \
-          src/main.cpp
-CLI := src/text.cpp src/os.cpp tools/donghoa_cli.cpp
-TESTS := tests/test_unit
+# Everything built lands under $(BUILD): objects in obj/, binaries in bin/.
+# One object per source with header dependencies (-MMD), so an edit rebuilds
+# only what uses it; use make -j. A second configuration lives beside the
+# first under another BUILD, e.g.
+#   make BUILD=build/asan CXXFLAGS="-O1 -g -fsanitize=address,undefined" itest
+BUILD ?= build
+OBJ := $(BUILD)/obj
+BIN := $(BUILD)/bin
+
+# The directory is the layer (docs/ARCHITECTURE.md): base <- core <- io <-
+# daemon, and cli on base alone. A file dropped into a directory joins the
+# matching binaries; base and core are also what the unit tests and the fuzz
+# targets link, so they stay free of daemon state.
+BASE_SRC := $(sort $(wildcard src/base/*.cpp))
+CORE_SRC := $(sort $(wildcard src/core/*.cpp))
+IO_SRC := $(sort $(wildcard src/io/*.cpp))
+DAEMON_SRC := $(sort $(wildcard src/daemon/*.cpp))
+PURE_SRC := $(BASE_SRC) $(CORE_SRC)
+CLI_SRC := src/base/text.cpp src/base/os.cpp src/cli/donghoa_cli.cpp
+TEST_SRC := $(sort $(wildcard tests/unit/*.cpp))
+HDRS := $(wildcard src/*/*.hpp)
+
+objs = $(patsubst %.cpp,$(OBJ)/%.o,$(1))
+DAEMON_OBJ := $(call objs,$(PURE_SRC) $(IO_SRC) $(DAEMON_SRC))
+CLI_OBJ := $(call objs,$(CLI_SRC))
+TEST_OBJ := $(call objs,$(TEST_SRC) $(PURE_SRC))
+ALL_OBJ := $(sort $(DAEMON_OBJ) $(CLI_OBJ) $(TEST_OBJ))
+
+# make V=1 prints the full commands.
+Q := $(if $(V),,@)
 
 all: donghoa donghoa_cli
 
-donghoa: $(DAEMON) src/*.hpp
-	$(CXX) $(DH_CXXFLAGS) $(CXXFLAGS) -o $@ $(DAEMON) $(DH_LDFLAGS) $(LDFLAGS)
+donghoa: $(BIN)/donghoa
+donghoa_cli: $(BIN)/donghoa_cli
 
-donghoa_cli: $(CLI) src/*.hpp
-	$(CXX) $(DH_CXXFLAGS) $(CXXFLAGS) -o $@ $(CLI) $(DH_LDFLAGS) $(LDFLAGS)
+$(BIN)/donghoa: $(DAEMON_OBJ)
+$(BIN)/donghoa_cli: $(CLI_OBJ)
+$(BIN)/test_unit: $(TEST_OBJ)
 
-tests/test_unit: tests/test_unit.cpp $(CORE) src/*.hpp
-	$(CXX) $(DH_CXXFLAGS) $(CXXFLAGS) -Wno-old-style-cast -Wno-useless-cast -o $@ tests/test_unit.cpp $(CORE) $(DH_LDFLAGS) $(LDFLAGS)
+$(BIN)/%:
+	@mkdir -p $(@D)
+	@echo "  LD   $@"
+	$(Q)$(CXX) $(DH_CXXFLAGS) $(CXXFLAGS) -o $@ $^ $(DH_LDFLAGS) $(LDFLAGS)
 
-test: $(TESTS)
-	./tests/test_unit
+# Test code may use casts the production code may not (CODING_CONVENTION §6.1).
+$(OBJ)/tests/%.o: DH_CXXFLAGS += -Wno-old-style-cast -Wno-useless-cast
 
-# Two daemons + two mock hostapd instances over the UDP "sim" transport.
+$(OBJ)/%.o: %.cpp
+	@mkdir -p $(@D)
+	@echo "  CXX  $<"
+	$(Q)$(CXX) $(DH_CXXFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+-include $(ALL_OBJ:.o=.d)
+
+# make test T=policy runs only the tests whose name contains "policy".
+test: $(BIN)/test_unit
+	$(BIN)/test_unit $(T)
+
+# Real daemons + mock hostapd instances over the UDP "sim" transport.
 # No root needed.
+DONGHOA_BIN ?= $(abspath $(BIN)/donghoa)
+DONGHOA_CLI_BIN ?= $(abspath $(BIN)/donghoa_cli)
 itest: donghoa donghoa_cli
-	python3 tests/itest.py
+	DONGHOA_BIN="$(DONGHOA_BIN)" DONGHOA_CLI_BIN="$(DONGHOA_CLI_BIN)" python3 tests/itest.py
 
 # The binaries must not depend on libstdc++.so (it is not on the router).
 check-deps: donghoa donghoa_cli
-	@! readelf -d donghoa donghoa_cli | grep -E 'NEEDED.*(libstdc\+\+|libgcc_s)' && echo "deps OK: libc only"
+	@! readelf -d $(BIN)/donghoa $(BIN)/donghoa_cli | grep -E 'NEEDED.*(libstdc\+\+|libgcc_s)' \
+		&& echo "deps OK: libc only"
 
 # General static analysis (cppcheck has no MISRA C++ addon; see
 # docs/CODING_CONVENTION.md for how MISRA C++:2023 is enforced).
 CPPCHECK = cppcheck --std=c++17 --language=c++ --enable=warning,portability --inline-suppr \
 	-Isrc --suppress=missingIncludeSystem -q --template='{file}:{line}: {severity} {id}: {message}'
 cppcheck:
-	@$(CPPCHECK) src tools
+	@$(CPPCHECK) src
 
 # Coding-convention rules the compiler does not enforce (docs/CODING_CONVENTION.md §7)
 style:
@@ -61,9 +99,9 @@ FUZZ_TARGETS := arcp radio text
 FUZZ_FLAGS := -std=c++17 -fno-exceptions -fno-rtti -Isrc -O1 -g \
 	-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined
 
-build/fuzz/fuzz_%: fuzz/fuzz_%.cpp $(CORE) src/*.hpp
+build/fuzz/fuzz_%: fuzz/fuzz_%.cpp $(PURE_SRC) $(HDRS)
 	@mkdir -p build/fuzz
-	$(FUZZ_CXX) $(FUZZ_FLAGS) -o $@ $< $(CORE)
+	$(FUZZ_CXX) $(FUZZ_FLAGS) -o $@ $< $(PURE_SRC)
 
 fuzz-build: $(FUZZ_TARGETS:%=build/fuzz/fuzz_%)
 
@@ -86,7 +124,6 @@ fuzz-repro: fuzz-build
 	build/fuzz/fuzz_$(T) $(F)
 
 clean:
-	rm -f donghoa donghoa_cli $(TESTS)
-	rm -rf build/fuzz
+	rm -rf $(OBJ) $(BIN) build/fuzz
 
-.PHONY: all test itest check-deps cppcheck style clean fuzz fuzz-build fuzz-repro
+.PHONY: all donghoa donghoa_cli test itest check-deps cppcheck style clean fuzz fuzz-build fuzz-repro

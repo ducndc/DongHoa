@@ -37,8 +37,7 @@ endef
 
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) $(DONGHOA_SRC_DIR)/Makefile $(DONGHOA_SRC_DIR)/src $(DONGHOA_SRC_DIR)/tools \
-		$(PKG_BUILD_DIR)/
+	$(CP) $(DONGHOA_SRC_DIR)/Makefile $(DONGHOA_SRC_DIR)/src $(PKG_BUILD_DIR)/
 endef
 
 # C++17 without exceptions, RTTI or heap: the binaries link only libc
@@ -46,12 +45,13 @@ endef
 define Build/Compile
 	cd $(PKG_BUILD_DIR) && \
 		CXX="$(TARGET_CXX)" CXXFLAGS="$(TARGET_CXXFLAGS)" LDFLAGS="$(TARGET_LDFLAGS)" \
-		$(MAKE) donghoa donghoa_cli
+		$(MAKE) BUILD=build donghoa donghoa_cli
 endef
 
 define Package/donghoa/install
 	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d $(1)/lib/upgrade/keep.d
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/donghoa $(PKG_BUILD_DIR)/donghoa_cli $(1)/usr/sbin/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/build/bin/donghoa $(PKG_BUILD_DIR)/build/bin/donghoa_cli \
+		$(1)/usr/sbin/
 	$(INSTALL_BIN) ./files/donghoa.init $(1)/etc/init.d/donghoa
 	$(INSTALL_CONF) ./files/donghoa.conf $(1)/etc/donghoa.conf
 	# automatic enrollment: key and trust table survive a sysupgrade

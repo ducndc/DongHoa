@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Style check for docs/CODING_CONVENTION.md rules that the compiler does
-not enforce. Usage: style_check.py [files...] (default: src/ and tools/).
+not enforce. Usage: style_check.py [files...] (default: all of src/).
 Prints <file>:<line>: <rule>: <text> per finding and exits 1 if any.
 
 Checked: line width <= 110 (tab = 8), indentation starts with tabs, no
@@ -12,7 +12,9 @@ switch has 'default' (9.4.2), classic for loops compare with '<' (9.5.1),
 constexpr constants in UPPER_CASE (4), no function-local 'static' variable
 (6.7.1), no new/delete/malloc, allocating std types, NULL, goto, union,
 exceptions, throwing library calls (.substr/.at), C stdio outside os.cpp,
-and namespace-scope variables only as listed in DEV-05."""
+namespace-scope variables only as listed in DEV-05, and the layering of
+src/: an include names its directory ("core/proto.hpp") and never points
+to a higher layer (base < core < io < daemon; cli uses base alone)."""
 import glob
 import os
 import re
@@ -20,6 +22,10 @@ import sys
 
 LIMIT = 110
 # DEV-05: the only namespace-scope variables allowed (CODING_CONVENTION §6.2).
+# Source layers (CODING_CONVENTION §4): a file includes its own layer and the ones below.
+LAYER_RANK = {"base": 0, "core": 1, "io": 2, "daemon": 3}
+LAYER_MAY_USE = {"base": {"base"}, "core": {"base", "core"}, "io": {"base", "core", "io"},
+                 "daemon": {"base", "core", "io", "daemon"}, "cli": {"base"}}
 DEV05 = {"sDaemon", "sLevels", "sSyslog", "sCounter", "sStop", "sBpf", "sBpfProg", "sSimPath", "sSim", "sSimText"}
 
 
@@ -69,6 +75,22 @@ def check_file(path, root, findings):
             add(n, "4 trailing whitespace", l)
         if "/*" in code[n - 1]:
             add(n, "5.7.1 '/*' comment", l)
+
+    # layering: src/<layer>/<file> includes "<layer>/<header>" of its own layer or a lower one
+    parts = rel.split(os.sep)
+    layer = parts[1] if (len(parts) == 3 and parts[0] == "src") else None
+    if parts[0] == "src" and layer not in LAYER_MAY_USE:
+        add(1, "4 source file outside the layer directories (base, core, io, daemon, cli)", rel)
+    for n, l in enumerate(lines, 1):
+        m = re.match(r'^\s*#\s*include\s+"([^"]*)"', l)
+        if m and layer in LAYER_MAY_USE:
+            inc = m.group(1).split("/")
+            if len(inc) != 2 or inc[0] not in LAYER_RANK:
+                add(n, "4 include must name its layer directory (\"core/proto.hpp\")", l)
+            elif inc[0] not in LAYER_MAY_USE[layer]:
+                add(n, "4 %s/ must not include %s/ (layers: base < core < io < daemon)" % (layer, inc[0]), l)
+            elif not os.path.exists(os.path.join(root, "src", inc[0], inc[1])):
+                add(n, "4 included file does not exist", l)
 
     # macros and include guard
     guard = "DONGHOA_" + base.rsplit(".", 1)[0].upper() + "_HPP"
@@ -174,8 +196,7 @@ def check_file(path, root, findings):
 
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    files = sys.argv[1:] or sorted(glob.glob(os.path.join(root, "src", "*.[ch]pp")) +
-                                   glob.glob(os.path.join(root, "tools", "*.cpp")))
+    files = sys.argv[1:] or sorted(glob.glob(os.path.join(root, "src", "**", "*.[ch]pp"), recursive=True))
     findings = []
     for f in files:
         check_file(f, root, findings)

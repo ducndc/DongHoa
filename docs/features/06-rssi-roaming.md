@@ -1,7 +1,7 @@
 # 6. RSSI roaming
 
-> **Source:** `src/steer_trigger.cpp` (`onStaPoll`), `src/local.cpp`
-> (`applyStaSignal`), `src/policy.cpp` (`isRssiTriggered`,
+> **Source:** `src/daemon/steer_trigger.cpp` (`onStaPoll`), `src/daemon/local.cpp`
+> (`applyStaSignal`), `src/core/policy.cpp` (`isRssiTriggered`,
 > `isSignalFresh`, `score`) · **Requirements:** FR-TRG-1, FR-POL
 
 ## What it does

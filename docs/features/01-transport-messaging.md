@@ -1,7 +1,7 @@
 # 1. Transport and messaging
 
-> **Source:** `src/l2.cpp`, `src/msg.cpp`, `src/peer.cpp` (`acceptPeerSeq`),
-> `src/proto.{hpp,cpp}`, `src/sha256.cpp`, `src/sha512.cpp`, `src/ed25519.cpp` · **Spec:** [PROTOCOL.md](../PROTOCOL.md)
+> **Source:** `src/io/l2.cpp`, `src/daemon/msg.cpp`, `src/daemon/peer.cpp` (`acceptPeerSeq`),
+> `src/core/proto.{hpp,cpp}`, `src/core/sha256.cpp`, `src/core/sha512.cpp`, `src/core/ed25519.cpp` · **Spec:** [PROTOCOL.md](../PROTOCOL.md)
 > §1–§5 · **Requirements:** FR-REL, FR-SEC, IR-8, IR-11
 
 ## What it does
@@ -261,7 +261,7 @@ host without `CAP_NET_RAW`. Everything above `l2.cpp` is identical.
 
 ## Tests
 
-- Unit (`test_unit.cpp`): TLV round trips, header parsing, HMAC with known
+- Unit (`tests/unit/test_proto.cpp`): TLV round trips, header parsing, HMAC with known
   and PBKDF2 vectors, replay window (in order, out of order, duplicates,
   other boots refused, verified restart), CHALLENGE / RESPONSE TLVs, example
   key refused, passphrase derivation, overflow of a full message.

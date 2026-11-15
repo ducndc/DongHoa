@@ -1,78 +1,24 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
+# Everything built: objects, binaries, fuzz targets and corpora, OpenWrt SDKs
 build/
-Build/
-build-*/
 
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
-*.tmp
-*.log
-*.bak
-*.swp
-
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
-
-# DongHoa
-/donghoa
-/donghoa_cli
-/tests/test_unit
+# Python
 __pycache__/
+
+# Editors and tools
+*.swp
+*.bak
+*.tmp
+.cache/
+compile_commands.json
+.archify/
+
+# cppcheck
 *.dump
 *.ctu-info
-.archify/
+
+# Logs
+*.log
+
+# Cross-built binaries copied beside a site's install files
 /ap2-install/donghoa
 /ap2-install/donghoa_cli

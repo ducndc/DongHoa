@@ -1,6 +1,6 @@
 # 14. Verification
 
-> **Source:** `tests/test_unit.cpp`, `tests/itest.py`,
+> **Source:** `tests/unit/`, `tests/itest.py`,
 > `tests/mock_hostapd.py`, `openwrt/qemu/systest.sh`, `fuzz/` · **Requirements:**
 > NFR-MNT, verification matrix in [SRS.md](../SRS.md) §6
 
@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    U["Unit tests (make test)<br/>pure modules only, 707 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–25"]
+    U["Unit tests (make test)<br/>pure modules only, 745 checks<br/>milliseconds"] --> I["Integration test (make itest)<br/>real donghoa processes, mock hostapd,<br/>UDP 'sim' transport, no root<br/>~1.5 min, PASS 1–25"]
     I --> Q["System test (openwrt/qemu/systest.sh)<br/>2 OpenWrt VMs: real hostapd, mac80211_hwsim,<br/>wpa_supplicant STA, raw-socket ARCP<br/>~7 min, S1–S16"]
     Q --> H["Real hardware<br/>(AP2: pending)"]
     S["Static and dynamic checks:<br/>strict warnings, cppcheck, ASan/UBSan,<br/>check-deps (libc only)"] -.-> U
@@ -22,10 +22,16 @@ flowchart TB
 | Integration | `make itest` | Whole daemons interacting: timing, state machines, protocol, failure paths, scale (12 APs) | Real hostapd/kernel formats |
 | System | `openwrt/qemu/systest.sh` | Real 802.11k/v/r frames, real hostapd control interface, real nl80211, packaging, init script | Real RF, real client quirks, real drivers |
 
-## Unit tests (`tests/test_unit.cpp`)
+## Unit tests (`tests/unit/`)
 
-One binary linking only the pure modules (`text`, `proto`, `rrm`, `policy`,
-`config`, `sha256`, `sha512`, `ed25519`, `trust`, `consistency`, `metrics`, `hapd_parse`, `nlparse`, plus `log`/`os` helpers).
+One binary, `build/bin/test_unit`, linking only `src/base` and `src/core`:
+the pure modules (`text`, `proto`, `rrm`, `policy`, `config`, `sha256`,
+`sha512`, `ed25519`, `trust`, `consistency`, `metrics`, `hapd_parse`,
+`nlparse`) plus the `log`/`os` helpers. There is one `test_<module>.cpp` per
+module; `main.cpp` holds the table of tests and `unit.hpp` the `CHECK` macro
+and the shared helpers. `make test T=<word>` runs only the tests whose name
+contains the word (`make test T=policy`), and `build/bin/test_unit -l` lists
+the names.
 
 | Group | Covers |
 |---|---|
@@ -142,7 +148,7 @@ behaviour.
 | Strict warnings (`-Wconversion -Wsign-conversion -Wold-style-cast -Wuseless-cast -Wpedantic …`) | `make` (must stay warning-free) |
 | libc only | `make check-deps` |
 | Static analysis | `make cppcheck` (in a container if missing) |
-| Sanitizers | `make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli && make itest`, then grep the kept logs for `runtime error` |
+| Sanitizers | `make BUILD=build/asan CXXFLAGS="-O1 -g -fsanitize=address,undefined" itest`, then grep the kept logs for `runtime error` |
 | Fuzzing | `make fuzz` (`FUZZ_TIME=600` for a longer run) |
 | Mutation checks | each new rule was disabled once to confirm its test fails |
 

@@ -1,7 +1,7 @@
 # 3. 802.11k neighbor reports
 
-> **Source:** `src/local.cpp` (`syncNeighbors`, `setNeighbor`,
-> `removeNeighbor`), `src/rrm.cpp` (`buildBssidInfo`, `buildNrHex`) ·
+> **Source:** `src/daemon/local.cpp` (`syncNeighbors`, `setNeighbor`,
+> `removeNeighbor`), `src/core/rrm.cpp` (`buildBssidInfo`, `buildNrHex`) ·
 > **Requirements:** FR-NBR
 
 ## What it does

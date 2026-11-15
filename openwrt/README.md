@@ -160,10 +160,13 @@ directly with that vendor SDK's toolchain instead, from the top of the
 repo:
 
 ```sh
-make CXX=<vendor-sdk>/staging_dir/toolchain-*/bin/*-g++ \
-     LDFLAGS="-nostdlib++ -static-libgcc" donghoa donghoa_cli
-make check-deps   # still libc only
+make BUILD=build/vendor CXX=<vendor-sdk>/staging_dir/toolchain-*/bin/*-g++ \
+     LDFLAGS="-nostdlib++ -static-libgcc"
+make BUILD=build/vendor check-deps   # still libc only
 ```
+
+`BUILD=build/vendor` keeps the cross-compiled objects apart from a host build
+in `build/`; the binaries are in `build/vendor/bin/`.
 
 `-nostdlib++` and `-static-libgcc` matter on a 32-bit ARM target: without
 them the binary ends up needing `libstdc++.so.6` (for the ARM EABI's
@@ -171,7 +174,7 @@ them the binary ends up needing `libstdc++.so.6` (for the ARM EABI's
 and which are not on the router. Then copy the pieces by hand (no apk/ipk):
 
 ```sh
-scp donghoa donghoa_cli root@<ap-ip>:/usr/sbin/
+scp build/vendor/bin/donghoa build/vendor/bin/donghoa_cli root@<ap-ip>:/usr/sbin/
 scp openwrt/donghoa/files/donghoa.init root@<ap-ip>:/etc/init.d/donghoa
 scp /etc/donghoa.conf root@<ap-ip>:/etc/donghoa.conf   # same key, new name
 ssh root@<ap-ip> 'chmod 0755 /usr/sbin/donghoa /usr/sbin/donghoa_cli /etc/init.d/donghoa

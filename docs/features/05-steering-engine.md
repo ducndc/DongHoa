@@ -1,8 +1,8 @@
 # 5. Steering engine
 
-> **Source:** `src/steer.cpp` (transaction), `src/steer_trigger.cpp`,
-> `src/steer_measure.cpp`, `src/steer_target.cpp`, `src/policy.cpp`,
-> `src/rrm.cpp` (beacon request, reports) · **Requirements:** FR-TRG, FR-STR, FR-POL, FR-ADM ·
+> **Source:** `src/daemon/steer.cpp` (transaction), `src/daemon/steer_trigger.cpp`,
+> `src/daemon/steer_measure.cpp`, `src/daemon/steer_target.cpp`, `src/core/policy.cpp`,
+> `src/core/rrm.cpp` (beacon request, reports) · **Requirements:** FR-TRG, FR-STR, FR-POL, FR-ADM ·
 > **Design:** [SDD.md](../SDD.md) §6.5–6.6 · **Overview:**
 > [STEERING.md](../STEERING.md)
 

@@ -5,8 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "nlparse.hpp"
-#include "rrm.hpp"
+#include "core/nlparse.hpp"
+#include "core/rrm.hpp"
 
 using namespace donghoa;
 

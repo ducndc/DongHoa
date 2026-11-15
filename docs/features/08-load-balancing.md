@@ -1,8 +1,8 @@
 # 8. Load balancing
 
-> **Source:** `src/steer_trigger.cpp` (`runLbRound`), `src/steer_target.cpp`
+> **Source:** `src/daemon/steer_trigger.cpp` (`runLbRound`), `src/daemon/steer_target.cpp`
 > (`onSteerReq`, reservations),
-> `src/policy.cpp` (`isBssOverloaded`, `isLbStaEligible`, `admit`,
+> `src/core/policy.cpp` (`isBssOverloaded`, `isLbStaEligible`, `admit`,
 > `isLbMoveEffective`) · **Requirements:** FR-TRG-3, FR-ADM
 
 ## What it does

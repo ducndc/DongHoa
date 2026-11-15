@@ -7,10 +7,10 @@
 #include <cstdint>
 #include <string_view>
 
-#include "config.hpp"
-#include "hapd_parse.hpp"
-#include "rrm.hpp"
-#include "trust.hpp"
+#include "core/config.hpp"
+#include "core/hapd_parse.hpp"
+#include "core/rrm.hpp"
+#include "core/trust.hpp"
 
 using namespace donghoa;
 

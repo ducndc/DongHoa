@@ -1,6 +1,6 @@
 # 10. Low-power device classification
 
-> **Source:** `src/devclass.cpp`, `src/policy.cpp` (`addTrafficSample`,
+> **Source:** `src/daemon/devclass.cpp`, `src/core/policy.cpp` (`addTrafficSample`,
 > `lpBehaviourScore`, `updateLpScore`, `isLowPower`, `isLpExcludedPhy`) ·
 > **Spec:** [PROTOCOL.md](../PROTOCOL.md) §8 · **Requirements:** FR-LPC-1..6
 

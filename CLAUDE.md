@@ -17,8 +17,10 @@ Per-feature explanations (data flow, algorithms, diagrams) are in
 ## Commands
 
 ```sh
-make                 # builds ./donghoa and ./donghoa_cli
-make test            # unit tests (tests/test_unit.cpp, links only the pure modules)
+make -j              # builds build/bin/donghoa and build/bin/donghoa_cli (objects in build/obj,
+                     # one per source with header dependencies; V=1 shows the commands)
+make test            # unit tests (tests/unit/, link only src/base and src/core)
+make test T=policy   # only the tests whose name contains the word; build/bin/test_unit -l lists them
 make itest           # end-to-end: real donghoa processes + Python mock hostapd, no root
 DONGHOA_KEEP_LOGS=1 python3 tests/itest.py   # keep per-AP debug logs in /tmp/donghoa-itest-*
 # itest logs: apN.log with "=== Sn" scenario markers, merged.log = all APs by time.
@@ -32,15 +34,24 @@ make style           # convention rules the compiler misses: 110 columns, tabs, 
                      # else/switch/for structure, naming, macros, heap, DEV-05 state
 make fuzz            # libFuzzer + ASan/UBSan on every parser of outside input (fuzz/, clang),
                      # FUZZ_TIME=60 s per target; make fuzz-repro T=arcp F=<crash file>
-make clean && make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli && make itest
+make BUILD=build/asan CXXFLAGS="-O1 -g -fsanitize=address,undefined" itest   # sanitizer build, kept
+                     # beside the normal one. Changing CXXFLAGS without BUILD= needs a make clean first.
 ```
 
-The unit tests form one binary with no filter. To focus on one area,
-comment out calls in `main()` of `tests/test_unit.cpp`. Run `make itest`
-after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 25`.
+A new unit test goes into the `tests/unit/test_<module>.cpp` of its module and
+is registered in `TESTS` in `tests/unit/main.cpp` and declared in `unit.hpp`.
+Run `make itest` after changing `donghoa` behaviour; it must still print
+`PASS 1`..`PASS 25`.
 
 ## Architecture essentials
 
+- **The directory is the layer:** `src/base/` (`types`, `text`, `log`, `os`),
+  `src/core/` (pure logic), `src/io/` (sockets), `src/daemon/` (class `Daemon`
+  and `main.cpp`), `src/cli/` (`donghoa_cli`, uses `base` only). A file
+  includes its own layer and the ones before it in that list, never a later
+  one, and writes the directory in the include: `#include "core/proto.hpp"`.
+  `make style` checks both. The Makefile takes every `*.cpp` of a directory,
+  so a new source file needs no Makefile change.
 - **Single-threaded `poll()` loop** (`main.cpp`, 100 ms tick), **no heap, no
   exceptions, no RTTI** (`-fno-exceptions -fno-rtti`). All state is
   `std::array`s in class `Daemon` (`daemon.hpp`), one static object in
@@ -51,16 +62,17 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 25`.
   `reinterpret_cast` to `sockaddr`, `<cstring>`, signals. Other files use
   `os::` functions with `os::Fd` (RAII), `ByteView`/`ByteSpan` and
   `std::string_view`. A new system call goes into `os.cpp`.
-- **Pure, unit-testable layer:** `text`, `proto`, `rrm`, `policy`, `config`,
+- **Pure, unit-testable layer (`src/core/`, plus `text` in `base`):** `text`, `proto`, `rrm`, `policy`, `config`,
   `sha256`, `sha512`, `ed25519` (per-AP signatures), `trust` (enrollment trust table), `consistency` (config comparison with peers), `metrics` (outcome counters), `hapd_parse` and `nlparse` (nl80211 message parsing). Keep I/O out of these modules. A new parser of outside input also goes into a `fuzz/` target. Put new decision
   logic in `policy.cpp` and new 802.11 byte layouts in `rrm.cpp`.
-- **I/O layer:** `l2.cpp` (raw sockets), `hapd.cpp` (hostapd control socket),
-  `survey.cpp` (nl80211 via raw genetlink, deliberately no libnl dependency:
-  channel survey and per-BSS station dumps for the per-STA metrics),
-  `amon.cpp` (radiotap air monitors and the driver per-STA RSSI API; the
-  frame parser itself is pure, in `rrm.cpp`), `vendor_rssi.cpp` (that driver
-  API: vendor placeholder marked TODO(vendor), plus the `sta_rssi_sim` file
-  simulation the itest uses) and `ctrl.cpp`.
+- **I/O layer (`src/io/`):** `l2.cpp` (raw sockets), `hapd.cpp` (hostapd control
+  socket), `survey.cpp` (nl80211 via raw genetlink, deliberately no libnl
+  dependency: channel survey and per-BSS station dumps for the per-STA
+  metrics), `vendor_rssi.cpp` (driver per-STA RSSI API: vendor placeholder
+  marked TODO(vendor), plus the `sta_rssi_sim` file simulation the itest
+  uses) and `rrm_log.cpp` (debug dump of 11k/v commands). Two `Daemon` files in
+  `src/daemon/` also own sockets: `amon.cpp` (radiotap air monitors and that
+  driver API; the frame parser itself is pure, in `rrm.cpp`) and `ctrl.cpp`.
 - **Steering transaction:** `steer.cpp` runs MEASURE → NEGOTIATE → BTM → ROAM;
   the rest of steering is in `steer_trigger.cpp` (triggers, load-balancing
   rounds), `steer_measure.cpp` (candidate pool, 11k / air-monitor requests),
@@ -132,7 +144,7 @@ after changing `donghoa` behaviour; it must still print `PASS 1`..`PASS 25`.
   constructors, no macros besides include guards. Departures from Required
   rules need a deviation in §6 of that document; DEV-01..04 are confined to
   `os.cpp`.
-- `src/proto.hpp` is the single source of truth for wire numbers. When you add
+- `src/core/proto.hpp` is the single source of truth for wire numbers. When you add
   a TLV or message, update `proto.{hpp,cpp}`, the table in `docs/PROTOCOL.md` and
   the round-trip tests together. Decoders must accept longer TLVs than they
   understand (forward compatibility).

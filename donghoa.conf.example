@@ -145,7 +145,7 @@ ctrl_socket /var/run/donghoa.sock
 #amon_offset_min_samples 3
 # The driver's per-STA RSSI API: the STA's MAC address is passed to the
 # Wi-Fi driver, which measures that STA's frames on each BSS's radio. The
-# vendor implementation (src/vendor_rssi.cpp) is a placeholder until the
+# vendor implementation (src/io/vendor_rssi.cpp) is a placeholder until the
 # chipset API is documented: until then this AP answers "unsupported".
 #sta_rssi_api 0
 

@@ -4,7 +4,7 @@
 |---|---|
 | Product | DongHoa: daemon `donghoa` and CLI `donghoa_cli` |
 | Version covered | 1.0 (OpenWrt package `donghoa-1.0-r9`, C++17 implementation) |
-| Document version | 2.15, 2026-11-12 (history in Appendix B) |
+| Document version | 2.16, 2026-11-15 (history in Appendix B) |
 | Companion documents | `docs/SDD.md` (design), `docs/PROTOCOL.md` (wire format), `docs/ARCHITECTURE.md` (overview), `openwrt/README.md` (deployment) |
 
 ## 1. Introduction
@@ -170,7 +170,7 @@ interface, and it learns about STAs from hostapd's output and events.
 
 | ID | Requirement | Verif. |
 |---|---|---|
-| IR-8 | ARCP shall be carried directly in Ethernet II frames: EtherType 0x88B5, multicast group `03:41:52:43:50:00`, payload ≤ 1450 bytes, no IP. The wire format is normative in `docs/PROTOCOL.md`, with `src/proto.hpp` as the source of the numbers. | T-U `test_proto_*`, T-I 1 |
+| IR-8 | ARCP shall be carried directly in Ethernet II frames: EtherType 0x88B5, multicast group `03:41:52:43:50:00`, payload ≤ 1450 bytes, no IP. The wire format is normative in `docs/PROTOCOL.md`, with `src/core/proto.hpp` as the source of the numbers. | T-U `test_proto_*`, T-I 1 |
 | IR-9 | All ARCP fields shall be big-endian. 802.11 structures handed to hostapd (Neighbor Report BSSID Information, Beacon Request duration) shall be little-endian as 802.11 requires. | T-U `test_rrm` |
 | IR-10 | Decoders shall ignore unknown TLV types and accept TLVs longer than the version they understand (forward compatibility). | I |
 | IR-11 | For root-free testing, a "sim" transport shall carry the identical Ethernet frames over UDP on loopback (`sim_port`, `sim_peer`). | T-I 1–5 |
@@ -297,7 +297,7 @@ interface, and it learns about STAs from hostapd's output and events.
 | FR-AMN-2 | During MEASURE, when `amon_request` is on (default), the source AP shall multicast STA_MONITOR_REQ to every peer, and start a local watch when it can measure and has a local candidate. This shall happen in parallel with the 802.11k Beacon Request, for STAs with and without 11k. | T-I 5, 11 |
 | FR-AMN-3 | An AP receiving STA_MONITOR_REQ shall watch the STA for the requested duration (`amon_duration_ms`, 1000 ms by default, at most 5 s), averaging the dBm signal of its frames per frequency on its monitors and starting the driver per-STA RSSI measurement on each BSS that supports it (`sta_rssi_api`). It shall then send STA_MONITOR_REPORT with one STA_MONITOR_RESULT per local BSS (up) that heard the STA (the driver's value for a BSS, else the monitor's on the BSS's frequency) and a STA_MONITOR_STATUS (measured / not heard / failed). An AP that cannot measure (no monitor and no supported driver API: unsupported; 16 watches running: busy; driver error: failed) shall send the report with only the status at once. | T-U, T-I 5, 11, T-O |
 | FR-AMN-7 | The source AP shall end MEASURE as soon as every peer owning a candidate (and its own watch) has sent its STA_MONITOR_STATUS and no 802.11k report is pending; at the MEASURE timeout it shall log each AP that has not answered and treat it as unable to measure. | T-I 11 |
-| FR-AMN-8 | The driver per-STA RSSI API shall sit behind `src/vendor_rssi.hpp` (supported?, start, read, stop; non-blocking). Until the chipset vendor's API is documented, the implementation shall report unsupported; a file-backed simulation (`sta_rssi_sim`) shall stand in for tests. | T-I 11 |
+| FR-AMN-8 | The driver per-STA RSSI API shall sit behind `src/io/vendor_rssi.hpp` (supported?, start, read, stop; non-blocking). Until the chipset vendor's API is documented, the implementation shall report unsupported; a file-backed simulation (`sta_rssi_sim`) shall stand in for tests. | T-I 11 |
 | FR-AMN-4 | The source AP shall use a monitor result (≤ 10 s old, converted to a downlink level per FR-AMN-9) as a candidate's level only when the STA gave no 802.11k report for that candidate. | T-I 5, 16 |
 | FR-AMN-9 | With `amon_offset_learn` on, the source AP shall learn, per BSS, the offset between a STA's 802.11k level of the BSS (downlink) and the BSS's AP-side level of that STA (uplink) from pairs measured within 5 s of each other, each measurement used once: cumulative mean of the first 8 samples, then EWMA 1/8; a pair whose difference exceeds 30 dB, or (once calibrated) lies more than 12 dB from the mean, shall be rejected. A BSS with at least `amon_offset_min_samples` samples shall convert AP-side levels with its learned offset, otherwise with `amon_rssi_offset`. `CALIB` shall list the learned offsets. | T-U, T-I 16 |
 | FR-AMN-5 | A refused or unanswered Beacon Request shall not end MEASURE while monitor reports are pending. MEASURE shall end early when every candidate has an 11k report, or, once no 11k report is pending, when every candidate has any measurement; otherwise at max(`beacon_req_timeout_ms`, `amon_duration_ms` + 500 ms). | T-I 5 |
@@ -383,7 +383,7 @@ per second.
 |---|---|---|
 | NFR-POR-1 | The daemon shall build and run on glibc and musl, and cross-compile with the OpenWrt SDK (24.x `.ipk`, 25.x `.apk`). | T-O |
 | NFR-MNT-1 | Decision logic and byte layouts shall live in pure modules (`proto`, `rrm`, `policy`, `config`, `sha256`, `sha512`, `ed25519`, `trust`, `consistency`, `metrics`, hostapd parsers) that the unit tests can link without I/O. | I |
-| NFR-MNT-2 | Wire numbers shall be defined only in `src/proto.hpp`. A change to the protocol shall update `proto.{hpp,cpp}`, `docs/PROTOCOL.md` and the round-trip tests together. | I |
+| NFR-MNT-2 | Wire numbers shall be defined only in `src/core/proto.hpp`. A change to the protocol shall update `proto.{hpp,cpp}`, `docs/PROTOCOL.md` and the round-trip tests together. | I |
 | NFR-MNT-3 | A change to daemon behaviour shall keep `make itest` passing (PASS 1–25). | T-I |
 | NFR-MNT-4 | Every parser of input from outside the daemon (ARCP frames, radiotap, nl80211, hostapd replies and events, the configuration and trust files) shall have a libFuzzer target run under ASan/UBSan (`make fuzz`). | T-F |
 
@@ -508,3 +508,4 @@ real hardware runs (survey utilisation source, station dumps, client
 | 2.13 | 2026-11-08 | Security off by default: `liveness_check` (FR-DSC-6, NFR-SEC-2), shipped configurations without `key` (NFR-SEC-1) |
 | 2.14 | 2026-11-12 | New §4.14: FR-OBS-1 (outcome counters, `METRICS`, Prometheus text), FR-OBS-2 (configuration consistency check, POLICY TLV in HELLO, `CHECK`); NFR-MNT-4 (fuzzing); IR-3; verification level T-F |
 | 2.15 | 2026-11-12 | IR-5: RFC 5424 severities, new level notice, names and numbers accepted |
+| 2.16 | 2026-11-15 | FR-AMN-8, NFR-MNT-2: file paths follow the source tree by layer (`src/base`, `core`, `io`, `daemon`); no requirement changed |

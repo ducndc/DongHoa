@@ -71,7 +71,7 @@ flowchart LR
 
 ## Inside one daemon
 
-A single thread runs a `poll()` loop with a 100 ms tick (`src/main.cpp`). All
+A single thread runs a `poll()` loop with a 100 ms tick (`src/daemon/main.cpp`). All
 state lives in fixed arrays of the one `Daemon` object; there is no heap, no
 exceptions and no RTTI. The coordination code is split by feature across
 files, all member functions of `Daemon`.

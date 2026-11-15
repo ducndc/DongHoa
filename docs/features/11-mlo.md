@@ -1,9 +1,9 @@
 # 11. Wi-Fi 7 MLO awareness
 
-> **Source:** `src/local.cpp` (`updateStaLink`, `aggregateLinks`,
-> `pruneStaLinks`, `getSta`), `src/hapd_parse.cpp` (MLD fields),
-> `src/proto.{hpp,cpp}` (BSS_INFO trailer, `isSameMld`), `src/steer_measure.cpp`
-> (`buildPool`), `src/steer.cpp` (`onStaEvent`) · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §3
+> **Source:** `src/daemon/local.cpp` (`updateStaLink`, `aggregateLinks`,
+> `pruneStaLinks`, `getSta`), `src/core/hapd_parse.cpp` (MLD fields),
+> `src/core/proto.{hpp,cpp}` (BSS_INFO trailer, `isSameMld`), `src/daemon/steer_measure.cpp`
+> (`buildPool`), `src/daemon/steer.cpp` (`onStaEvent`) · **Spec:** [PROTOCOL.md](../PROTOCOL.md) §3
 > (BSS_INFO) · **Requirements:** FR-MLO
 
 ## What it does

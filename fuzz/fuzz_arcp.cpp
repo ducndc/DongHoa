@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "ed25519.hpp"
-#include "proto.hpp"
+#include "core/ed25519.hpp"
+#include "core/proto.hpp"
 
 using namespace donghoa;
 

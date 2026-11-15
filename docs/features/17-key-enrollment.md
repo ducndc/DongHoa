@@ -1,8 +1,8 @@
 # 17. Automatic key enrollment
 
-> **Source:** `src/trust.{hpp,cpp}` (trust table, merge rule, file form),
-> `src/enroll.cpp` (keys, requests, welcome, sync, `ENROLL`),
-> `src/msg.cpp` (receive path), `src/ed25519.cpp` · **Spec:**
+> **Source:** `src/core/trust.{hpp,cpp}` (trust table, merge rule, file form),
+> `src/daemon/enroll.cpp` (keys, requests, welcome, sync, `ENROLL`),
+> `src/daemon/msg.cpp` (receive path), `src/core/ed25519.cpp` · **Spec:**
 > [PROTOCOL.md](../PROTOCOL.md) §10 · **Requirements:** FR-SEC-8..FR-SEC-11
 
 ## What it does

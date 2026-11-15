@@ -1,7 +1,7 @@
 # 12. Control interface and logging
 
-> **Source:** `src/ctrl.cpp`, `tools/donghoa_cli.cpp`, `src/log.{hpp,cpp}`,
-> `src/rrm_log.cpp`, `src/metrics.{hpp,cpp}` · **Requirements:** IR-3, IR-4, IR-5, FR-OBS-1
+> **Source:** `src/daemon/ctrl.cpp`, `src/cli/donghoa_cli.cpp`, `src/base/log.{hpp,cpp}`,
+> `src/io/rrm_log.cpp`, `src/core/metrics.{hpp,cpp}` · **Requirements:** IR-3, IR-4, IR-5, FR-OBS-1
 
 ## What it does
 

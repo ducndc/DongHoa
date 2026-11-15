@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Applies to | `src/`, `tools/` (production code). `tests/` follows §4 and §5.9 only, and may use macros (§6.1) |
+| Applies to | `src/` (production code). `tests/` follows §4 and §5.9 only, and may use macros (§6.1) |
 | Baseline standard | MISRA C++:2023 (guidelines for C++17) |
 | Language | ISO C++17, `-fno-exceptions -fno-rtti`, no dynamic memory |
-| Document version | 2.1, 2026-11-01 (2.1: naming conventions in §4; 1.x covered the C11 code base and MISRA C:2012) |
+| Document version | 2.2, 2026-11-15 (2.2: source tree and include direction in §4; 2.1: naming conventions in §4; 1.x covered the C11 code base and MISRA C:2012) |
 | Check | Compiler warnings (§7), `make check-deps`, `make cppcheck`, `make style`, review checklist (§9) |
 
 ## 1. Purpose and status
@@ -99,6 +99,14 @@ C version:
 - Namespaces: `donghoa` for everything, with nested `os`, `logging`,
   `policy`, `hapd`, `rrm`, `arcp` (wire format, `proto.hpp`).
 - One declarator per declaration.
+- **Source tree.** The directory of a file is its layer: `src/base/`
+  (types, text, logging, `os`), `src/core/` (pure logic, no sockets),
+  `src/io/` (socket adapters), `src/daemon/` (class `Daemon`, `main.cpp`),
+  `src/cli/` (`donghoa_cli`). A file includes headers of its own directory
+  and of the directories before it in that list, never of a later one;
+  `src/cli/` includes `base` only. An include of a project header names the
+  directory (`#include "core/proto.hpp"`), also inside the same directory.
+  A `.cpp` file includes its own header first.
 - Include guards `DONGHOA_<FILE>_HPP`. The project defines no other macros
   in production code (Rule 19.0.2).
 
@@ -207,12 +215,12 @@ messages and radiotap frames.
 |---|---|---|
 | Single point of exit | All code | MISRA C++:2023 has no such rule (MISRA C++:2008 Rule 6-6-5 and MISRA C:2012 Rule 15.5 did). Guard clauses with early `return` keep functions short |
 | 0.2.x (unused declarations) | Protocol and 802.11 constants (`proto.hpp`, `rrm.hpp`) | The full set of wire values documents the standard and keeps future decoders consistent |
-| 19.0.2 (function-like macros) | `tests/test_unit.cpp` only | `CHECK(c)` records `#c` and `__LINE__`, which a function cannot do in C++17 |
-| 8.2.2 / `-Wold-style-cast`, `-Wuseless-cast` | `tests/test_unit.cpp` only | Test assertions; not shipped |
+| 19.0.2 (function-like macros) | `tests/unit/unit.hpp` only | `CHECK(c)` records `#c` and `__LINE__`, which a function cannot do in C++17 |
+| 8.2.2 / `-Wold-style-cast`, `-Wuseless-cast` | `tests/unit/` only | Test assertions; not shipped |
 
 ### 6.2 Deviation permits (Required rules, project-wide)
 
-All four system-interface deviations are **confined to `src/os.cpp`**.
+All four system-interface deviations are **confined to `src/base/os.cpp`**.
 Every other file uses `os::` functions with C++ types (`os::Fd`,
 `ByteView`, `std::string_view`, `std::optional`) and contains no POSIX
 call, no `reinterpret_cast` and no `<cstring>` include. A new use goes into
@@ -239,11 +247,11 @@ A departure from a Required rule outside §6.2 needs:
 
 | Tool | Command | Expectation |
 |---|---|---|
-| Compiler | `make`; `make CXXFLAGS="-O1 -g -fsanitize=address,undefined" donghoa donghoa_cli` | Zero warnings with the flags in §3 |
+| Compiler | `make`; `make BUILD=build/asan CXXFLAGS="-O1 -g -fsanitize=address,undefined"` | Zero warnings with the flags in §3 |
 | Dependencies | `make check-deps` | `libc` only: no `libstdc++.so`, no `libgcc_s.so` |
 | Static analysis | `make cppcheck` (`--enable=warning,portability`; in a container if needed) | No findings |
-| Style | `make style` (`tools/style_check.py`): line width ≤ 110, indentation starting with tabs, trailing whitespace, `/*` comments, macros and include guards, braces on every body (9.3.1), final `else` (9.4.1), `switch` `default` (9.4.2), `for` with `<` (9.5.1), `UPPER_CASE` constants, local `static` (6.7.1), heap / allocating types, `NULL`, `goto`, `union`, exceptions, throwing calls, C stdio outside `os.cpp`, namespace-scope variables outside the DEV-05 list | No findings |
-| Confinement | `grep -lE '^#include <(cstring\|csignal)>\|reinterpret_cast\|::socket\|const_cast' src/* tools/*` | Only `src/os.cpp` |
+| Style | `make style` (`tools/style_check.py`): line width ≤ 110, indentation starting with tabs, trailing whitespace, `/*` comments, macros and include guards, braces on every body (9.3.1), final `else` (9.4.1), `switch` `default` (9.4.2), `for` with `<` (9.5.1), `UPPER_CASE` constants, local `static` (6.7.1), heap / allocating types, `NULL`, `goto`, `union`, exceptions, throwing calls, C stdio outside `os.cpp`, namespace-scope variables outside the DEV-05 list, the source tree and include direction of §4 | No findings |
+| Confinement | `grep -lE '^#include <(cstring\|csignal)>\|reinterpret_cast\|::socket\|const_cast' src/*/*` | Only `src/base/os.cpp` |
 | Tests | `make test`, `make itest`, and `openwrt/qemu/systest.sh` for releases | All pass; no sanitizer report |
 | Review | §9 checklist | Each item checked |
 
@@ -267,7 +275,7 @@ Version 2.x (`donghoa-1.0-r24`), after a convention audit of `src/` and
   warnings.
 - `make check-deps`: `NEEDED libc` only. `make cppcheck` (2.14): 0 findings.
   `make style`: 0 findings.
-- Confinement grep (§7): only `src/os.cpp`.
+- Confinement grep (§7): only `src/base/os.cpp`.
 - Layout (§4): no line over 110 columns (158 were reflowed in this audit,
   71 of them older than the features added since 2026-11-06), tab
   indentation, no trailing whitespace, no `/*` comments, include guards
@@ -292,7 +300,7 @@ Version 2.x (`donghoa-1.0-r24`), after a convention audit of `src/` and
 - [ ] Builds without warnings, normal and sanitizer; `make test`,
       `make itest` and `make check-deps` pass.
 - [ ] No POSIX call, `reinterpret_cast`, `<cstring>` or `<csignal>` outside
-      `src/os.cpp`.
+      `src/base/os.cpp`.
 - [ ] Every external input (network, hostapd, netlink, radiotap, config) is
       length-checked before use; wire enum values are validated before a
       `static_cast`.
@@ -303,8 +311,10 @@ Version 2.x (`donghoa-1.0-r24`), after a convention audit of `src/` and
 - [ ] Return values used or discarded with `(void)`; errors handled.
 - [ ] `U` on unsigned literals; no implicit narrowing; `static_cast` only.
 - [ ] Single-argument constructors `explicit`; members default-initialized.
-- [ ] New wire values only in `src/proto.hpp`, with `docs/PROTOCOL.md` and
+- [ ] New wire values only in `src/core/proto.hpp`, with `docs/PROTOCOL.md` and
       the round-trip tests updated together.
 - [ ] A new deviation is recorded in §6.2 in the same change.
+- [ ] A new file is in the directory of its layer and includes no later
+      layer (§4).
 - [ ] `make style` reports no finding (a new DEV-05 variable is added to its list in
       `tools/style_check.py` together with the §6.2 row).

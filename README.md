@@ -19,7 +19,7 @@ information, and they coordinate:
   Beacon Request, is measured instead by the other APs, from the frames it
   sends: the source multicasts a request, every AP measures with its
   radiotap monitor (`air_monitor`) or the driver's per-STA RSSI API
-  (`sta_rssi_api`, vendor placeholder in `src/vendor_rssi.cpp`) and always
+  (`sta_rssi_api`, vendor placeholder in `src/io/vendor_rssi.cpp`) and always
   answers, "cannot measure" included, and the source picks the target.
 - **Low-power device classification:** each AP recognises IoT devices
   (sensors, cameras, smart plugs) from their traffic: bursty uplink, little
@@ -61,15 +61,31 @@ r.
 ## Build and test
 
 ```sh
-make            # donghoa + donghoa_cli (C++17, no exceptions/RTTI/heap; needs only libc at run time)
-make test       # unit tests
+make -j         # build/bin/donghoa + build/bin/donghoa_cli (C++17, no exceptions/RTTI/heap; needs only libc at run time)
+make test       # unit tests (make test T=policy runs the tests whose name contains the word)
 make check-deps # verify the binaries need no libstdc++.so
 make itest      # end-to-end: 3 daemons + mock hostapd over the UDP sim transport (no root)
 make fuzz       # libFuzzer + ASan/UBSan on every parser of outside input (needs clang)
 ```
 
 To cross-compile, set `CXX`, for example
-`make CXX=aarch64-openwrt-linux-musl-g++`. For OpenWrt, `openwrt/` has the
+`make CXX=aarch64-openwrt-linux-musl-g++`. `BUILD=<dir>` puts a second
+configuration beside the first, for example
+`make BUILD=build/asan CXXFLAGS="-O1 -g -fsanitize=address,undefined" itest`.
+
+| Directory | Contents |
+|---|---|
+| `src/base/` | Foundation: fixed-size strings and formatting, logging, and `os.cpp`, the only file that calls the operating system |
+| `src/core/` | Pure logic: ARCP wire format, 802.11 byte layouts, steering policy, configuration, hashing and signatures, parsers |
+| `src/io/` | Sockets: raw Ethernet, hostapd control interface, nl80211, driver RSSI API |
+| `src/daemon/` | The daemon: messaging, peer and STA tables, steering, control socket, `main.cpp` |
+| `src/cli/` | `donghoa_cli` |
+| `tests/`, `fuzz/` | Unit tests (`tests/unit/`), integration test with a mock hostapd, libFuzzer targets |
+| `openwrt/` | Package, SDK build script, QEMU test APs |
+| `docs/` | Requirements, design, protocol, coding convention, one document per feature |
+
+A directory includes only the ones above it in this table (`make style`
+checks it). For OpenWrt, `openwrt/` has the
 package, an SDK build script and QEMU test APs; see `openwrt/README.md`.
 
 ## Run
@@ -147,7 +163,7 @@ the `mdid=` of each `bss` line. See `docs/ARCHITECTURE.md`.
 - `docs/PROTOCOL.md`: ARCP wire format, messages, reliability, security,
   steering sequence.
 - `docs/CODING_CONVENTION.md`: coding convention based on MISRA C++:2023,
-  with deviations (all system-interface code confined to `src/os.cpp`) and
+  with deviations (all system-interface code confined to `src/base/os.cpp`) and
   the current baseline.
 - `docs/SRS.md`: software requirements (numbered, with verification
   matrix).

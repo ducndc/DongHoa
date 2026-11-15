@@ -2,7 +2,7 @@
 
 ARCP is a custom Layer-2 protocol that APs in one ESS use to exchange BSS, STA
 and RF state and to coordinate STA steering. It deliberately does **not** use
-IEEE 1905.1. `src/proto.hpp` is the source of truth for numeric values; this
+IEEE 1905.1. `src/core/proto.hpp` is the source of truth for numeric values; this
 document describes semantics.
 
 ## 1. Transport
@@ -254,7 +254,7 @@ BSSes. The APs measure the reverse direction instead: the RSSI of the
 STA's own frames, with a radiotap monitor interface (`air_monitor`) or the
 driver's per-STA RSSI API (`sta_rssi_api`: the STA's MAC address is handed
 to the Wi-Fi driver, which measures it; vendor-specific, see
-`src/vendor_rssi.cpp`).
+`src/io/vendor_rssi.cpp`).
 
 ```
  STA          Source AP                        Every peer AP

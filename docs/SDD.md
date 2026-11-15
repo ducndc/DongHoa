@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.15, 2026-11-15 (history in §13) |
+| Document version | 2.16, 2026-11-15 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -12,8 +12,8 @@
 This document describes how `donghoa` meets `docs/SRS.md`: its structure, data,
 runtime behaviour, algorithms, error handling, deployment and the reasons
 behind the main design choices. It describes the code as of version 1.0,
-OpenWrt package `donghoa-1.0-r9`: about 8,000 lines of C++17 in `src/` and
-`tools/`, built without exceptions, RTTI or heap. Function and file names are
+OpenWrt package `donghoa-1.0-r9`: about 8,000 lines of C++17 in `src/`,
+built without exceptions, RTTI or heap. Function and file names are
 given so each section can be checked against the source.
 
 ## 2. Design goals and constraints
@@ -47,21 +47,19 @@ given so each section can be checked against the source.
                         (all I/O via os.cpp)
 ```
 
-The modules fall into three layers:
+The source tree shows the layers. A file includes its own directory and the
+ones above it in this table, never one below (`make style` checks every
+`#include`), and the build takes each binary's files from the directories:
 
-1. **Pure layer:** encoding, decoding, 802.11 byte layouts, policy, config
-   parsing and hashing. No I/O and no global state. These are the only
-   modules `tests/test_unit.cpp` links (with `log.cpp` and `os.cpp`).
-2. **I/O adapters:** `l2.cpp` (class `L2`: raw and sim sockets), `hapd.cpp`
-   (class `hapd::Conn`: hostapd control socket), `survey.cpp` (class
-   `Survey`: nl80211 generic netlink), `amon.cpp` (radiotap monitor sockets
-   and STA watches) and `ctrl.cpp` (operator socket).
-3. **Coordination:** `msg.cpp` (messaging), `peer.cpp` (remote view),
-   `local.cpp` (local view) and `steer*.cpp` (transactions, five files). They are member
-   functions of class `Daemon` (`src/daemon.hpp`), whose definition is split
-   across these files. The only instance is a static object in `main.cpp`.
+| Directory | Layer | Contents |
+|---|---|---|
+| `src/base/` | Foundation | `types.hpp`, `text` (fixed-size strings, formatting, checked parsing), `log` and `os` (below) |
+| `src/core/` | Pure | Encoding, decoding, 802.11 byte layouts, policy, config parsing, hashing, signatures, counters. No sockets and no global state; the only I/O is reading the configuration file through `os`. `base` and `core` are all that the unit tests (`tests/unit/`) and the fuzz targets (`fuzz/`) link |
+| `src/io/` | I/O adapters | `l2.cpp` (class `L2`: raw and sim sockets), `hapd.cpp` (class `hapd::Conn`: hostapd control socket), `survey.cpp` (class `Survey`: nl80211 generic netlink), `vendor_rssi.cpp` (driver per-STA RSSI API), `rrm_log.cpp` (debug dump of 11k/v commands) |
+| `src/daemon/` | Coordination | The member functions of class `Daemon` (`daemon.hpp`), whose definition is split across the files: `msg.cpp` (messaging), `peer.cpp` (remote view), `local.cpp` (local view), `steer*.cpp` (transactions, five files), `amon.cpp` (monitor sockets and STA watches), `ctrl.cpp` (operator socket) and the rest of §3.2. The only instance is a static object in `main.cpp` |
+| `src/cli/` | Tool | `donghoa_cli`, built on `base` alone |
 
-Below all of them, **`os.cpp`** is the single file that calls POSIX and
+In `src/base/`, **`os.cpp`** is the single file that calls POSIX and
 Linux interfaces (sockets, `poll`, `ioctl`, signals, clock, syslog) and
 holds the casts and `memcpy` those interfaces need. The rest of the code
 sees `os::Fd` (an owning descriptor, closed by its destructor),
@@ -70,45 +68,45 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 
 ### 3.2 Module catalogue
 
-| Module | Layer | Responsibility | Key entry points | SRS |
+| Module | Directory | Responsibility | Key entry points | SRS |
 |---|---|---|---|---|
-| `main.cpp` | coord. | Start-up, event loop, timer dispatch, shutdown | `main`, `Daemon::init`, `Daemon::run`, `runTimers`, `shutdown` | C-6, NFR-PRF-1, FR-DSC-5 |
-| `os.{hpp,cpp}` | system | Every POSIX/Linux call: clock, randomness, signals, files, UNIX/packet/UDP/netlink sockets, BPF, syslog; `Fd` RAII | `os::nowMs`, `os::Fd`, `os::pollReadable`, `os::openPacket`, `os::sendUnixRequest`, `os::recvNetlink`, `os::stopRequested` | C-4, C-6 |
-| `types.hpp` | pure | `Mac`, `ByteView`/`ByteSpan`, big/little-endian get/put, `FixedString<N>` | `getBe16`, `putBe32`, `copyBytes`, `equal` | — |
-| `text.{hpp,cpp}` | pure | Type-safe `{}` formatting, hex, checked number parsing (`std::from_chars`), MAC and key=value parsing, tokenizer | `formatTo`, `hex`, `parseLong`, `parseU64`, `parseMac`, `getKv`, `subView`, `Tokens` | IR-1 |
-| `proto.{hpp,cpp}` | pure | ARCP header and TLV encode/decode, HMAC finish/verify, TLV iterator (namespace `arcp`) | `Message::begin/add/finish`, `parseHeader`, `verify`, `TlvReader`, `decode` | IR-8..10, FR-SEC-1..2,4 |
-| `sha256.{hpp,cpp}` | pure | SHA-256, HMAC-SHA256, PBKDF2-HMAC-SHA256 | `Sha256`, `computeHmacSha256`, `pbkdf2Sha256` | FR-SEC-1,3 |
-| `sha512.{hpp,cpp}` | pure | SHA-512 (for Ed25519) | `Sha512`, `computeSha512` | FR-SEC-6 |
-| `ed25519.{hpp,cpp}` | pure | Ed25519 key pair, sign, verify (RFC 8032) | `keyPairFromSeed`, `sign`, `verify`, `isValidPublicKey` | FR-SEC-6,7 |
-| `trust.{hpp,cpp}` | pure | Enrollment trust table: merge rule, approve / revoke, fingerprint, file form | `merge`, `approve`, `revoke`, `trustedKey`, `fingerprint`, `saveText`, `loadText` | FR-SEC-9,10 |
-| `enroll.cpp` | coord. | Automatic key enrollment: seed file, ENROLL_REQ, pending list, welcome, TRUST sync, `ENROLL` | `initEnroll`, `tickEnroll`, `onUntrusted`, `onTrust`, `sendWelcome`, `cmdEnroll` | FR-SEC-8..11 |
-| `rrm.{hpp,cpp}` | pure | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
-| `policy.{hpp,cpp}` | pure | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
-| `consistency.{hpp,cpp}` | pure | Configuration consistency: BSS-pair findings (mobility domain, FT, security), steering settings summary (POLICY TLV) and their differences | `checkPair`, `summarize`, `diffPolicy`, `describePolicyDiff` | FR-OBS-2 |
-| `metrics.{hpp,cpp}` | pure | Outcome counters, update rule, Prometheus text form | `addOutcome`, `formatBss`, `formatArcp` | FR-OBS-1 |
-| `nlparse.{hpp,cpp}` | pure | nl80211 attribute lookup and station-dump entry parsing | `nl::findAttr`, `nl::parseStation` | NFR-PRF-4 |
-| `config.{hpp,cpp}` | pure | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
-| `log.{hpp,cpp}` | pure | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
-| `hapd_parse.{hpp,cpp}` | pure | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
-| `l2.{hpp,cpp}` | I/O | `AF_PACKET` ports and UDP sim ports | `L2::addIface`, `addSim`, `send`, `recv` | IR-8, IR-11 |
-| `hapd.{hpp,cpp}` | I/O | hostapd command and event sockets | `hapd::Conn::open`, `runCommand`, `recvEvent` | IR-2 |
-| `survey.{hpp,cpp}` | I/O | Minimal genetlink client for `NL80211_CMD_GET_SURVEY`, asynchronous, one dump per radio | `Survey::open`, `findWiphy`, `request`, `onReadable`, `tick`, `find`, `util` | IR-6, FR-MON-4, NFR-PRF-4 |
-| `amon.cpp` | I/O + coord. | AP-side STA measurement: BPF-filtered radiotap sockets and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ/REPORT/STATUS, results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
-| `vendor_rssi.cpp` | I/O | Driver per-STA RSSI API behind four calls; vendor placeholder (TODO) and a file-backed simulation for tests | `isStaRssiSupported`, `startStaRssi`, `readStaRssi`, `stopStaRssi`, `useSimFile` |
-| `ctrl.cpp` | I/O | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
-| `rrm_log.cpp` | I/O (log only) | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, decoded | `rrmlog::logCommand`, `logEvent` | IR-5 |
-| `msg.cpp` | coord. | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
-| `peer.cpp` | coord. | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
-| `local.cpp` | coord. | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
-| `steer.cpp` | coord. | Source-side state machine: start, candidate walk, BTM, end of a transaction, the events and timers that move it | `startSteer`, `evaluate`, `sendBtm`, `endTxn`, `tickSteer`, `on*` handlers | FR-STR |
-| `steer_trigger.cpp` | coord. | When to steer: per-STA triggers on each poll, load-balancing rounds | `onStaPoll`, `runLbRound` | FR-TRG |
-| `steer_measure.cpp` | coord. | MEASURE: candidate pool, Beacon Requests, air-monitor requests, measured levels | `buildPool`, `requestBeacons`, `requestMonitors`, `onBeaconReport`, `onMonitorResult`, `isMeasureComplete` | FR-STR, FR-AMN |
-| `steer_target.cpp` | coord. | Target side: admission of STEER_REQ, reservations, STEER_RESULT | `onSteerReq`, `onSteerResult`, `countReservations` | FR-ADM |
-| `steer_learn.cpp` | coord. | Daemon side of the learning features: Q-learning of when to roam, bandit for the target, ping-pong watch | `rlLearn`, `rlEndWait`, `banditCredit`, `banditCheckPingPong` | FR-TRG-8, FR-STR-11 |
-| `steer_util.hpp` | coord. | Helpers the steering files share (namespace `steer`): names for log lines, measurement lookup | `reasonName`, `outcomeName`, `bcnLookup`, `levelLookup` | — |
-| `check.cpp` | coord. | Consistency check every 10 s against the peers, log on change, `CHECK` | `checkConsistency`, `cmdCheck`, `countIssues` | FR-OBS-2 |
-| `devclass.cpp` | coord. | Low-power device classification per local STA, device class table, STA_CLASS exchange | `sampleTraffic`, `restoreDevClass`, `saveDevClass`, `onStaClass`, `onPeerStaAssoc`, `syncDevClass` | FR-LPC |
-| `tools/donghoa_cli.cpp` | tool | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
+| `main.cpp` | `daemon` | Start-up, event loop, timer dispatch, shutdown | `main`, `Daemon::init`, `Daemon::run`, `runTimers`, `shutdown` | C-6, NFR-PRF-1, FR-DSC-5 |
+| `os.{hpp,cpp}` | `base` | Every POSIX/Linux call: clock, randomness, signals, files, UNIX/packet/UDP/netlink sockets, BPF, syslog; `Fd` RAII | `os::nowMs`, `os::Fd`, `os::pollReadable`, `os::openPacket`, `os::sendUnixRequest`, `os::recvNetlink`, `os::stopRequested` | C-4, C-6 |
+| `types.hpp` | `base` | `Mac`, `ByteView`/`ByteSpan`, big/little-endian get/put, `FixedString<N>` | `getBe16`, `putBe32`, `copyBytes`, `equal` | — |
+| `text.{hpp,cpp}` | `base` | Type-safe `{}` formatting, hex, checked number parsing (`std::from_chars`), MAC and key=value parsing, tokenizer | `formatTo`, `hex`, `parseLong`, `parseU64`, `parseMac`, `getKv`, `subView`, `Tokens` | IR-1 |
+| `proto.{hpp,cpp}` | `core` | ARCP header and TLV encode/decode, HMAC finish/verify, TLV iterator (namespace `arcp`) | `Message::begin/add/finish`, `parseHeader`, `verify`, `TlvReader`, `decode` | IR-8..10, FR-SEC-1..2,4 |
+| `sha256.{hpp,cpp}` | `core` | SHA-256, HMAC-SHA256, PBKDF2-HMAC-SHA256 | `Sha256`, `computeHmacSha256`, `pbkdf2Sha256` | FR-SEC-1,3 |
+| `sha512.{hpp,cpp}` | `core` | SHA-512 (for Ed25519) | `Sha512`, `computeSha512` | FR-SEC-6 |
+| `ed25519.{hpp,cpp}` | `core` | Ed25519 key pair, sign, verify (RFC 8032) | `keyPairFromSeed`, `sign`, `verify`, `isValidPublicKey` | FR-SEC-6,7 |
+| `trust.{hpp,cpp}` | `core` | Enrollment trust table: merge rule, approve / revoke, fingerprint, file form | `merge`, `approve`, `revoke`, `trustedKey`, `fingerprint`, `saveText`, `loadText` | FR-SEC-9,10 |
+| `enroll.cpp` | `daemon` | Automatic key enrollment: seed file, ENROLL_REQ, pending list, welcome, TRUST sync, `ENROLL` | `initEnroll`, `tickEnroll`, `onUntrusted`, `onTrust`, `sendWelcome`, `cmdEnroll` | FR-SEC-8..11 |
+| `rrm.{hpp,cpp}` | `core` | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
+| `policy.{hpp,cpp}` | `core` | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
+| `consistency.{hpp,cpp}` | `core` | Configuration consistency: BSS-pair findings (mobility domain, FT, security), steering settings summary (POLICY TLV) and their differences | `checkPair`, `summarize`, `diffPolicy`, `describePolicyDiff` | FR-OBS-2 |
+| `metrics.{hpp,cpp}` | `core` | Outcome counters, update rule, Prometheus text form | `addOutcome`, `formatBss`, `formatArcp` | FR-OBS-1 |
+| `nlparse.{hpp,cpp}` | `core` | nl80211 attribute lookup and station-dump entry parsing | `nl::findAttr`, `nl::parseStation` | NFR-PRF-4 |
+| `config.{hpp,cpp}` | `core` | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
+| `log.{hpp,cpp}` | `base` | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
+| `hapd_parse.{hpp,cpp}` | `core` | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
+| `l2.{hpp,cpp}` | `io` | `AF_PACKET` ports and UDP sim ports | `L2::addIface`, `addSim`, `send`, `recv` | IR-8, IR-11 |
+| `hapd.{hpp,cpp}` | `io` | hostapd command and event sockets | `hapd::Conn::open`, `runCommand`, `recvEvent` | IR-2 |
+| `survey.{hpp,cpp}` | `io` | Minimal genetlink client for `NL80211_CMD_GET_SURVEY`, asynchronous, one dump per radio | `Survey::open`, `findWiphy`, `request`, `onReadable`, `tick`, `find`, `util` | IR-6, FR-MON-4, NFR-PRF-4 |
+| `amon.cpp` | `daemon` | AP-side STA measurement: BPF-filtered radiotap sockets and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ/REPORT/STATUS, results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
+| `vendor_rssi.cpp` | `io` | Driver per-STA RSSI API behind four calls; vendor placeholder (TODO) and a file-backed simulation for tests | `isStaRssiSupported`, `startStaRssi`, `readStaRssi`, `stopStaRssi`, `useSimFile` |
+| `ctrl.cpp` | `daemon` | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
+| `rrm_log.cpp` | `io` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, decoded | `rrmlog::logCommand`, `logEvent` | IR-5 |
+| `msg.cpp` | `daemon` | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
+| `peer.cpp` | `daemon` | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
+| `local.cpp` | `daemon` | BSS and STA polling, hostapd events, neighbor DB sync | `pollBss`, `pollStas`, `handleEvent`, `syncNeighbors` | FR-MON, FR-NBR, FR-STE-4 |
+| `steer.cpp` | `daemon` | Source-side state machine: start, candidate walk, BTM, end of a transaction, the events and timers that move it | `startSteer`, `evaluate`, `sendBtm`, `endTxn`, `tickSteer`, `on*` handlers | FR-STR |
+| `steer_trigger.cpp` | `daemon` | When to steer: per-STA triggers on each poll, load-balancing rounds | `onStaPoll`, `runLbRound` | FR-TRG |
+| `steer_measure.cpp` | `daemon` | MEASURE: candidate pool, Beacon Requests, air-monitor requests, measured levels | `buildPool`, `requestBeacons`, `requestMonitors`, `onBeaconReport`, `onMonitorResult`, `isMeasureComplete` | FR-STR, FR-AMN |
+| `steer_target.cpp` | `daemon` | Target side: admission of STEER_REQ, reservations, STEER_RESULT | `onSteerReq`, `onSteerResult`, `countReservations` | FR-ADM |
+| `steer_learn.cpp` | `daemon` | Daemon side of the learning features: Q-learning of when to roam, bandit for the target, ping-pong watch | `rlLearn`, `rlEndWait`, `banditCredit`, `banditCheckPingPong` | FR-TRG-8, FR-STR-11 |
+| `steer_util.hpp` | `daemon` | Helpers the steering files share (namespace `steer`): names for log lines, measurement lookup | `reasonName`, `outcomeName`, `bcnLookup`, `levelLookup` | — |
+| `check.cpp` | `daemon` | Consistency check every 10 s against the peers, log on change, `CHECK` | `checkConsistency`, `cmdCheck`, `countIssues` | FR-OBS-2 |
+| `devclass.cpp` | `daemon` | Low-power device classification per local STA, device class table, STA_CLASS exchange | `sampleTraffic`, `restoreDevClass`, `saveDevClass`, `onStaClass`, `onPeerStaAssoc`, `syncDevClass` | FR-LPC |
+| `donghoa_cli.cpp` | `cli` | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
 
 ## 4. Runtime design
 
@@ -995,3 +993,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.13 | 2026-11-08 | Security off by default: `liveness_check` key (default 0); shipped configurations without `key` |
 | 2.14 | 2026-11-12 | Observability: modules `metrics`, `consistency`, `check.cpp`; §6.7 `METRICS`, `CHECK`; POLICY TLV in HELLO; fuzz targets (`fuzz/`); data size re-measured (470,760 bytes) |
 | 2.15 | 2026-11-15 | §3.2, §6.6: `steer.cpp` split by role into `steer.cpp`, `steer_trigger.cpp`, `steer_measure.cpp`, `steer_target.cpp`, `steer_learn.cpp` and `steer_util.hpp`; no change of behaviour |
+| 2.16 | 2026-11-15 | §3.1, §3.2: source tree by layer (`src/base`, `core`, `io`, `daemon`, `cli`), include direction checked by `make style`; `donghoa_cli.cpp` moved from `tools/`; objects and binaries under `build/`; unit tests split by module in `tests/unit/`; no change of behaviour |

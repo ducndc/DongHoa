@@ -1,6 +1,6 @@
 # 13. Configuration and OpenWrt integration
 
-> **Source:** `src/config.{hpp,cpp}`, `donghoa.conf.example`,
+> **Source:** `src/core/config.{hpp,cpp}`, `donghoa.conf.example`,
 > `openwrt/donghoa/` (Makefile, `files/donghoa.init`,
 > `files/donghoa.conf`), `openwrt/build.sh`, `openwrt/qemu/` ·
 > **Requirements:** IR-1, IR-12, C-3, C-4 · **Guide:**

@@ -1,7 +1,7 @@
 # 18. Configuration consistency check
 
-> **Source:** `src/consistency.{hpp,cpp}` (comparisons, pure),
-> `src/check.cpp` (timer, log, `CHECK`), `src/msg.cpp` (POLICY in HELLO) ·
+> **Source:** `src/core/consistency.{hpp,cpp}` (comparisons, pure),
+> `src/daemon/check.cpp` (timer, log, `CHECK`), `src/daemon/msg.cpp` (POLICY in HELLO) ·
 > **Spec:** [PROTOCOL.md](../PROTOCOL.md) §11 · **Requirements:** FR-OBS-2
 
 ## What it does

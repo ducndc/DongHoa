@@ -23,6 +23,17 @@ inside class `Daemon` (`daemon.hpp`), one static object. The modules below
 are `.cpp` files; the coordination modules are `Daemon` member functions.
 Only `os.cpp` calls the operating system (see `docs/CODING_CONVENTION.md`).
 
+The source tree is the layering. A directory includes only itself and the
+ones before it, which `make style` checks:
+
+| Directory | Modules |
+|---|---|
+| `src/base/` | `types`, `text`, `log`, `os` |
+| `src/core/` | `proto`, `rrm`, `policy`, `config`, `sha256`, `sha512`, `ed25519`, `trust`, `consistency`, `metrics`, `hapd_parse`, `nlparse`: pure, no sockets, all unit-tested and fuzzed where they parse outside input |
+| `src/io/` | `l2`, `hapd`, `survey`, `vendor_rssi`, `rrm_log` |
+| `src/daemon/` | class `Daemon`: `msg`, `peer`, `local`, `steer*`, `devclass`, `amon`, `enroll`, `check`, `ctrl`, and `main` |
+| `src/cli/` | `donghoa_cli` (uses `base` only) |
+
 | Module | Role |
 |---|---|
 | `proto` | ARCP encoding/decoding, HMAC (wire format: `PROTOCOL.md`). |
