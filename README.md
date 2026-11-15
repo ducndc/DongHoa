@@ -171,3 +171,7 @@ the `mdid=` of each `bss` line. See `docs/ARCHITECTURE.md`.
   design decisions, risks, traceability to the SRS).
 - `docs/ARCHITECTURE.md`: modules, state machine, policy, hostapd
   integration, assumptions and limitations.
+
+## License
+
+MIT, see `LICENSE`.

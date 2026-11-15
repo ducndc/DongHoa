@@ -19,6 +19,6 @@ compile_commands.json
 # Logs
 *.log
 
-# Cross-built binaries copied beside a site's install files
-/ap2-install/donghoa
-/ap2-install/donghoa_cli
+# Install files of one site (its configuration holds the group key): never
+# in the repository. The package's own files are in openwrt/donghoa/files/.
+/ap2-install/
