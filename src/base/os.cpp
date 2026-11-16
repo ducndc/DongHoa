@@ -159,10 +159,53 @@ void writeStderr(std::string_view line) noexcept
 	(void)w;
 }
 
-void writeStdout(std::string_view text) noexcept
+bool writeStdout(std::string_view text) noexcept
 {
 	const ssize_t w = ::write(STDOUT_FILENO, text.data(), text.size());
-	(void)w;
+	return (w >= 0) && (static_cast<std::size_t>(w) == text.size());
+}
+
+// ---- standard input ----
+
+bool isStdinTerminal() noexcept
+{
+	return ::isatty(STDIN_FILENO) == 1;
+}
+
+LineRead readStdinLine(FixedString<255U> &out) noexcept
+{
+	// One byte per read: nothing is buffered past the newline, and a
+	// person's typing speed does not need more.
+	bool whole = true;
+	bool gotByte = false;
+	bool atEnd = false;
+	bool atNewline = false;
+
+	out.clear();
+	while (!atEnd && !atNewline) {
+		char c = '\0';
+		const ssize_t r = ::read(STDIN_FILENO, &c, 1U);
+		if ((r < 0) && (errno == EINTR) && (sStop == 0)) {
+			// interrupted before any byte, not by a stop signal: read again
+		} else if (r != 1) {
+			atEnd = true;
+		} else if (c == '\n') {
+			atNewline = true;
+		} else {
+			gotByte = true;
+			whole = out.pushBack(c) && whole;
+		}
+	}
+
+	LineRead res = LineRead::LINE;
+	if (!whole) {
+		res = LineRead::TOO_LONG;
+	} else if (atEnd && !gotByte) {
+		res = LineRead::END;
+	} else {
+		// a complete line, or a last line without a newline
+	}
+	return res;
 }
 
 void openSyslog() noexcept
@@ -369,14 +412,51 @@ Rx recvFrom(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) n
 	return classify(r);
 }
 
-void sendTo(const Fd &fd, ByteView data, const UnixAddr &to) noexcept
+Tx sendTo(const Fd &fd, std::string_view text, const UnixAddr &to) noexcept
 {
 	sockaddr_un a{};
+	Tx res = Tx::GONE;
 	if (to.len <= sizeof(a)) {
 		(void)std::memcpy(&a, to.raw.data(), to.len); // DEV-04
-		(void)::sendto(fd.get(), data.data(), data.size(), 0, asSockaddr(a),
-			       static_cast<socklen_t>(to.len));
+		const ssize_t r = ::sendto(fd.get(), text.data(), text.size(), MSG_DONTWAIT, asSockaddr(a),
+					   static_cast<socklen_t>(to.len));
+		if (r >= 0) {
+			res = Tx::SENT;
+		} else if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == ENOBUFS) ||
+			   (errno == EINTR)) {
+			res = Tx::BUSY;
+		} else {
+			// ECONNREFUSED, ENOENT: the receiver closed or removed its socket.
+			// EPERM: it is connected to another socket and takes nothing from us.
+		}
 	}
+	return res;
+}
+
+Fd openUnixSender() noexcept
+{
+	return Fd(::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
+}
+
+bool sendTextTo(const Fd &fd, const char *path, std::string_view text) noexcept
+{
+	sockaddr_un a{};
+	return makeUnixAddr(path, a) &&
+	       (::sendto(fd.get(), text.data(), text.size(), MSG_DONTWAIT, asSockaddr(a), sizeof(a)) >= 0);
+}
+
+bool isSameAddr(const UnixAddr &a, const UnixAddr &b) noexcept
+{
+	bool same = (a.len == b.len) && (a.len <= a.raw.size());
+	for (std::size_t i = 0U; same && (i < a.len); i++) {
+		same = a.raw[i] == b.raw[i];
+	}
+	return same;
+}
+
+bool isBoundAddr(const UnixAddr &a) noexcept
+{
+	return a.len > sizeof(sa_family_t);
 }
 
 bool sendUnixRequest(const char *server, const char *local, std::string_view request,

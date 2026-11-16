@@ -51,7 +51,7 @@ ones before it, which `make style` checks:
 | `amon` | AP-side STA measurement: radiotap monitor sockets (BPF-filtered to uplink data and probe requests) and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ (multicast) / REPORT with a STATUS from every AP. Lets STAs without 11k measurements be steered. The uplink → downlink offset is learned per BSS from STAs measured both ways (`CALIB`). |
 | `vendor_rssi` | Driver per-STA RSSI API (STA MAC in, RSSI out) behind four non-blocking calls. Vendor implementation is a placeholder until the chipset API is documented; a file-backed simulation serves the tests. |
 | `enroll` | Automatic key enrollment: own key, enrollment requests, approval, trust table sync (`trust` holds the pure table logic). |
-| `ctrl` | Local control socket used by `donghoa_cli` and the tests. |
+| `ctrl` | Local control socket used by `donghoa_cli` and the tests: commands, and the log lines as events to clients that sent `ATTACH`. |
 | `rrm_log` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, raw and decoded with the pure decoders in `rrm.cpp`. Called from `hapd::Conn`, so every caller is covered. |
 | `config`, `log`, `text`, `types`, `sha256`, `sha512`, `ed25519`, `trust`, `os` | Support: strict configuration parsing; per-module logging; fixed-size strings, formatting and range-checked parsing; MAC/byte views; SHA-256/HMAC; and `os`, the only file that calls the operating system. |
 

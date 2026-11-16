@@ -101,5 +101,12 @@ void formatArcp(Text &out, const ArcpCounters &c) noexcept
 	put(out, "steer_in_total", "bss=\"?\",status=\"unknown_bss\"", c.steerInUnknownBss);
 }
 
+void formatCtrl(Text &out, const CtrlCounters &c) noexcept
+{
+	put(out, "ctrl_events_total", "", c.events);
+	put(out, "ctrl_events_dropped_total", "", c.eventsDropped);
+	put(out, "ctrl_event_clients_removed_total", "", c.clientsRemoved);
+}
+
 } // namespace metrics
 } // namespace donghoa

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Product | DongHoa 1.0: daemon `donghoa` and CLI `donghoa_cli` |
-| Document version | 2.16, 2026-11-15 (history in §13) |
+| Document version | 2.17, 2026-11-16 (history in §13) |
 | Requirements | `docs/SRS.md` (requirement IDs are cited in brackets) |
 | Related | `docs/PROTOCOL.md` (normative wire format, not repeated here), `docs/ARCHITECTURE.md` (short overview), `openwrt/README.md` |
 
@@ -83,17 +83,17 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `rrm.{hpp,cpp}` | `core` | Frequency/channel/op class mapping, BSSID Information, Neighbor Report and Beacon Request/Report layouts (single- and multi-channel requests), radiotap + 802.11 frame parser for air monitors, capability helpers | `rrm::buildNrHex`, `buildBcnReqHex`, `parseBcnRepHex`, `parseRadiotap`, `isFtAkm`, `hasBtmCapab` | IR-9, FR-NBR-2, FR-STR-3 |
 | `policy.{hpp,cpp}` | `core` | Triggers, scoring (linear and expected-throughput models), admission, backoff, low-power classification arithmetic | `policy::score`, `computeLinkQuality`, `computePeakMbps`, `computeExpectedKbps`, `triggers`, `admit`, `backoffMs`, `addTrafficSample`, `lpBehaviourScore`, `updateLpScore`, `isLowPower` | FR-POL, FR-TRG, FR-ADM-1, FR-STR-9, FR-LPC-1..2 |
 | `consistency.{hpp,cpp}` | `core` | Configuration consistency: BSS-pair findings (mobility domain, FT, security), steering settings summary (POLICY TLV) and their differences | `checkPair`, `summarize`, `diffPolicy`, `describePolicyDiff` | FR-OBS-2 |
-| `metrics.{hpp,cpp}` | `core` | Outcome counters, update rule, Prometheus text form | `addOutcome`, `formatBss`, `formatArcp` | FR-OBS-1 |
+| `metrics.{hpp,cpp}` | `core` | Outcome counters, update rule, Prometheus text form | `addOutcome`, `formatBss`, `formatArcp`, `formatCtrl` | FR-OBS-1 |
 | `nlparse.{hpp,cpp}` | `core` | nl80211 attribute lookup and station-dump entry parsing | `nl::findAttr`, `nl::parseStation` | NFR-PRF-4 |
 | `config.{hpp,cpp}` | `core` | Defaults (default member initializers) and line parser with pointer-to-member key tables | `parseConfigLine`, `loadConfig` | IR-1, FR-SEC-3 |
-| `log.{hpp,cpp}` | `base` | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog` | IR-5 |
+| `log.{hpp,cpp}` | `base` | Logging with a level per module (`LogModule`); disabled levels skip formatting; stderr or syslog (`-s`); a tap that is handed every line written (the control socket's events) | `logging::info/dbg/…`, `setLevel`, `parseLevel`/`parseModule`, `useSyslog`, `setTap` | IR-5, IR-3 |
 | `hapd_parse.{hpp,cpp}` | `core` | STATUS/STA/BTM-response parsers (namespace `hapd`) | `hapd::parseStatus`, `parseSta`, `parseBtmResp` | IR-2 |
 | `l2.{hpp,cpp}` | `io` | `AF_PACKET` ports and UDP sim ports | `L2::addIface`, `addSim`, `send`, `recv` | IR-8, IR-11 |
 | `hapd.{hpp,cpp}` | `io` | hostapd command and event sockets | `hapd::Conn::open`, `runCommand`, `recvEvent` | IR-2 |
 | `survey.{hpp,cpp}` | `io` | Minimal genetlink client for `NL80211_CMD_GET_SURVEY`, asynchronous, one dump per radio | `Survey::open`, `findWiphy`, `request`, `onReadable`, `tick`, `find`, `util` | IR-6, FR-MON-4, NFR-PRF-4 |
 | `amon.cpp` | `daemon` | AP-side STA measurement: BPF-filtered radiotap sockets and the driver per-STA RSSI API, STA watches on request, STA_MONITOR_REQ/REPORT/STATUS, results into the STA's measurements | `initAmon`, `receiveAmon`, `startAmonWatch`, `tickAmon`, `onAmonReq`, `onAmonResult` | FR-AMN, IR-13 |
 | `vendor_rssi.cpp` | `io` | Driver per-STA RSSI API behind four calls; vendor placeholder (TODO) and a file-backed simulation for tests | `isStaRssiSupported`, `startStaRssi`, `readStaRssi`, `stopStaRssi`, `useSimFile` |
-| `ctrl.cpp` | `daemon` | Operator command socket | `openCtrl`, `handleCtrl`, `runCtrlCommand` | IR-3 |
+| `ctrl.cpp` | `daemon` | Operator command socket; events to attached clients | `openCtrl`, `handleCtrl`, `runCtrlCommand`, `cmdAttach`, `onLogLine` | IR-3 |
 | `rrm_log.cpp` | `io` | Debug dump (log module `rrm`) of the 802.11k/v commands sent to hostapd, their replies and the 11k/v events, decoded | `rrmlog::logCommand`, `logEvent` | IR-5 |
 | `msg.cpp` | `daemon` | Periodic messages, reliable unicast, RX dispatch, path learning | `send*`, `unicast`, `retransmit`, `receiveMsg` | FR-DSC-1,3, FR-STE-1..4, FR-REL |
 | `peer.cpp` | `daemon` | Peer table, replay window, remote BSS/STA, expiry | `getPeer`, `acceptPeerSeq`, `updatePeerBss`, `expirePeers`, `removePeer` | FR-DSC-4,6,7, FR-STE-5 |
@@ -106,7 +106,7 @@ deviations DEV-01..04 (`docs/CODING_CONVENTION.md` §6.2) to one file.
 | `steer_util.hpp` | `daemon` | Helpers the steering files share (namespace `steer`): names for log lines, measurement lookup | `reasonName`, `outcomeName`, `bcnLookup`, `levelLookup` | — |
 | `check.cpp` | `daemon` | Consistency check every 10 s against the peers, log on change, `CHECK` | `checkConsistency`, `cmdCheck`, `countIssues` | FR-OBS-2 |
 | `devclass.cpp` | `daemon` | Low-power device classification per local STA, device class table, STA_CLASS exchange | `sampleTraffic`, `restoreDevClass`, `saveDevClass`, `onStaClass`, `onPeerStaAssoc`, `syncDevClass` | FR-LPC |
-| `donghoa_cli.cpp` | `cli` | One-shot control client (links `text.cpp` and `os.cpp` only) | `main` | IR-4 |
+| `donghoa_cli.cpp` | `cli` | Control client: one command, a shell reading commands from stdin, or a follower of the daemon's events (links `text.cpp` and `os.cpp` only) | `main`, `runShell`, class `Events` | IR-4 |
 
 ## 4. Runtime design
 
@@ -190,7 +190,7 @@ as `std::array` members. Measured sizes on x86-64:
 | `resv[]` — reservations | 32 | 1,280 | |
 | `watch[]` — air monitor watches | 16 | 2,048 | Up to 4 frequencies each |
 | `bss[]`, config, L2 ports, etc. | 16 BSS / 8 ports | remainder | |
-| **Total** `sizeof(Daemon)` | | **470,760** | Re-measured in v2.14 (`nm -S`, x86-64; includes the 64-entry `peer_key` table and the outcome counters, ~5.5 KB per 16 BSSes); the per-table figures above date from v1.4 |
+| **Total** `sizeof(Daemon)` | | **471,336** | Re-measured in v2.17 (`nm -S`, x86-64; +576 bytes for the 4 event clients of §6.7; includes the 64-entry `peer_key` table and the outcome counters, ~5.5 KB per 16 BSSes); the per-table figures above date from v1.4 |
 
 Lookups are linear scans. With these sizes a scan costs microseconds, and it
 avoids hash tables and allocation. Each table entry has a `used` flag. Free
@@ -606,7 +606,8 @@ the TLV list, built only when module `msg` is at debug.
 The control socket is a non-blocking UNIX datagram socket. Each request is
 one datagram (≤ 255 bytes). The reply is built in an 8 KiB `FixedString` and
 sent back to the sender's address. Output that does not fit is truncated. The
-commands only read state, except `STEER`.
+commands only read state, except `STEER`, the mode and reset commands, and
+`ATTACH` / `DETACH`.
 
 `METRICS` formats the counters of `Daemon::mMetrics` (one
 `metrics::BssCounters` per local BSS) and `mArcpMetrics`; they are plain
@@ -616,6 +617,32 @@ integers incremented where the event happens (`startSteer`, `endTxn`,
 counting costs nothing measurable. Zero values are left out to keep the
 reply in one datagram. `CHECK` recomputes the consistency findings from the
 current peer table (feature 18).
+
+**Events.** `ATTACH [<level>]` puts the sender's address and level into
+`mEventClients` (4 entries), each with a non-blocking sending socket of its
+own, and answers `OK` from that socket. `main.cpp` registers
+`Daemon::onLogLine` with `logging::setTap`; the log layer calls it for every
+line it writes, after the write to stderr or syslog. `onLogLine` formats
+`<N>module: text` once and sends it to each client whose level allows the
+severity. The send never blocks: `os::sendTo` returns `SENT`, `BUSY` (the
+client is not reading: the event is dropped and counted) or `GONE` (its
+socket is closed or removed). A client is removed on `GONE` and after 10 s
+of `BUSY`. Two properties need care:
+
+- *One sending socket per client.* Linux charges a datagram that the
+  receiver has not read to the sender's send buffer. With the control
+  socket as the sender, one client that stops reading would have filled
+  that buffer within a few hundred events (280 with the default 208 KiB)
+  and every later reply, to any client, would have failed with `EAGAIN`. With a socket per client, only that
+  client's events are dropped.
+- *No recursion.* The log layer clears the tap pointer while the tap runs,
+  so the line `onLogLine` writes when it removes a client is not handed
+  back to it.
+
+Without a client the cost is the call and one comparison per log line.
+Details and the client side (`donghoa_cli`: keep-alive every 5 s, which
+also attaches again after a restart of the daemon) are in
+`docs/features/12-control-logging.md`.
 
 ### 6.8 Configuration (`config.cpp`) [IR-1, FR-SEC-3]
 
@@ -994,3 +1021,4 @@ root when hostapd runs as another user. hostapd requirements are listed in
 | 2.14 | 2026-11-12 | Observability: modules `metrics`, `consistency`, `check.cpp`; §6.7 `METRICS`, `CHECK`; POLICY TLV in HELLO; fuzz targets (`fuzz/`); data size re-measured (470,760 bytes) |
 | 2.15 | 2026-11-15 | §3.2, §6.6: `steer.cpp` split by role into `steer.cpp`, `steer_trigger.cpp`, `steer_measure.cpp`, `steer_target.cpp`, `steer_learn.cpp` and `steer_util.hpp`; no change of behaviour |
 | 2.16 | 2026-11-15 | §3.1, §3.2: source tree by layer (`src/base`, `core`, `io`, `daemon`, `cli`), include direction checked by `make style`; `donghoa_cli.cpp` moved from `tools/`; objects and binaries under `build/`; unit tests split by module in `tests/unit/`; no change of behaviour |
+| 2.17 | 2026-11-16 | §6.7: events (`ATTACH` / `DETACH`): event client table, log tap, a sending socket per client, drop and removal rules; `donghoa_cli`: shell mode and event follower; data size re-measured (471,336 bytes) |

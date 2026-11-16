@@ -26,7 +26,7 @@ LIMIT = 110
 LAYER_RANK = {"base": 0, "core": 1, "io": 2, "daemon": 3}
 LAYER_MAY_USE = {"base": {"base"}, "core": {"base", "core"}, "io": {"base", "core", "io"},
                  "daemon": {"base", "core", "io", "daemon"}, "cli": {"base"}}
-DEV05 = {"sDaemon", "sLevels", "sSyslog", "sCounter", "sStop", "sBpf", "sBpfProg", "sSimPath", "sSim", "sSimText"}
+DEV05 = {"sDaemon", "sLevels", "sSyslog", "sTap", "sCounter", "sStop", "sBpf", "sBpfProg", "sSimPath", "sSim", "sSimText"}
 
 
 def width(s):

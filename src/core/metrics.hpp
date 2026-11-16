@@ -75,6 +75,13 @@ struct ArcpCounters {
 	std::uint32_t steerInUnknownBss{0U};
 };
 
+// Events (log lines) for the control socket's event clients (ATTACH).
+struct CtrlCounters {
+	std::uint64_t events{0U};        // datagrams delivered
+	std::uint64_t eventsDropped{0U}; // a client's queue was full
+	std::uint32_t clientsRemoved{0U}; // gone, or not reading for too long
+};
+
 // Index of a reason in BssCounters::steer; REASONS for an invalid one.
 std::size_t reasonIndex(arcp::SteerReason r) noexcept;
 
@@ -88,6 +95,7 @@ void addOutcome(SteerCounters &c, arcp::SteerOutcome o, bool gainKnown, int gain
 using Text = FixedString<8192U>;
 void formatBss(Text &out, std::string_view bss, const BssCounters &c) noexcept;
 void formatArcp(Text &out, const ArcpCounters &c) noexcept;
+void formatCtrl(Text &out, const CtrlCounters &c) noexcept;
 
 } // namespace metrics
 } // namespace donghoa

@@ -49,6 +49,16 @@ void testMetrics()
 	Text u;
 	formatArcp(u, a);
 	CHECK(u.view() == "donghoa_arcp_rx_total 5\ndonghoa_arcp_drop_total{reason=\"auth\"} 2\n");
+	CtrlCounters cc;
+	Text e;
+	formatCtrl(e, cc);
+	CHECK(e.empty());
+	cc.events = 7U;
+	cc.eventsDropped = 2U;
+	cc.clientsRemoved = 1U;
+	formatCtrl(e, cc);
+	CHECK(e.view() == "donghoa_ctrl_events_total 7\ndonghoa_ctrl_events_dropped_total 2\n"
+			  "donghoa_ctrl_event_clients_removed_total 1\n");
 	// negative gain sums print signed
 	SteerCounters n;
 	addOutcome(n, arcp::SteerOutcome::SUCCESS, true, -4, 10U);

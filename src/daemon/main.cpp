@@ -233,6 +233,11 @@ namespace {
 
 donghoa::Daemon sDaemon;
 
+void forwardLogLine(donghoa::LogModule m, donghoa::LogLevel l, std::string_view text) noexcept
+{
+	sDaemon.onLogLine(m, l, text);
+}
+
 // -g: new random seed; prints the configuration lines for it.
 int generateKey() noexcept
 {
@@ -252,7 +257,7 @@ int generateKey() noexcept
 			   "sign_seed hex:{}\n"
 			   "# on every AP, with this AP's ap_id:\n"
 			   "peer_key <ap_id> hex:{}\n", s, p);
-	donghoa::os::writeStdout(out.view());
+	(void)donghoa::os::writeStdout(out.view());
 	return 0;
 }
 
@@ -305,6 +310,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	donghoa::logging::useSyslog(syslog);
+	donghoa::logging::setTap(&forwardLogLine);
 	if (!sDaemon.init(cfgPath, debugAll)) {
 		return 1;
 	}

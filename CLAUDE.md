@@ -102,6 +102,12 @@ Run `make itest` after changing `donghoa` behaviour; it must still print
   outcome or drop path should get a counter. `CHECK` / log module `check`
   (`check.cpp`, every 10 s) compare 802.11r / security of BSS pairs of one SSID
   and the steering settings each peer sends in the POLICY TLV of HELLO.
+- **Events:** `ATTACH [<level>]` on the control socket makes the sender one
+  of 4 event clients (`mEventClients`); `logging::setTap` hands every log
+  line written to `Daemon::onLogLine`, which sends `<N>module: text` to them
+  without ever waiting. Each client has its own sending socket, so one that
+  stops reading cannot block replies. A new notice-level log line is
+  therefore also what operators and scripts see as an event.
 - **Path learning:** the port that delivers the first copy of each new
   message becomes the unicast path to that peer (`receiveMsg`). This is how
   unicast fails over between wired and Wi-Fi backhaul.

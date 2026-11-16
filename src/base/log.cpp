@@ -71,6 +71,7 @@ bool isValid(LogLevel l) noexcept
 }
 
 bool sSyslog = false;
+Tap sTap = nullptr;
 
 std::size_t idx(LogModule m) noexcept
 {
@@ -194,6 +195,18 @@ void emit(LogModule m, LogLevel l, std::string_view text) noexcept
 		(void)line.pushBack('\n');
 		os::writeStderr(line.view());
 	}
+	if (sTap != nullptr) {
+		// Cleared during the call: what the tap logs does not come back to it.
+		const Tap tap = sTap;
+		sTap = nullptr;
+		tap(m, l, text);
+		sTap = tap;
+	}
+}
+
+void setTap(Tap tap) noexcept
+{
+	sTap = tap;
 }
 
 } // namespace logging

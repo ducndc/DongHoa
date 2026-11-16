@@ -114,6 +114,84 @@ def cli(sock, *cmd):
     return r.stdout
 
 
+def cli_shell(sock, text):
+    """donghoa_cli without a command: one command per line of stdin."""
+    return subprocess.run(CLI + [sock], input=text, capture_output=True, text=True, timeout=10)
+
+
+def event_clients(sock):
+    return int(re.search(r"event_clients=(\d+)/4", cli(sock, "STATUS")).group(1))
+
+
+def recv_until(s, want):
+    """Datagrams from a control socket up to the one containing want (socket timeout otherwise)."""
+    got = ""
+    while want not in got:
+        got += s.recv(8192).decode()
+    return got
+
+
+def attach_event_clients(sock, tmp):
+    """ATTACH from raw control clients and from donghoa_cli: table limit, levels, DETACH,
+    removal of clients that left. Returns what events_after_bye() needs."""
+    raws = []
+    for i in range(4):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.bind(os.path.join(tmp, f"ev{i}.sock"))
+        s.settimeout(2)
+        s.sendto(b"ATTACH info" if i else b"ATTACH", sock)
+        assert s.recv(8192) == b"OK\n"
+        if i:  # the reply comes first, then the events, starting with the line about itself
+            assert s.recv(8192) == f"<6>ctrl: event client attached at level info ({i + 1} of 4)\n".encode()
+        raws.append(s)
+    assert event_clients(sock) == 4
+    r = subprocess.run(CLI + [sock, "ATTACH"], capture_output=True, text=True, timeout=5)
+    assert r.returncode == 1 and "4 event clients attached already" in r.stderr, r
+    raws[0].sendto(b"ATTACH loud", sock)
+    assert raws[0].recv(8192).startswith(b"FAIL usage: ATTACH"), "bad level must fail"
+    raws[0].sendto(b"ATTACH 5", sock)  # again from the same address: no new slot needed
+    assert raws[0].recv(8192) == b"OK\n" and event_clients(sock) == 4
+    raws[3].sendto(b"DETACH", sock)
+    raws[3].sendto(b"DETACH", sock)
+    assert raws[3].recv(8192) == b"OK\n" and raws[3].recv(8192) == b"FAIL not attached\n"
+    got = recv_until(raws[1], "<6>ctrl: event client detached (3 left)\n")  # what an info client sees
+    assert "<6>ctrl: event client attached at level info (3 of 4)\n" in got and "<7>" not in got, got
+    # Clients 1 and 2 stop reading: the events they miss are dropped and counted,
+    # and replies still reach the others (an event client has its own sending socket).
+    for i in range(2000):
+        for cmd in (b"ATTACH err", b"DETACH"):  # two info lines per round
+            raws[3].sendto(cmd, sock)
+            assert raws[3].recv(8192) == b"OK\n"
+        if i % 100 == 99 and "donghoa_ctrl_events_dropped_total" in cli(sock, "METRICS"):
+            break
+    else:
+        raise AssertionError("no event dropped for clients that do not read")
+    assert event_clients(sock) == 3
+    # which is the info line about the CLI attaching.
+    for s in raws[1:3]:
+        path = s.getsockname()
+        s.close()
+        os.unlink(path)
+    follow = subprocess.Popen(CLI + [sock, "ATTACH"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    wait_for(lambda: event_clients(sock) == 2, 3, "event clients that left removed, CLI attached")
+    assert "donghoa_ctrl_event_clients_removed_total 2\n" in cli(sock, "METRICS")
+    return raws[0], follow
+
+
+def events_after_bye(sock, raw, follow):
+    """The 'peer lost' notice reached the raw client and the CLI; SIGINT detaches the CLI."""
+    want = "<5>peer: peer 02:00:00:00:00:02 (ap2) lost\n"
+    got = recv_until(raw, want)
+    assert "<6>" not in got and "<7>" not in got, "notice client must not get info/debug: " + got
+    time.sleep(0.2)
+    follow.send_signal(signal.SIGINT)
+    out, err = follow.communicate(timeout=5)
+    assert follow.returncode == 0 and want in out and err == "", (follow.returncode, out, err)
+    assert event_clients(sock) == 1, "CLI must DETACH on SIGINT"
+    assert "donghoa_ctrl_events_total" in cli(sock, "METRICS")
+    raw.close()
+
+
 def write_cfg(path, ap_id, name, hdir, ctrl, port, peers, key, extra=""):
     with open(path, "w") as f:
         f.write(f"""name {name}
@@ -1185,6 +1263,19 @@ def main():
         assert "steer=notice" in out and "check=notice" in out, out
         assert cli(socks[2], "LOG", "loud").startswith("FAIL"), "bad level must fail"
         cli(socks[2], "LOG", "debug")
+        # Shell mode: commands from stdin, no prompt on a pipe, stops at quit
+        r = cli_shell(socks[0], "PING\n\n# comment\n  PEERS  \nquit\nSTATUS\n")
+        assert r.returncode == 0 and r.stdout.startswith("PONG\n"), r
+        assert B2.lower() in r.stdout.lower() and "donghoa>" not in r.stdout, r.stdout
+        assert "boot_id" not in r.stdout, "commands after quit must not run"
+        r = cli_shell(socks[0], "LOG loud\nPING\n" + "x" * 300 + "\nPING")
+        assert r.returncode == 1 and r.stdout.count("PONG") == 2, r
+        assert r.stdout.startswith("FAIL") and "too long" in r.stderr, r
+        # ATTACH / DETACH in a piped shell use the shell's event socket
+        r = cli_shell(socks[0], "ATTACH\nSTATUS\nDETACH\nDETACH\nSTATUS\n")
+        assert r.returncode == 1 and r.stdout.startswith("OK\n"), r
+        assert "event_clients=1/4" in r.stdout and "OK\nFAIL not attached\n" in r.stdout, r.stdout
+        assert r.stdout.rstrip().count("event_clients=0/4") == 1 and "donghoa>" not in r.stdout, r.stdout
         print("PASS 1: discovery, BSS/load exchange, 11k neighbor DB (FT MD bit set)")
 
         mark(logs, "S2 AP with wrong key is not accepted")
@@ -1269,11 +1360,13 @@ def main():
 
         mark(logs, "S6 AP2 sends BYE")
         # AP2 leaves gracefully -> AP1 drops its neighbor entry
+        ev_raw, ev_follow = attach_event_clients(socks[0], tmp)
         procs[1].send_signal(signal.SIGTERM)
         procs[1].wait(timeout=5)
         wait_for(lambda: B2 not in ap1.neighbors, 3, "REMOVE_NEIGHBOR for AP2")
         assert B2 not in cli(socks[0], "PEERS")
-        print("PASS 6: BYE removes peer and its neighbor report entry")
+        events_after_bye(socks[0], ev_raw, ev_follow)
+        print("PASS 6: BYE removes peer and its neighbor report entry; ATTACH clients saw the event")
 
         if "score_model 1" in EXTRA:
             # The mock BSSes are 20 MHz: with the throughput model a band

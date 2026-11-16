@@ -31,7 +31,19 @@ bool randomBytes(const ByteSpan &out) noexcept;
 // ---- logging sinks ----
 
 void writeStderr(std::string_view line) noexcept;
-void writeStdout(std::string_view text) noexcept;
+// False if text could not be written (stdout closed, reader gone).
+bool writeStdout(std::string_view text) noexcept;
+
+// ---- standard input (interactive client) ----
+
+constexpr int STDIN_FD = 0; // for pollReadable
+// True when stdin is a terminal (a person types), false for a pipe or file.
+bool isStdinTerminal() noexcept;
+enum class LineRead : std::uint8_t { LINE, TOO_LONG, END };
+// Reads one line from stdin into out, without its newline. A line that does
+// not fit is consumed whole and reported as TOO_LONG. END: no more input, or
+// a stop signal arrived while waiting for it.
+LineRead readStdinLine(FixedString<255U> &out) noexcept;
 void openSyslog() noexcept;
 void closeSyslog() noexcept;
 // prio: RFC 5424 severity 0..7 (3 err, 4 warning, 5 notice, 6 info, 7 debug)
@@ -103,7 +115,18 @@ std::optional<std::size_t> recvBytes(const Fd &fd, const ByteSpan &buf) noexcept
 // Non-blocking receive.
 Rx recvNowait(const Fd &fd, const ByteSpan &buf, std::size_t &n) noexcept;
 Rx recvFrom(const Fd &fd, const ByteSpan &buf, std::size_t &n, UnixAddr &from) noexcept;
-void sendTo(const Fd &fd, ByteView data, const UnixAddr &to) noexcept;
+// Results of a send that never waits. BUSY: the receiver's queue is full (it
+// may read later). GONE: nothing listens at that address any more.
+enum class Tx : std::uint8_t { SENT, BUSY, GONE };
+Tx sendTo(const Fd &fd, std::string_view text, const UnixAddr &to) noexcept;
+// Unbound non-blocking datagram socket, for sending only. What it sends and
+// the receiver has not read yet counts against this socket alone.
+Fd openUnixSender() noexcept;
+// Sends to the socket bound at path without waiting; false if not sent.
+bool sendTextTo(const Fd &fd, const char *path, std::string_view text) noexcept;
+bool isSameAddr(const UnixAddr &a, const UnixAddr &b) noexcept;
+// False for the address of a socket that was never bound: no reply reaches it.
+bool isBoundAddr(const UnixAddr &a) noexcept;
 // One request/reply exchange for a command-line client.
 bool sendUnixRequest(const char *server, const char *local, std::string_view request,
 		  const ByteSpan &reply, std::size_t &n, int timeoutMs) noexcept;

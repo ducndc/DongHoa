@@ -11,6 +11,9 @@ namespace {
 constexpr LogModule LOG_MODULE{LogModule::CTRL};
 using Out = FixedString<8192U>;
 
+// An event client that does not read for this long is removed.
+constexpr Millis EVENT_BUSY_MAX_MS = 10000U;
+
 // rrm::BANDS_* mask as text, "-" for none.
 std::string_view bandsName(std::uint8_t bands) noexcept
 {
@@ -136,6 +139,10 @@ bool Daemon::openCtrl() noexcept
 void Daemon::closeCtrl() noexcept
 {
 	if (mCtrlFd.valid()) {
+		for (EventClient &c : mEventClients) {
+			c = EventClient{};
+		}
+		mNEventClients = 0U;
 		mCtrlFd.reset();
 		os::removeFile(mCfg.ctrlSocket.cStr());
 	}
@@ -149,6 +156,7 @@ void Daemon::runCtrlCommand(std::string_view req, Out &o) noexcept
 		formatTo(o, "PONG\n");
 	} else if (req == "STATUS") {
 		formatTo(o, "ap_id={}\nname={}\nboot_id={}\n", mApId, mCfg.name, hex(mBootId, 8U));
+		formatTo(o, "event_clients={}/{}\n", mNEventClients, MAX_EVENT_CLIENTS);
 		std::string_view enrollState;
 		if (mCfg.enroll) {
 			enrollState = mTrust.enrolled ? " enroll=enrolled" : " enroll=pending";
@@ -422,6 +430,133 @@ void Daemon::cmdMetrics(Out &o) const noexcept
 		metrics::formatBss(o, b.cfg->ifname.view(), mMetrics[i]);
 	}
 	metrics::formatArcp(o, mArcpMetrics);
+	metrics::formatCtrl(o, mCtrlMetrics);
+}
+
+// ATTACH [<level>]: the sender gets every log line that is written with a
+// severity up to level (default notice), one datagram "<N>module: text" per
+// line, N = RFC 5424 severity. Repeating it changes the level and is how a
+// client finds the daemon again after a restart. The OK goes out the way the
+// events will, from the client's own sending socket: it arrives only if
+// events can.
+bool Daemon::cmdAttach(Out &o, std::string_view args, const os::UnixAddr &from) noexcept
+{
+	const std::string_view arg = trim(args);
+	const std::optional<LogLevel> lvl =
+		arg.empty() ? std::optional<LogLevel>(LogLevel::NOTICE) : logging::parseLevel(arg);
+	EventClient *slot = nullptr;
+	bool isNew = true;
+	bool replied = false;
+
+	for (EventClient &c : mEventClients) {
+		if (c.used && os::isSameAddr(c.addr, from)) {
+			slot = &c;
+			isNew = false;
+		}
+	}
+	for (EventClient &c : mEventClients) {
+		if ((slot == nullptr) && !c.used) {
+			slot = &c;
+		}
+	}
+	if (!lvl.has_value()) {
+		formatTo(o, "FAIL usage: ATTACH [err|warning|notice|info|debug|0..7]\n");
+	} else if (slot == nullptr) {
+		formatTo(o, "FAIL {} event clients attached already\n", MAX_EVENT_CLIENTS);
+	} else {
+		if (isNew) {
+			slot->tx = os::openUnixSender();
+		}
+		const bool canSend = slot->tx.valid() && os::isBoundAddr(from);
+		const os::Tx tx = canSend ? os::sendTo(slot->tx, "OK\n", from) : os::Tx::GONE;
+		if (tx == os::Tx::GONE) {
+			if (!isNew) {
+				mNEventClients--;
+				mCtrlMetrics.clientsRemoved++;
+			}
+			*slot = EventClient{};
+			formatTo(o, "FAIL cannot send events to your socket "
+				    "(bind it, do not connect() it)\n");
+		} else {
+			// BUSY: an attached client that is not reading; the OK is lost
+			// like its events.
+			replied = true;
+			slot->used = true;
+			slot->addr = from;
+			slot->level = *lvl;
+			if (tx == os::Tx::SENT) {
+				slot->busySince = 0U;
+			}
+			if (isNew) {
+				mNEventClients++;
+				logging::info(LOG_MODULE, "event client attached at level {} ({} of {})",
+					      logging::levelName(*lvl), mNEventClients, MAX_EVENT_CLIENTS);
+			}
+		}
+	}
+	return replied;
+}
+
+void Daemon::cmdDetach(Out &o, const os::UnixAddr &from) noexcept
+{
+	bool found = false;
+
+	for (EventClient &c : mEventClients) {
+		if (c.used && os::isSameAddr(c.addr, from)) {
+			c = EventClient{};
+			mNEventClients--;
+			found = true;
+		}
+	}
+	if (found) {
+		logging::info(LOG_MODULE, "event client detached ({} left)", mNEventClients);
+		formatTo(o, "OK\n");
+	} else {
+		formatTo(o, "FAIL not attached\n");
+	}
+}
+
+// Called by the log layer for every line it writes. Never waits: a client
+// that does not read loses events, and is removed when its socket is gone or
+// it has not read for EVENT_BUSY_MAX_MS.
+void Daemon::onLogLine(LogModule m, LogLevel l, std::string_view text) noexcept
+{
+	if ((mNEventClients == 0U) || !mCtrlFd.valid()) {
+		return;
+	}
+	FixedString<MAX_LINE + 32U> ev;
+	formatTo(ev, "<{}>{}: ", static_cast<unsigned>(l), logging::moduleName(m));
+	(void)ev.append(text);
+	(void)ev.pushBack('\n');
+
+	for (EventClient &c : mEventClients) {
+		if (!c.used || (static_cast<unsigned>(l) > static_cast<unsigned>(c.level))) {
+			continue;
+		}
+		const os::Tx tx = os::sendTo(c.tx, ev.view(), c.addr);
+		bool remove = false;
+		if (tx == os::Tx::SENT) {
+			c.busySince = 0U;
+			mCtrlMetrics.events++;
+		} else if (tx == os::Tx::BUSY) {
+			const Millis now = os::nowMs();
+			mCtrlMetrics.eventsDropped++;
+			if (c.busySince == 0U) {
+				c.busySince = now;
+			}
+			remove = (now - c.busySince) > EVENT_BUSY_MAX_MS;
+		} else {
+			remove = true;
+		}
+		if (remove) {
+			c = EventClient{};
+			mNEventClients--;
+			mCtrlMetrics.clientsRemoved++;
+			// Not handed to the tap again (see logging::setTap).
+			logging::info(LOG_MODULE, "event client removed: {} ({} left)",
+				      (tx == os::Tx::BUSY) ? "not reading" : "gone", mNEventClients);
+		}
+	}
 }
 
 void Daemon::cmdRl(Out &o, std::string_view args) noexcept
@@ -590,17 +725,23 @@ void Daemon::handleCtrl() noexcept
 			for (std::size_t i = 0U; i < n; i++) {
 				(void)req.pushBack(static_cast<char>(buf[i]));
 			}
+			const std::string_view cmd = trim(req.view());
 			Out out;
-			runCtrlCommand(trim(req.view()), out);
+			bool replied = false;
+			if ((cmd == "ATTACH") || startsWith(cmd, "ATTACH ")) {
+				replied = cmdAttach(out, subView(cmd, 6U), from);
+			} else if (cmd == "DETACH") {
+				cmdDetach(out, from);
+			} else {
+				runCtrlCommand(cmd, out);
+			}
 			if (out.empty()) {
 				formatTo(out, "\n");
 			}
-			std::array<std::uint8_t, 8192U> reply{};
-			const std::string_view text = out.view();
-			for (std::size_t i = 0U; i < text.size(); i++) {
-				reply[i] = static_cast<std::uint8_t>(text[i]);
+			if (!replied) {
+				// A client that left before the reply is not an error here.
+				(void)os::sendTo(mCtrlFd, out.view(), from);
 			}
-			os::sendTo(mCtrlFd, viewOf(reply).first(text.size()), from);
 		}
 	}
 }

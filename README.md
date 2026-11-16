@@ -101,6 +101,8 @@ donghoa_cli /var/run/donghoa.sock METRICS  # counters, Prometheus text
 donghoa_cli /var/run/donghoa.sock CHECK    # settings that differ from the other APs
 donghoa_cli /var/run/donghoa.sock LOG debug steer msg   # debug two modules, no restart
 donghoa_cli /var/run/donghoa.sock STEER aa:bb:cc:dd:ee:ff [target-bssid]
+donghoa_cli /var/run/donghoa.sock          # no command: a shell (prompt, help, quit, events); also reads piped commands
+donghoa_cli /var/run/donghoa.sock ATTACH   # events (log lines up to notice; ATTACH info for more) until Ctrl-C
 ```
 
 **Manual steering test.** `STEER <sta> [<bssid>]` starts a real transaction

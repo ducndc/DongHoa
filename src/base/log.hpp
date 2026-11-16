@@ -67,6 +67,11 @@ LogModule moduleAt(std::size_t i) noexcept;
 // Log to syslog (daemon facility, ident "donghoa") instead of stderr.
 void useSyslog(bool on) noexcept;
 void emit(LogModule m, LogLevel l, std::string_view text) noexcept;
+// A second receiver of every line that is written (the control socket's
+// event clients), or nullptr for none. A line the tap logs itself is written
+// but not handed to the tap again.
+using Tap = void (*)(LogModule m, LogLevel l, std::string_view text) noexcept;
+void setTap(Tap tap) noexcept;
 
 template <typename... A>
 void write(LogModule m, LogLevel l, std::string_view fmt, const A &...args) noexcept

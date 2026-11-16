@@ -37,6 +37,7 @@ constexpr std::size_t MAX_TXN = 16U;
 constexpr std::size_t MAX_RESV = 32U;
 constexpr std::size_t MAX_PENDING = 32U;
 constexpr std::size_t MAX_RADIO = 4U;
+constexpr std::size_t MAX_EVENT_CLIENTS = 4U; // control clients attached for events
 constexpr std::size_t MAX_CAND = 16U;
 constexpr std::size_t MAX_WATCH = 16U;
 constexpr std::size_t WATCH_FREQS = 4U;
@@ -486,6 +487,8 @@ public:
 	bool openCtrl() noexcept;
 	void handleCtrl() noexcept;
 	void closeCtrl() noexcept;
+	// Log tap: sends the line to the attached event clients.
+	void onLogLine(LogModule m, LogLevel l, std::string_view text) noexcept;
 
 private:
 	// msg.cpp helpers
@@ -569,6 +572,9 @@ private:
 	void cmdDropRx(FixedString<8192U> &o, std::string_view args) noexcept;
 	void cmdBandit(FixedString<8192U> &o, std::string_view args) noexcept;
 	void cmdMetrics(FixedString<8192U> &o) const noexcept;
+	// True if it sent the reply itself.
+	bool cmdAttach(FixedString<8192U> &o, std::string_view args, const os::UnixAddr &from) noexcept;
+	void cmdDetach(FixedString<8192U> &o, const os::UnixAddr &from) noexcept;
 	// check.cpp: configuration consistency across the mesh
 	void checkConsistency() noexcept;
 	void cmdCheck(FixedString<8192U> &o) const noexcept;
@@ -636,6 +642,21 @@ private:
 	bool mRlInit{false};
 
 	os::Fd mCtrlFd{};
+	// A control client that asked for events (ATTACH): it gets every log
+	// line that is written with a severity up to level. Each client is sent
+	// to from a socket of its own: what a client leaves unread fills that
+	// socket's send buffer, not the control socket's (replies to everyone)
+	// and not another client's.
+	struct EventClient {
+		bool used{false};
+		os::Fd tx{};
+		os::UnixAddr addr{};
+		LogLevel level{LogLevel::NOTICE};
+		Millis busySince{0U}; // first send in a row that found its queue full; 0 = none
+	};
+	std::array<EventClient, MAX_EVENT_CLIENTS> mEventClients{};
+	std::size_t mNEventClients{0U};
+	metrics::CtrlCounters mCtrlMetrics{};
 
 	std::array<Challenge, MAX_CHALLENGES> mChal{};
 	trust::Table mTrust{};
